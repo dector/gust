@@ -11,6 +11,7 @@ import (
 	"github.com/dector/gust/internal/cli"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
+	"github.com/dector/gust/internal/proxy"
 	"github.com/dector/gust/internal/socket"
 	"github.com/dector/gust/internal/term"
 )
@@ -35,6 +36,12 @@ func run(ctx context.Context, args []string) error {
 	defer stopSignals()
 	runCtx, cancel := context.WithCancel(runCtx)
 	defer cancel()
+
+	proxyServer, err := proxy.Start(runCtx, cfg, log)
+	if err != nil {
+		return err
+	}
+	defer proxyServer.Close()
 
 	socketServer, err := socket.Start(runCtx, cfg, log, coord)
 	if err != nil {
