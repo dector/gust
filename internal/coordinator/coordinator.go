@@ -3,8 +3,11 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/logger"
@@ -44,11 +47,20 @@ const (
 
 // Status is a snapshot of coordinator-owned runtime state.
 type Status struct {
-	State     ExternalState
-	PID       int
-	AppPort   int
-	ProxyPort int
-	Version   int
+	State        ExternalState
+	PID          int
+	AppPort      int
+	ProxyPort    int
+	Version      int
+	BrowserReady bool
+	BrowserError string
+}
+
+// BrowserState is the latest app readiness state intended for browser clients.
+type BrowserState struct {
+	Ready   bool
+	Version int
+	Error   string
 }
 
 type childProcess interface {
@@ -84,11 +96,23 @@ type restartCompleteEvent struct {
 	err   error
 }
 
+type readinessCompleteEvent struct {
+	runID int
+	ready bool
+	err   error
+}
+
 type statusRequest struct {
 	reply chan Status
 }
 
 type shutdownRequested struct{}
+
+var (
+	readinessHealthTimeout   = config.HealthTimeout
+	readinessHealthInterval  = config.HealthInterval
+	readinessStabilityWindow = config.StabilityWindow
+)
 
 // Coordinator owns the Gust runtime.
 type Coordinator struct {
@@ -155,6 +179,8 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var pendingRerun bool
 	var restartWorker bool
 	var restartCancel context.CancelFunc
+	var readinessCancel context.CancelFunc
+	browser := BrowserState{}
 
 	startRestart := func(reason string) {
 		if state == stateShuttingDown || restartWorker {
@@ -186,6 +212,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if restartCancel != nil {
 				restartCancel()
 			}
+			if readinessCancel != nil {
+				readinessCancel()
+			}
 			if proc != nil {
 				_, _ = proc.Stop(context.Background())
 			}
@@ -205,9 +234,15 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				if ev.runID != runID || state == stateShuttingDown {
 					continue
 				}
+				if readinessCancel != nil {
+					readinessCancel()
+					readinessCancel = nil
+				}
 				if proc != nil && ev.event.PID == proc.PID() {
 					proc = nil
 				}
+				browser.Ready = false
+				browser.Error = processExitBrowserError(ev.event)
 				if !restartWorker {
 					state = stateStopped
 				}
@@ -229,20 +264,55 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				} else {
 					proc = ev.proc
 					state = stateWaitingReady
-					state = stateRunning
+					browser.Ready = false
+					browser.Error = ""
 					c.watchProcess(runID, proc)
+					readyCtx, cancel := context.WithCancel(ctx)
+					readinessCancel = cancel
+					go c.checkReadiness(readyCtx, runID, proc)
+				}
+				if pendingRerun && state != stateShuttingDown && state != stateWaitingReady {
+					pendingRerun = false
+					startRestart("pending")
+				}
+			case readinessCompleteEvent:
+				if ev.runID != runID || state == stateShuttingDown || state != stateWaitingReady {
+					continue
+				}
+				readinessCancel = nil
+				if ev.ready {
+					version++
+					browser.Ready = true
+					browser.Version = version
+					browser.Error = ""
+					state = stateRunning
+				} else {
+					browser.Ready = false
+					browser.Error = ev.err.Error()
+					if c.log != nil {
+						c.log.Printf("readiness failed: %v", ev.err)
+					}
+					select {
+					case <-proc.Done():
+						state = stateStopped
+					default:
+						state = stateRunning
+					}
 				}
 				if pendingRerun && state != stateShuttingDown {
 					pendingRerun = false
 					startRestart("pending")
 				}
 			case statusRequest:
-				ev.reply <- makeStatus(state, proc, c.cfg, version)
+				ev.reply <- makeStatus(state, proc, c.cfg, version, browser)
 			case shutdownRequested:
 				state = stateShuttingDown
 				c.markShuttingDown()
 				if restartCancel != nil {
 					restartCancel()
+				}
+				if readinessCancel != nil {
+					readinessCancel()
 				}
 				if proc != nil {
 					_, _ = proc.Stop(context.Background())
@@ -290,17 +360,88 @@ func (c *Coordinator) watchProcess(runID int, proc childProcess) {
 	}()
 }
 
-func makeStatus(state internalState, proc childProcess, cfg config.Config, version int) Status {
+func (c *Coordinator) checkReadiness(ctx context.Context, runID int, proc childProcess) {
+	var err error
+	if c.cfg.HealthPath != "" {
+		err = waitForHealth(ctx, proc, c.cfg.AppPort, c.cfg.HealthPath)
+	} else {
+		err = waitForStability(ctx, proc)
+	}
+	if err != nil {
+		c.send(readinessCompleteEvent{runID: runID, err: err})
+		return
+	}
+	c.send(readinessCompleteEvent{runID: runID, ready: true})
+}
+
+func waitForStability(ctx context.Context, proc childProcess) error {
+	timer := time.NewTimer(readinessStabilityWindow)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-proc.Done():
+		return errors.New("process exited before readiness")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func waitForHealth(ctx context.Context, proc childProcess, appPort int, healthPath string) error {
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", appPort, healthPath)
+	deadline := time.NewTimer(readinessHealthTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(readinessHealthInterval)
+	defer ticker.Stop()
+	client := &http.Client{Timeout: readinessHealthInterval}
+
+	check := func() bool {
+		resp, err := client.Get(url)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode >= 200 && resp.StatusCode <= 299
+	}
+	for {
+		if check() {
+			return nil
+		}
+		select {
+		case <-proc.Done():
+			return errors.New("process exited before health check succeeded")
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("health check timed out")
+		case <-ticker.C:
+		}
+	}
+}
+
+func processExitBrowserError(event process.ExitEvent) string {
+	if event.Err != nil {
+		return fmt.Sprintf("process exited: %v", event.Err)
+	}
+	if event.Code != 0 {
+		return fmt.Sprintf("process exited with code %d", event.Code)
+	}
+	return "process exited"
+}
+
+func makeStatus(state internalState, proc childProcess, cfg config.Config, version int, browser BrowserState) Status {
 	pid := 0
 	if proc != nil {
 		pid = proc.PID()
 	}
 	return Status{
-		State:     externalState(state),
-		PID:       pid,
-		AppPort:   cfg.AppPort,
-		ProxyPort: cfg.ProxyPort,
-		Version:   version,
+		State:        externalState(state),
+		PID:          pid,
+		AppPort:      cfg.AppPort,
+		ProxyPort:    cfg.ProxyPort,
+		Version:      version,
+		BrowserReady: browser.Ready,
+		BrowserError: browser.Error,
 	}
 }
 
