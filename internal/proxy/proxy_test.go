@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/dector/gust/internal/config"
 )
 
@@ -297,6 +299,75 @@ func TestProxyInjectsIdentityEncodedHTML(t *testing.T) {
 	}
 }
 
+func TestProxyBrowserWebSocketSendsLatestAndReloads(t *testing.T) {
+	proxyURL, closeProxy := startProxyForTest(t, freePort(t))
+	defer closeProxy.Close()
+
+	closeProxy.BrowserHub().BrowserReady(3)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, strings.Replace(proxyURL, "http://", "ws://", 1)+"/__gust/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	msg := readBrowserMessage(t, ctx, conn)
+	if msg.Type != "ready" || msg.Version != 3 {
+		t.Fatalf("connect message = %+v, want ready v3", msg)
+	}
+
+	closeProxy.BrowserHub().BrowserReady(4)
+	msg = readBrowserMessage(t, ctx, conn)
+	if msg.Type != "reload" || msg.Version != 4 {
+		t.Fatalf("broadcast message = %+v, want reload v4", msg)
+	}
+
+	closeProxy.BrowserHub().BrowserError("health check timed out")
+	msg = readBrowserMessage(t, ctx, conn)
+	if msg.Type != "error" || msg.Message != "health check timed out" {
+		t.Fatalf("error message = %+v", msg)
+	}
+}
+
+func TestProxyBrowserWebSocketSendsLatestErrorOnConnect(t *testing.T) {
+	proxyURL, closeProxy := startProxyForTest(t, freePort(t))
+	defer closeProxy.Close()
+
+	closeProxy.BrowserHub().BrowserError("process exited")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, strings.Replace(proxyURL, "http://", "ws://", 1)+"/__gust/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	msg := readBrowserMessage(t, ctx, conn)
+	if msg.Type != "error" || msg.Message != "process exited" {
+		t.Fatalf("connect message = %+v, want latest error", msg)
+	}
+}
+
+func TestProxyInjectedScriptContent(t *testing.T) {
+	script := reloadScript(12)
+	checks := []string{
+		`<script id="__gust_reload">`,
+		`let lastVersion = 12;`,
+		`/__gust/ws`,
+		`new WebSocket(url)`,
+		`location.reload()`,
+		`setTimeout(connect, retry)`,
+		`__gust_error`,
+		`position:fixed;top:0`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(script, check) {
+			t.Fatalf("script missing %q in %s", check, script)
+		}
+	}
+}
+
 func TestProxyForwardsWebSocketUpgrades(t *testing.T) {
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -334,6 +405,19 @@ func TestProxyForwardsWebSocketUpgrades(t *testing.T) {
 	if !strings.Contains(string(buf[:n]), "101 Switching Protocols") {
 		t.Fatalf("upgrade response = %q", buf[:n])
 	}
+}
+
+func readBrowserMessage(t *testing.T, ctx context.Context, conn *websocket.Conn) browserMessage {
+	t.Helper()
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg browserMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatal(err)
+	}
+	return msg
 }
 
 type proxyCloser struct {

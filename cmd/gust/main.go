@@ -42,6 +42,9 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer proxyServer.Close()
+	if proxyServer != nil {
+		coord.SetBrowserNotifier(proxyServer.BrowserHub())
+	}
 
 	socketServer, err := socket.Start(runCtx, cfg, log, coord)
 	if err != nil {

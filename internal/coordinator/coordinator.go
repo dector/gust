@@ -64,6 +64,12 @@ type BrowserState struct {
 	Error   string
 }
 
+// BrowserNotifier receives browser websocket state updates.
+type BrowserNotifier interface {
+	BrowserReady(version int)
+	BrowserError(message string)
+}
+
 type childProcess interface {
 	PID() int
 	Done() <-chan struct{}
@@ -125,8 +131,9 @@ type Coordinator struct {
 	cfg config.Config
 	log *logger.Logger
 
-	runner processRunner
-	events chan any
+	runner          processRunner
+	browserNotifier BrowserNotifier
+	events          chan any
 
 	mu           sync.Mutex
 	shuttingDown bool
@@ -144,6 +151,11 @@ func newWithRunner(cfg config.Config, log *logger.Logger, runner processRunner) 
 		runner: runner,
 		events: make(chan any, 32),
 	}
+}
+
+// SetBrowserNotifier configures browser websocket state updates.
+func (c *Coordinator) SetBrowserNotifier(notifier BrowserNotifier) {
+	c.browserNotifier = notifier
 }
 
 // Trigger queues a restart request from a producer such as keyboard or socket.
@@ -331,6 +343,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				}
 				browser.Ready = false
 				browser.Error = processExitBrowserError(ev.event)
+				c.notifyBrowserError(browser.Error)
 				if !restartWorker {
 					state = stateStopped
 				}
@@ -346,6 +359,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				if ev.err != nil {
 					proc = nil
 					state = stateStopped
+					browser.Ready = false
+					browser.Error = ev.err.Error()
+					c.notifyBrowserError(browser.Error)
 					if c.log != nil {
 						c.log.Printf("restart failed: %v", ev.err)
 					}
@@ -373,10 +389,12 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					browser.Ready = true
 					browser.Version = version
 					browser.Error = ""
+					c.notifyBrowserReady(version)
 					state = stateRunning
 				} else {
 					browser.Ready = false
 					browser.Error = ev.err.Error()
+					c.notifyBrowserError(browser.Error)
 					if c.log != nil {
 						c.log.Printf("readiness failed: %v", ev.err)
 					}
@@ -551,6 +569,18 @@ func externalState(state internalState) ExternalState {
 		return ExternalStopped
 	default:
 		return ExternalRestarting
+	}
+}
+
+func (c *Coordinator) notifyBrowserReady(version int) {
+	if c.browserNotifier != nil {
+		c.browserNotifier.BrowserReady(version)
+	}
+}
+
+func (c *Coordinator) notifyBrowserError(message string) {
+	if c.browserNotifier != nil {
+		c.browserNotifier.BrowserError(message)
 	}
 }
 

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,8 +13,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/logger"
 )
@@ -23,6 +26,107 @@ type Server struct {
 	server   *http.Server
 	listener net.Listener
 	log      *logger.Logger
+	hub      *BrowserHub
+}
+
+// BrowserHub tracks browser websocket clients and their latest status.
+type BrowserHub struct {
+	mu      sync.Mutex
+	clients map[*browserClient]struct{}
+	latest  browserMessage
+}
+
+type browserClient struct {
+	mu   sync.Mutex
+	conn *websocket.Conn
+}
+
+type browserMessage struct {
+	Type    string `json:"type"`
+	Version int    `json:"version,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// BrowserReady records a ready browser state and broadcasts reload to clients.
+func (h *BrowserHub) BrowserReady(version int) {
+	if h == nil {
+		return
+	}
+	h.broadcast(browserMessage{Type: "reload", Version: version}, browserMessage{Type: "ready", Version: version})
+}
+
+// BrowserError records and broadcasts a browser error banner message.
+func (h *BrowserHub) BrowserError(message string) {
+	if h == nil || message == "" {
+		return
+	}
+	msg := browserMessage{Type: "error", Message: message}
+	h.broadcast(msg, msg)
+}
+
+func (h *BrowserHub) currentVersion() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.latest.Version
+}
+
+func (h *BrowserHub) broadcast(send browserMessage, latest browserMessage) {
+	h.mu.Lock()
+	h.latest = latest
+	clients := make([]*browserClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.Unlock()
+
+	data, _ := json.Marshal(send)
+	for _, c := range clients {
+		if err := c.write(data); err != nil {
+			h.remove(c)
+			_ = c.conn.Close(websocket.StatusGoingAway, "write failed")
+		}
+	}
+}
+
+func (h *BrowserHub) add(conn *websocket.Conn) (*browserClient, browserMessage) {
+	client := &browserClient{conn: conn}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clients[client] = struct{}{}
+	return client, h.latest
+}
+
+func (h *BrowserHub) remove(c *browserClient) {
+	h.mu.Lock()
+	delete(h.clients, c)
+	h.mu.Unlock()
+}
+
+func (h *BrowserHub) close() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	clients := make([]*browserClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.clients = map[*browserClient]struct{}{}
+	h.mu.Unlock()
+	for _, c := range clients {
+		_ = c.conn.Close(websocket.StatusGoingAway, "proxy closed")
+	}
+}
+
+func (c *browserClient) write(data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return c.conn.Write(ctx, websocket.MessageText, data)
 }
 
 // Start binds and starts the proxy when proxy mode is enabled.
@@ -43,7 +147,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -64,11 +168,20 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 	return s, nil
 }
 
+// BrowserHub returns the browser websocket notification hub.
+func (s *Server) BrowserHub() *BrowserHub {
+	if s == nil {
+		return nil
+	}
+	return s.hub
+}
+
 // Close stops the proxy server.
 func (s *Server) Close() error {
 	if s == nil || s.server == nil {
 		return nil
 	}
+	s.hub.close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
@@ -86,16 +199,23 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		timeout:  config.ProxyRetryTimeout,
 		interval: config.ProxyRetryInterval,
 	}
-	rp.ModifyResponse = injectHTMLResponse
+	rp.ModifyResponse = func(resp *http.Response) error {
+		return injectHTMLResponse(resp, s.hub.currentVersion())
+	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if s.log != nil {
 			s.log.Verbosef("proxy request failed: %v", err)
 		}
+		s.hub.BrowserError("proxy cannot reach app")
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__gust/ws" {
+			s.serveWebSocket(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/__gust/") {
 			http.NotFound(w, r)
 			return
@@ -106,6 +226,31 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		}
 		rp.ServeHTTP(&flushNoLengthWriter{ResponseWriter: w}, r)
 	})
+}
+
+func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		if s.log != nil {
+			s.log.Verbosef("browser websocket accept failed: %v", err)
+		}
+		return
+	}
+	client, latest := s.hub.add(conn)
+	defer func() {
+		s.hub.remove(client)
+		_ = conn.Close(websocket.StatusNormalClosure, "closed")
+	}()
+	if latest.Type != "" {
+		data, _ := json.Marshal(latest)
+		_ = client.write(data)
+	}
+	for {
+		_, _, err := conn.Read(r.Context())
+		if err != nil {
+			return
+		}
+	}
 }
 
 func proxyTransport() http.RoundTripper {
@@ -135,12 +280,51 @@ func prepareBodyForRetry(r *http.Request) error {
 	return nil
 }
 
-const (
-	reloadScript        = `<script id="__gust_reload">window.__gust_reload=window.__gust_reload||true;</script>`
-	flushNoLengthHeader = "X-Gust-Flush-No-Length"
-)
+const flushNoLengthHeader = "X-Gust-Flush-No-Length"
 
-func injectHTMLResponse(resp *http.Response) error {
+func reloadScript(version int) string {
+	return fmt.Sprintf(`<script id="__gust_reload">(function(){
+let lastVersion = %d;
+let retry = 250;
+let socket;
+function banner(){
+  let el = document.getElementById("__gust_error");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "__gust_error";
+    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#b00020;color:white;padding:8px 12px;font:14px sans-serif;text-align:left;white-space:pre-wrap";
+    document.documentElement.appendChild(el);
+  }
+  return el;
+}
+function showError(message){ banner().textContent = message || "Gust error"; }
+function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
+function connect(){
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = proto + "//" + location.host + "/__gust/ws";
+  socket = new WebSocket(url);
+  socket.onopen = function(){ retry = 250; };
+  socket.onmessage = function(event){
+    let msg;
+    try { msg = JSON.parse(event.data); } catch (_) { return; }
+    if (msg.type === "error") { showError(msg.message); return; }
+    if (msg.type === "ready") { hideError(); if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
+    if (msg.type === "reload") {
+      hideError();
+      if (typeof msg.version === "number" && msg.version > lastVersion) {
+        lastVersion = msg.version;
+        location.reload();
+      }
+    }
+  };
+  socket.onclose = function(){ setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  socket.onerror = function(){ try { socket.close(); } catch (_) {} };
+}
+connect();
+})();</script>`, version)
+}
+
+func injectHTMLResponse(resp *http.Response, version int) error {
 	if !shouldInjectHTML(resp) {
 		return nil
 	}
@@ -162,7 +346,7 @@ func injectHTMLResponse(resp *http.Response) error {
 		return nil
 	}
 
-	body = append(body, reloadScript...)
+	body = append(body, reloadScript(version)...)
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	if hadContentLength {
 		resp.ContentLength = int64(len(body))
