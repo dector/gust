@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/dector/gust/internal/cli"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
+	"github.com/dector/gust/internal/term"
 )
 
 func main() {
@@ -26,7 +29,25 @@ func run(ctx context.Context, args []string) error {
 
 	log := logger.New(os.Stderr, cfg.Verbose)
 	coord := coordinator.New(cfg, log)
-	if err := coord.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+
+	runCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stopSignals()
+	runCtx, cancel := context.WithCancel(runCtx)
+	defer cancel()
+
+	termCtl := term.New(os.Stdin, log,
+		func() { coord.Trigger(coordinator.TriggerManual, "keyboard") },
+		func() {
+			coord.Shutdown()
+			cancel()
+		},
+	)
+	if err := termCtl.Start(runCtx); err != nil {
+		return err
+	}
+	defer termCtl.Restore()
+
+	if err := coord.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
