@@ -10,6 +10,7 @@
   - `-p 8080:5000` means app port 8080 and proxy port 5000.
 - `-h <path>` is optional and requires an app port.
 - `--exclude <path>` is repeatable and extends default watch excludes.
+- `--exclude.glob <glob>` is repeatable and excludes watched events by glob.
 - `-v` enables verbose logging.
 - Missing `-e` is an error and prints usage.
 - Missing `-p` is allowed; Gust still works as a generic rerunner.
@@ -478,7 +479,7 @@ func (w *Watcher) Run(ctx context.Context, onChange func(Event)) error
 
 - Default excludes are directory names matched anywhere.
 - User `--exclude` values are cleaned path prefixes relative to root.
-- No globbing in v1.
+- User `--exclude.glob` values use Go filepath glob syntax and match project-relative paths or basenames.
 - `internal/proxy` owns:
   - HTTP server
   - reverse proxy

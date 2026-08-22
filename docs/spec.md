@@ -33,8 +33,9 @@ Flags:
 -e <cmd>     required command, executed via /bin/sh -c
 -p <port>    optional app port, or app:proxy ports
 -h <path>    optional health endpoint, requires app port
---exclude    repeatable path exclude, extends defaults
--v           verbose Gust logs
+--exclude         repeatable path exclude, extends defaults
+--exclude.glob    repeatable glob exclude for watched events
+-v                verbose Gust logs
 ```
 
 Semantics:
@@ -112,7 +113,9 @@ User excludes:
 - `--exclude <path>` is repeatable.
 - User excludes extend defaults.
 - User excludes are cleaned path prefixes relative to root.
-- No globbing in v1.
+- `--exclude.glob <glob>` is repeatable.
+- Glob excludes use Go filepath glob syntax.
+- Glob excludes are matched against both project-relative paths and basenames.
 
 Triggering events:
 

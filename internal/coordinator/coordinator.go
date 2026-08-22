@@ -252,7 +252,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	if c.cfg.Root != "" {
 		watchCtx, cancel := context.WithCancel(ctx)
 		watchCancel = cancel
-		w, err := watcher.Start(watchCtx, c.cfg.Root, c.cfg.Excludes, c.log)
+		w, err := watcher.Start(watchCtx, c.cfg.Root, c.cfg.Excludes, c.cfg.ExcludeGlobs, c.log)
 		if err != nil {
 			cancel()
 			return err

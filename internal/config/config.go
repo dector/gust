@@ -22,6 +22,7 @@ type Config struct {
 	ProxyEnabled bool
 	HealthPath   string
 	Excludes     []string
+	ExcludeGlobs []string
 	Verbose      bool
 	Root         string
 }

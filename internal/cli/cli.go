@@ -26,6 +26,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	}
 
 	var excludes repeatableStrings
+	var excludeGlobs repeatableStrings
 	var cfg config.Config
 	var portSpec string
 
@@ -35,9 +36,10 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports")
 	fs.StringVar(&cfg.HealthPath, "h", "", "health endpoint path")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
+	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: gust -e <cmd> [-p <port>|<app:proxy>] [-h <path>] [--exclude <path>] [-v]\n\n")
+		fmt.Fprintf(fs.Output(), "Usage: gust -e <cmd> [-p <port>|<app:proxy>] [-h <path>] [--exclude <path>] [--exclude.glob <glob>] [-v]\n\n")
 		fs.PrintDefaults()
 	}
 
@@ -82,6 +84,13 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		return config.Config{}, err
 	}
 	cfg.Excludes = cleanedExcludes
+
+	cleanedExcludeGlobs, err := cleanExcludeGlobs(excludeGlobs)
+	if err != nil {
+		fs.Usage()
+		return config.Config{}, err
+	}
+	cfg.ExcludeGlobs = cleanedExcludeGlobs
 
 	root, err := filepath.Abs(".")
 	if err != nil {
@@ -144,6 +153,26 @@ func cleanExcludes(values []string) ([]string, error) {
 			return nil, errors.New("--exclude cannot be project root")
 		}
 		cleaned = append(cleaned, path)
+	}
+	return cleaned, nil
+}
+
+func cleanExcludeGlobs(values []string) ([]string, error) {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return nil, errors.New("--exclude.glob requires a non-empty glob")
+		}
+		if filepath.IsAbs(value) {
+			return nil, fmt.Errorf("--exclude.glob must be relative: %s", value)
+		}
+		if value == "." {
+			return nil, errors.New("--exclude.glob cannot be project root")
+		}
+		if _, err := filepath.Match(value, ""); err != nil {
+			return nil, fmt.Errorf("--exclude.glob has invalid syntax %q: %w", value, err)
+		}
+		cleaned = append(cleaned, filepath.Clean(value))
 	}
 	return cleaned, nil
 }

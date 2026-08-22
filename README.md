@@ -29,6 +29,7 @@ gust -e 'go run ./cmd/server' -p 8080
 gust -e 'go run ./cmd/server' -p 8080:5000
 gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
 gust -e 'go run ./cmd/server' -p 8080 --exclude frontend/node_modules -v
+gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
 ```
 
 Flags:
@@ -37,7 +38,12 @@ Flags:
 - `-p <port>`: optional app port, or `app:proxy` ports.
 - `-h <path>`: optional health endpoint. Requires an app port.
 - `--exclude <path>`: repeatable watched-path exclude.
+- `--exclude.glob <glob>`: repeatable glob exclude for watched events.
 - `-v`: verbose Gust logs.
+
+`--exclude` values are relative path prefixes. Use them for directories or whole subtrees, for example `--exclude frontend/node_modules`.
+
+`--exclude.glob` values use Go filepath glob syntax and are matched against both the project-relative path and the file basename. The pattern must match the whole value. `*` does not cross `/`, so `assets/*.tmp` matches `assets/cache.tmp` but not `assets/nested/cache.tmp`. A basename glob like `*_templ.go` matches files with that name pattern in any directory.
 
 When stdin is a terminal, press `r` to rerun and `q` or Ctrl-C to quit. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
 

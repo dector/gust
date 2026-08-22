@@ -13,7 +13,7 @@ import (
 )
 
 func TestStartFailsWhenRootCannotBeWatched(t *testing.T) {
-	_, err := Start(context.Background(), filepath.Join(t.TempDir(), "missing"), nil, nil)
+	_, err := Start(context.Background(), filepath.Join(t.TempDir(), "missing"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing root")
 	}
@@ -30,6 +30,21 @@ func TestExcludesDefaultAndUserPrefixes(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "frontend", "generated", "out.txt"), "out")
 
 	assertNoEvent(t, w.Events(), 200*time.Millisecond)
+}
+
+func TestExcludeGlobsMatchRelativePathAndBaseName(t *testing.T) {
+	root := t.TempDir()
+	mustMkdir(t, filepath.Join(root, "views"))
+	mustMkdir(t, filepath.Join(root, "assets"))
+	w := startTestWatcherWithGlobs(t, root, nil, []string{"*_templ.go", "assets/*.tmp"})
+
+	mustWrite(t, filepath.Join(root, "views", "home_templ.go"), "templ")
+	mustWrite(t, filepath.Join(root, "assets", "cache.tmp"), "tmp")
+	assertNoEvent(t, w.Events(), 200*time.Millisecond)
+
+	file := filepath.Join(root, "views", "home.go")
+	mustWrite(t, file, "go")
+	waitForEvent(t, w.Events(), file, fsnotify.Create|fsnotify.Write)
 }
 
 func TestRecursiveWatchingExistingDirectories(t *testing.T) {
@@ -86,8 +101,13 @@ func TestEventFilteringIgnoresChmodAndSymlinkDirectories(t *testing.T) {
 
 func startTestWatcher(t *testing.T, root string, excludes []string) *Watcher {
 	t.Helper()
+	return startTestWatcherWithGlobs(t, root, excludes, nil)
+}
+
+func startTestWatcherWithGlobs(t *testing.T, root string, excludes []string, excludeGlobs []string) *Watcher {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	w, err := Start(ctx, root, excludes, nil)
+	w, err := Start(ctx, root, excludes, excludeGlobs, nil)
 	if err != nil {
 		cancel()
 		t.Fatalf("start watcher: %v", err)

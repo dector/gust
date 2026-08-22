@@ -107,6 +107,8 @@ func TestParseVerboseAndRepeatableExcludes(t *testing.T) {
 		"-e", "run",
 		"--exclude", "frontend/../frontend/node_modules",
 		"--exclude", "tmp/cache",
+		"--exclude.glob", "*_templ.go",
+		"--exclude.glob", "assets/*.tmp",
 		"-v",
 	}, nil)
 	if err != nil {
@@ -122,6 +124,15 @@ func TestParseVerboseAndRepeatableExcludes(t *testing.T) {
 	for i := range want {
 		if cfg.Excludes[i] != want[i] {
 			t.Fatalf("Excludes = %#v, want %#v", cfg.Excludes, want)
+		}
+	}
+	wantGlobs := []string{"*_templ.go", "assets/*.tmp"}
+	if len(cfg.ExcludeGlobs) != len(wantGlobs) {
+		t.Fatalf("ExcludeGlobs = %#v", cfg.ExcludeGlobs)
+	}
+	for i := range wantGlobs {
+		if cfg.ExcludeGlobs[i] != wantGlobs[i] {
+			t.Fatalf("ExcludeGlobs = %#v, want %#v", cfg.ExcludeGlobs, wantGlobs)
 		}
 	}
 }
@@ -180,6 +191,30 @@ func TestParseExcludeValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			_, err := ParseWithOutput([]string{"-e", "run", "--exclude", tt.exclude}, &out)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(out.String(), "Usage: gust") {
+				t.Fatalf("expected usage output, got %q", out.String())
+			}
+		})
+	}
+}
+
+func TestParseExcludeGlobValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		glob string
+	}{
+		{name: "empty", glob: ""},
+		{name: "absolute", glob: "/tmp/*.go"},
+		{name: "root", glob: "."},
+		{name: "invalid", glob: "["},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			_, err := ParseWithOutput([]string{"-e", "run", "--exclude.glob", tt.glob}, &out)
 			if err == nil {
 				t.Fatal("expected error")
 			}

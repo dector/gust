@@ -22,9 +22,10 @@ type Event struct {
 
 // Watcher recursively watches a project root and publishes triggering events.
 type Watcher struct {
-	root     string
-	excludes []string
-	log      *logger.Logger
+	root         string
+	excludes     []string
+	excludeGlobs []string
+	log          *logger.Logger
 
 	fsw    *fsnotify.Watcher
 	events chan Event
@@ -47,7 +48,7 @@ var defaultExcludeDirs = map[string]struct{}{
 
 // Start creates a recursive watcher rooted at root. The returned watcher is
 // stopped when ctx is canceled or Close is called.
-func Start(ctx context.Context, root string, excludes []string, log *logger.Logger) (*Watcher, error) {
+func Start(ctx context.Context, root string, excludes []string, excludeGlobs []string, log *logger.Logger) (*Watcher, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -57,13 +58,14 @@ func Start(ctx context.Context, root string, excludes []string, log *logger.Logg
 		return nil, err
 	}
 	w := &Watcher{
-		root:     filepath.Clean(absRoot),
-		excludes: cleanExcludePrefixes(excludes),
-		log:      log,
-		fsw:      fsw,
-		events:   make(chan Event, 32),
-		done:     make(chan struct{}),
-		watched:  make(map[string]struct{}),
+		root:         filepath.Clean(absRoot),
+		excludes:     cleanExcludePrefixes(excludes),
+		excludeGlobs: cleanExcludeGlobs(excludeGlobs),
+		log:          log,
+		fsw:          fsw,
+		events:       make(chan Event, 32),
+		done:         make(chan struct{}),
+		watched:      make(map[string]struct{}),
 	}
 	if err := w.addRootAndExistingDirs(); err != nil {
 		_ = fsw.Close()
@@ -236,6 +238,11 @@ func (w *Watcher) isExcluded(path string) bool {
 			return true
 		}
 	}
+	for _, glob := range w.excludeGlobs {
+		if matchesGlob(glob, rel) || matchesGlob(glob, filepath.Base(rel)) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -249,6 +256,26 @@ func cleanExcludePrefixes(values []string) []string {
 		cleaned = append(cleaned, value)
 	}
 	return cleaned
+}
+
+func cleanExcludeGlobs(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = filepath.Clean(value)
+		if value == "." || filepath.IsAbs(value) {
+			continue
+		}
+		if _, err := filepath.Match(value, ""); err != nil {
+			continue
+		}
+		cleaned = append(cleaned, value)
+	}
+	return cleaned
+}
+
+func matchesGlob(pattern string, name string) bool {
+	matched, err := filepath.Match(pattern, name)
+	return err == nil && matched
 }
 
 func (w *Watcher) verbosef(format string, args ...any) {
