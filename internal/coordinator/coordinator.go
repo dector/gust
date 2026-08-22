@@ -291,6 +291,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			pendingRerun = true
 			return
 		}
+		if c.log != nil {
+			c.log.Verbosef("restart requested: %s", reason)
+		}
 		runID++
 		restartRunID := runID
 		oldProc := proc
@@ -309,7 +312,6 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			done <- ev
 			c.send(ev)
 		}()
-		_ = reason
 	}
 
 	requestRestart := func(reason string) {
@@ -376,6 +378,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				if ev.runID != runID || state == stateShuttingDown {
 					continue
 				}
+				c.logProcessExit(ev.event)
 				if readinessCancel != nil {
 					readinessCancel()
 					readinessCancel = nil
@@ -410,6 +413,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					}
 				} else {
 					proc = ev.proc
+					if c.log != nil {
+						c.log.Printf("started process pid=%d", proc.PID())
+					}
 					state = stateWaitingReady
 					browser.Ready = false
 					browser.Error = ""
@@ -604,6 +610,17 @@ func (c *Coordinator) waitForHealth(ctx context.Context, proc childProcess, appP
 		case <-ticker.C:
 		}
 	}
+}
+
+func (c *Coordinator) logProcessExit(event process.ExitEvent) {
+	if c.log == nil {
+		return
+	}
+	if event.Err != nil {
+		c.log.Printf("process exited pid=%d: %v", event.PID, event.Err)
+		return
+	}
+	c.log.Printf("process exited pid=%d code=%d", event.PID, event.Code)
 }
 
 func processExitBrowserError(event process.ExitEvent) string {

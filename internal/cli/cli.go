@@ -65,9 +65,15 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		cfg.ProxyEnabled = proxyEnabled
 	}
 
-	if cfg.HealthPath != "" && !cfg.HasAppPort {
-		fs.Usage()
-		return config.Config{}, errors.New("-h requires -p app port")
+	if cfg.HealthPath != "" {
+		if !cfg.HasAppPort {
+			fs.Usage()
+			return config.Config{}, errors.New("-h requires -p app port")
+		}
+		if !strings.HasPrefix(cfg.HealthPath, "/") {
+			fs.Usage()
+			return config.Config{}, errors.New("-h requires an absolute path starting with /")
+		}
 	}
 
 	cleanedExcludes, err := cleanExcludes(excludes)

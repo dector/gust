@@ -88,6 +88,20 @@ func TestParseHealthWithAppPort(t *testing.T) {
 	}
 }
 
+func TestParseHealthRequiresAbsolutePath(t *testing.T) {
+	var out bytes.Buffer
+	_, err := ParseWithOutput([]string{"-e", "run", "-p", "8080", "-h", "health"}, &out)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "starting with /") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Usage: gust") {
+		t.Fatalf("expected usage output, got %q", out.String())
+	}
+}
+
 func TestParseVerboseAndRepeatableExcludes(t *testing.T) {
 	cfg, err := ParseWithOutput([]string{
 		"-e", "run",
