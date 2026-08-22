@@ -132,6 +132,171 @@ func TestProxyBindFailure(t *testing.T) {
 	}
 }
 
+func TestProxyInjectsHTMLAndUpdatesHeaders(t *testing.T) {
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Accept-Encoding"); got != "" {
+			t.Fatalf("Accept-Encoding forwarded as %q", got)
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Length", "12")
+		w.Header().Set("ETag", `"abc"`)
+		w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+		_, _ = w.Write([]byte("<h1>hi</h1>!"))
+	}))
+	defer app.Close()
+
+	proxyURL, closeProxy := startProxyForTest(t, appPort(t, app.URL))
+	defer closeProxy.Close()
+
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `<script id="__gust_reload">`) {
+		t.Fatalf("missing injected script in %q", body)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got, want := resp.Header.Get("Content-Length"), fmt.Sprint(len(body)); got != want {
+		t.Fatalf("Content-Length = %q, want %q", got, want)
+	}
+	if got := resp.Header.Get("ETag"); got != "" {
+		t.Fatalf("ETag = %q, want removed", got)
+	}
+	if got := resp.Header.Get("Last-Modified"); got != "Wed, 21 Oct 2015 07:28:00 GMT" {
+		t.Fatalf("Last-Modified = %q", got)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}
+
+func TestProxyInjectsHTMLErrorPagesAndLeavesAbsentLengthAbsent(t *testing.T) {
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusInternalServerError)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("oops"))
+	}))
+	defer app.Close()
+
+	proxyURL, closeProxy := startProxyForTest(t, appPort(t, app.URL))
+	defer closeProxy.Close()
+
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "__gust_reload") {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "" {
+		t.Fatalf("Content-Length = %q, want absent", got)
+	}
+}
+
+func TestProxySkipsHTMLInjectionRules(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		reqHeader  map[string]string
+		status     int
+		respHeader map[string]string
+		body       string
+	}{
+		{name: "xhtml", respHeader: map[string]string{"Content-Type": "application/xhtml+xml"}},
+		{name: "head", method: http.MethodHead, respHeader: map[string]string{"Content-Type": "text/html"}},
+		{name: "range request", reqHeader: map[string]string{"Range": "bytes=0-4"}, respHeader: map[string]string{"Content-Type": "text/html"}},
+		{name: "partial response", status: http.StatusPartialContent, respHeader: map[string]string{"Content-Type": "text/html"}},
+		{name: "attachment", respHeader: map[string]string{"Content-Type": "text/html", "Content-Disposition": "attachment; filename=x.html"}},
+		{name: "encoded", respHeader: map[string]string{"Content-Type": "text/html", "Content-Encoding": "gzip"}},
+		{name: "already injected", respHeader: map[string]string{"Content-Type": "text/html"}, body: `<script id="__gust_reload"></script>`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range tt.respHeader {
+					w.Header().Set(k, v)
+				}
+				status := tt.status
+				if status == 0 {
+					status = http.StatusOK
+				}
+				w.WriteHeader(status)
+				body := tt.body
+				if body == "" {
+					body = "<html></html>"
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			defer app.Close()
+
+			proxyURL, closeProxy := startProxyForTest(t, appPort(t, app.URL))
+			defer closeProxy.Close()
+
+			method := tt.method
+			if method == "" {
+				method = http.MethodGet
+			}
+			req, err := http.NewRequest(method, proxyURL+"/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for k, v := range tt.reqHeader {
+				req.Header.Set(k, v)
+			}
+			client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if strings.Count(string(body), "__gust_reload") > strings.Count(tt.body, "__gust_reload") {
+				t.Fatalf("unexpected injection body=%q", body)
+			}
+			if got := resp.Header.Get("Cache-Control"); got == "no-store" && tt.name != "already injected" {
+				t.Fatalf("Cache-Control set on skipped response")
+			}
+		})
+	}
+}
+
+func TestProxyInjectsIdentityEncodedHTML(t *testing.T) {
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Encoding", "identity")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer app.Close()
+
+	proxyURL, closeProxy := startProxyForTest(t, appPort(t, app.URL))
+	defer closeProxy.Close()
+
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "__gust_reload") {
+		t.Fatalf("body = %q, want injection", body)
+	}
+}
+
 func TestProxyForwardsWebSocketUpgrades(t *testing.T) {
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,11 +76,18 @@ func (s *Server) Close() error {
 
 func (s *Server) handler(target *url.URL) http.Handler {
 	rp := httputil.NewSingleHostReverseProxy(target)
+	director := rp.Director
+	rp.Director = func(r *http.Request) {
+		director(r)
+		r.Header.Del("Accept-Encoding")
+	}
 	rp.Transport = retryTransport{
-		base:     http.DefaultTransport,
+		base:     proxyTransport(),
 		timeout:  config.ProxyRetryTimeout,
 		interval: config.ProxyRetryInterval,
 	}
+	rp.ModifyResponse = injectHTMLResponse
+	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if s.log != nil {
 			s.log.Verbosef("proxy request failed: %v", err)
@@ -96,8 +104,18 @@ func (s *Server) handler(target *url.URL) http.Handler {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		rp.ServeHTTP(w, r)
+		rp.ServeHTTP(&flushNoLengthWriter{ResponseWriter: w}, r)
 	})
+}
+
+func proxyTransport() http.RoundTripper {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+	clone := base.Clone()
+	clone.DisableCompression = true
+	return clone
 }
 
 func prepareBodyForRetry(r *http.Request) error {
@@ -115,6 +133,109 @@ func prepareBodyForRetry(r *http.Request) error {
 	}
 	r.ContentLength = int64(len(body))
 	return nil
+}
+
+const (
+	reloadScript        = `<script id="__gust_reload">window.__gust_reload=window.__gust_reload||true;</script>`
+	flushNoLengthHeader = "X-Gust-Flush-No-Length"
+)
+
+func injectHTMLResponse(resp *http.Response) error {
+	if !shouldInjectHTML(resp) {
+		return nil
+	}
+	hadContentLength := resp.Header.Get("Content-Length") != ""
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+
+	if bytes.Contains(body, []byte("__gust_reload")) {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if hadContentLength {
+			resp.ContentLength = int64(len(body))
+		} else {
+			resp.ContentLength = -1
+		}
+		return nil
+	}
+
+	body = append(body, reloadScript...)
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if hadContentLength {
+		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	} else {
+		resp.ContentLength = -1
+		resp.Header.Set(flushNoLengthHeader, "1")
+	}
+	resp.Header.Del("ETag")
+	resp.Header.Set("Cache-Control", "no-store")
+	return nil
+}
+
+type flushNoLengthWriter struct {
+	http.ResponseWriter
+	flushed bool
+}
+
+func (w flushNoLengthWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *flushNoLengthWriter) WriteHeader(statusCode int) {
+	if w.Header().Get(flushNoLengthHeader) == "1" {
+		w.Header().Del(flushNoLengthHeader)
+		w.ResponseWriter.WriteHeader(statusCode)
+		w.flush()
+		return
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *flushNoLengthWriter) Write(p []byte) (int, error) {
+	if w.Header().Get(flushNoLengthHeader) == "1" {
+		w.Header().Del(flushNoLengthHeader)
+		w.flush()
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *flushNoLengthWriter) flush() {
+	if w.flushed {
+		return
+	}
+	w.flushed = true
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func shouldInjectHTML(resp *http.Response) bool {
+	if resp == nil || resp.Request == nil {
+		return false
+	}
+	if resp.Request.Method == http.MethodHead || resp.Request.Header.Get("Range") != "" {
+		return false
+	}
+	if resp.StatusCode == http.StatusPartialContent {
+		return false
+	}
+	contentType := resp.Header.Get("Content-Type")
+	lowerContentType := strings.ToLower(contentType)
+	if !strings.Contains(lowerContentType, "text/html") || strings.Contains(lowerContentType, "application/xhtml+xml") {
+		return false
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Disposition")), "attachment") {
+		return false
+	}
+	encoding := strings.TrimSpace(strings.ToLower(resp.Header.Get("Content-Encoding")))
+	if encoding != "" && encoding != "identity" {
+		return false
+	}
+	return true
 }
 
 type retryTransport struct {
