@@ -118,7 +118,9 @@ func makeRaw(fd int) (*unix.Termios, error) {
 	}
 	newState := *oldState
 	newState.Iflag &^= unix.BRKINT | unix.ICRNL | unix.INPCK | unix.ISTRIP | unix.IXON
-	newState.Oflag &^= unix.OPOST
+	// Keep output post-processing enabled so \n still returns the cursor to
+	// column 0. Disabling OPOST causes "staircase" output while Gust is in
+	// raw input mode.
 	newState.Cflag |= unix.CS8
 	newState.Lflag &^= unix.ECHO | unix.ICANON | unix.IEXTEN | unix.ISIG
 	newState.Cc[unix.VMIN] = 1
