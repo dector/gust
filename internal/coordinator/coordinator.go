@@ -12,6 +12,7 @@ import (
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/logger"
 	"github.com/dector/gust/internal/process"
+	"github.com/dector/gust/internal/watcher"
 )
 
 // TriggerSource identifies why a restart was requested.
@@ -96,6 +97,10 @@ type restartCompleteEvent struct {
 	err   error
 }
 
+type debouncedFSTriggerEvent struct {
+	seq int
+}
+
 type readinessCompleteEvent struct {
 	runID int
 	ready bool
@@ -112,6 +117,7 @@ var (
 	readinessHealthTimeout   = config.HealthTimeout
 	readinessHealthInterval  = config.HealthInterval
 	readinessStabilityWindow = config.StabilityWindow
+	fsDebounceDelay          = config.FSDebounce
 )
 
 // Coordinator owns the Gust runtime.
@@ -180,7 +186,46 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var restartWorker bool
 	var restartCancel context.CancelFunc
 	var readinessCancel context.CancelFunc
+	var fsDebounceTimer *time.Timer
+	var fsDebouncePending bool
+	var fsDebounceSeq int
 	browser := BrowserState{}
+
+	var watchCancel context.CancelFunc
+	var fsWatcher *watcher.Watcher
+	if c.cfg.Root != "" {
+		watchCtx, cancel := context.WithCancel(ctx)
+		watchCancel = cancel
+		w, err := watcher.Start(watchCtx, c.cfg.Root, c.cfg.Excludes, c.log)
+		if err != nil {
+			cancel()
+			return err
+		}
+		fsWatcher = w
+		go c.forwardWatcherEvents(w)
+	}
+
+	stopWatcher := func() {
+		if watchCancel != nil {
+			watchCancel()
+		}
+		if fsWatcher != nil {
+			_ = fsWatcher.Close()
+		}
+	}
+
+	cancelFSDebounce := func() {
+		fsDebouncePending = false
+		fsDebounceSeq++
+		if fsDebounceTimer != nil {
+			if !fsDebounceTimer.Stop() {
+				select {
+				case <-fsDebounceTimer.C:
+				default:
+				}
+			}
+		}
+	}
 
 	startRestart := func(reason string) {
 		if state == stateShuttingDown || restartWorker {
@@ -202,13 +247,34 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		_ = reason
 	}
 
+	requestRestart := func(reason string) {
+		if state == stateShuttingDown {
+			return
+		}
+		if restartWorker || state == stateStarting || state == stateStopping {
+			pendingRerun = true
+			return
+		}
+		if state == stateWaitingReady && readinessCancel != nil {
+			readinessCancel()
+			readinessCancel = nil
+		}
+		startRestart(reason)
+	}
+
 	startRestart("initial")
 
 	for {
+		var fsDebounceC <-chan time.Time
+		if fsDebounceTimer != nil && fsDebouncePending {
+			fsDebounceC = fsDebounceTimer.C
+		}
 		select {
 		case <-ctx.Done():
 			state = stateShuttingDown
 			c.markShuttingDown()
+			cancelFSDebounce()
+			stopWatcher()
 			if restartCancel != nil {
 				restartCancel()
 			}
@@ -219,17 +285,39 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				_, _ = proc.Stop(context.Background())
 			}
 			return nil
+		case <-fsDebounceC:
+			fsDebouncePending = false
+			c.send(debouncedFSTriggerEvent{seq: fsDebounceSeq})
 		case raw := <-c.events:
 			switch ev := raw.(type) {
 			case triggerEvent:
 				if state == stateShuttingDown {
 					continue
 				}
-				if restartWorker || state == stateStarting || state == stateStopping || state == stateWaitingReady {
-					pendingRerun = true
+				if ev.source == TriggerFS {
+					fsDebouncePending = true
+					fsDebounceSeq++
+					if fsDebounceTimer == nil {
+						fsDebounceTimer = time.NewTimer(fsDebounceDelay)
+					} else {
+						if !fsDebounceTimer.Stop() {
+							select {
+							case <-fsDebounceTimer.C:
+							default:
+							}
+						}
+						fsDebounceTimer.Reset(fsDebounceDelay)
+					}
 					continue
 				}
-				startRestart(ev.reason)
+				if ev.source == TriggerManual || ev.source == TriggerAgent {
+					cancelFSDebounce()
+				}
+				requestRestart(ev.reason)
+			case debouncedFSTriggerEvent:
+				if ev.seq == fsDebounceSeq {
+					requestRestart("filesystem change")
+				}
 			case processExitedEvent:
 				if ev.runID != runID || state == stateShuttingDown {
 					continue
@@ -308,6 +396,8 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			case shutdownRequested:
 				state = stateShuttingDown
 				c.markShuttingDown()
+				cancelFSDebounce()
+				stopWatcher()
 				if restartCancel != nil {
 					restartCancel()
 				}
@@ -358,6 +448,12 @@ func (c *Coordinator) watchProcess(runID int, proc childProcess) {
 		event, _ := proc.ExitEvent()
 		c.send(processExitedEvent{runID: runID, event: event})
 	}()
+}
+
+func (c *Coordinator) forwardWatcherEvents(w *watcher.Watcher) {
+	for event := range w.Events() {
+		c.Trigger(TriggerFS, event.Path)
+	}
 }
 
 func (c *Coordinator) checkReadiness(ctx context.Context, runID int, proc childProcess) {

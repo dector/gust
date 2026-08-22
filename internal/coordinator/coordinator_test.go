@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -319,6 +321,124 @@ func TestCoordinatorVersionIncrementsOnlyAfterReadinessSuccess(t *testing.T) {
 	<-done
 }
 
+func TestCoordinatorDebouncesFilesystemTriggers(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 25*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.Trigger(TriggerFS, "one")
+	time.Sleep(10 * time.Millisecond)
+	coord.Trigger(TriggerFS, "two")
+	time.Sleep(15 * time.Millisecond)
+	if starts := runner.startCount(); starts != 1 {
+		t.Fatalf("starts before debounce = %d, want 1", starts)
+	}
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorManualTriggerCancelsPendingFilesystemDebounce(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 100*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.Trigger(TriggerFS, "fs")
+	time.Sleep(10 * time.Millisecond)
+	coord.Trigger(TriggerManual, "manual")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+	time.Sleep(120 * time.Millisecond)
+	if starts := runner.startCount(); starts != 2 {
+		t.Fatalf("starts after canceled debounce = %d, want 2", starts)
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorRestartsFromWatcherEvent(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 10*time.Millisecond)
+	runner := newFakeRunner()
+	root := t.TempDir()
+	coord := newWithRunner(config.Config{Exec: "test", Root: root}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	if err := os.WriteFile(filepath.Join(root, "changed.txt"), []byte("change"), 0o644); err != nil {
+		t.Fatalf("write watched file: %v", err)
+	}
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorTriggerDuringReadinessCancelsStaleReadiness(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, 100*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRestarting)
+	coord.Trigger(TriggerAgent, "rerun")
+	waitStarted(t, runner)
+	status := waitStatus(t, coord, ExternalRunning)
+	if status.Version != 1 {
+		t.Fatalf("version = %d, want only latest readiness to increment once", status.Version)
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorDebouncedFilesystemTriggerCoalescesDuringRestart(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 10*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	block := runner.blockNext()
+	coord.Trigger(TriggerManual, "manual")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+	coord.Trigger(TriggerFS, "one")
+	coord.Trigger(TriggerFS, "two")
+	time.Sleep(25 * time.Millisecond)
+	close(block)
+	waitStarted(t, runner)
+	waitStarted(t, runner)
+	if starts := runner.startCount(); starts != 3 {
+		t.Fatalf("starts = %d, want 3", starts)
+	}
+
+	cancel()
+	<-done
+}
+
 func runCoordinator(t *testing.T, coord *Coordinator, ctx context.Context) <-chan error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -379,6 +499,13 @@ func withReadinessTimings(t *testing.T, healthTimeout, healthInterval, stability
 		readinessHealthInterval = oldHealthInterval
 		readinessStabilityWindow = oldStabilityWindow
 	})
+}
+
+func withFSDebounce(t *testing.T, delay time.Duration) {
+	t.Helper()
+	oldDelay := fsDebounceDelay
+	fsDebounceDelay = delay
+	t.Cleanup(func() { fsDebounceDelay = oldDelay })
 }
 
 func startHealthServer(t *testing.T, code int) (int, func()) {
