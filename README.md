@@ -4,6 +4,16 @@ Gust is a Linux-first local development runner inspired by Air.
 
 It runs one command, watches the current directory, restarts the command on file changes, and exposes a local Unix socket for agent control. It can also run an HTTP proxy that injects a small browser reload script.
 
+## Install
+
+Latest trunk snapshot with mise:
+
+```sh
+mise use -g ubi:dector/gust@snapshot
+```
+
+The `snapshot` release is rebuilt on every push to `trunk`.
+
 ## Usage
 
 ```sh
