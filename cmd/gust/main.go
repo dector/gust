@@ -11,6 +11,7 @@ import (
 	"github.com/dector/gust/internal/cli"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
+	"github.com/dector/gust/internal/socket"
 	"github.com/dector/gust/internal/term"
 )
 
@@ -34,6 +35,12 @@ func run(ctx context.Context, args []string) error {
 	defer stopSignals()
 	runCtx, cancel := context.WithCancel(runCtx)
 	defer cancel()
+
+	socketServer, err := socket.Start(runCtx, cfg, log, coord)
+	if err != nil {
+		return err
+	}
+	defer socketServer.Close()
 
 	termCtl := term.New(os.Stdin, log,
 		func() { coord.Trigger(coordinator.TriggerManual, "keyboard") },
