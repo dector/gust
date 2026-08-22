@@ -31,7 +31,8 @@ type Server struct {
 	ln   net.Listener
 	log  *logger.Logger
 
-	once sync.Once
+	acceptOnce sync.Once
+	removeOnce sync.Once
 }
 
 // Start creates and serves Gust's local control socket.
@@ -77,20 +78,43 @@ func Path(root string) (string, error) {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("gust-%d", os.Getuid()), hash+".sock"), nil
 }
 
+// StopAccepting stops accepting new socket requests.
+func (s *Server) StopAccepting() error {
+	if s == nil {
+		return nil
+	}
+	var err error
+	s.acceptOnce.Do(func() {
+		if s.ln != nil {
+			err = s.ln.Close()
+		}
+	})
+	return err
+}
+
+// Remove removes the socket file.
+func (s *Server) Remove() error {
+	if s == nil {
+		return nil
+	}
+	var err error
+	s.removeOnce.Do(func() {
+		if removeErr := os.Remove(s.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			err = removeErr
+		}
+	})
+	return err
+}
+
 // Close stops accepting requests and removes the socket file.
 func (s *Server) Close() error {
 	if s == nil {
 		return nil
 	}
-	var err error
-	s.once.Do(func() {
-		if s.ln != nil {
-			err = s.ln.Close()
-		}
-		if removeErr := os.Remove(s.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
-			err = removeErr
-		}
-	})
+	err := s.StopAccepting()
+	if removeErr := s.Remove(); err == nil {
+		err = removeErr
+	}
 	return err
 }
 

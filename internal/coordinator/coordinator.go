@@ -126,6 +126,14 @@ var (
 	fsDebounceDelay          = config.FSDebounce
 )
 
+// ShutdownHooks are cleanup steps for resources owned outside the coordinator.
+type ShutdownHooks struct {
+	StopSocketAccepts func() error
+	CloseProxy        func() error
+	RestoreTerminal   func() error
+	RemoveSocket      func() error
+}
+
 // Coordinator owns the Gust runtime.
 type Coordinator struct {
 	cfg config.Config
@@ -133,7 +141,10 @@ type Coordinator struct {
 
 	runner          processRunner
 	browserNotifier BrowserNotifier
+	shutdownHooks   ShutdownHooks
 	events          chan any
+	done            chan struct{}
+	doneOnce        sync.Once
 
 	mu           sync.Mutex
 	shuttingDown bool
@@ -150,12 +161,18 @@ func newWithRunner(cfg config.Config, log *logger.Logger, runner processRunner) 
 		log:    log,
 		runner: runner,
 		events: make(chan any, 32),
+		done:   make(chan struct{}),
 	}
 }
 
 // SetBrowserNotifier configures browser websocket state updates.
 func (c *Coordinator) SetBrowserNotifier(notifier BrowserNotifier) {
 	c.browserNotifier = notifier
+}
+
+// SetShutdownHooks configures cleanup steps owned by outer packages.
+func (c *Coordinator) SetShutdownHooks(hooks ShutdownHooks) {
+	c.shutdownHooks = hooks
 }
 
 // Trigger queues a restart request from a producer such as keyboard or socket.
@@ -185,11 +202,13 @@ func (c *Coordinator) Status(ctx context.Context) (Status, error) {
 
 // Shutdown requests graceful coordinator shutdown.
 func (c *Coordinator) Shutdown() bool {
+	c.markShuttingDown()
 	return c.send(shutdownRequested{})
 }
 
 // Run starts the coordinator loop.
 func (c *Coordinator) Run(ctx context.Context) error {
+	defer c.doneOnce.Do(func() { close(c.done) })
 	state := stateStopped
 	var proc childProcess
 	var runID int
@@ -197,6 +216,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var pendingRerun bool
 	var restartWorker bool
 	var restartCancel context.CancelFunc
+	var restartDone chan restartCompleteEvent
 	var readinessCancel context.CancelFunc
 	var fsDebounceTimer *time.Timer
 	var fsDebouncePending bool
@@ -240,7 +260,10 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	}
 
 	startRestart := func(reason string) {
-		if state == stateShuttingDown || restartWorker {
+		if state == stateShuttingDown {
+			return
+		}
+		if restartWorker {
 			pendingRerun = true
 			return
 		}
@@ -255,7 +278,13 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		restartWorker = true
 		workerCtx, cancel := context.WithCancel(ctx)
 		restartCancel = cancel
-		go c.restart(workerCtx, restartRunID, oldProc)
+		done := make(chan restartCompleteEvent, 1)
+		restartDone = done
+		go func() {
+			ev := c.restart(workerCtx, restartRunID, oldProc)
+			done <- ev
+			c.send(ev)
+		}()
 		_ = reason
 	}
 
@@ -284,18 +313,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			state = stateShuttingDown
-			c.markShuttingDown()
-			cancelFSDebounce()
-			stopWatcher()
-			if restartCancel != nil {
-				restartCancel()
-			}
-			if readinessCancel != nil {
-				readinessCancel()
-			}
-			if proc != nil {
-				_, _ = proc.Stop(context.Background())
-			}
+			c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc)
 			return nil
 		case <-fsDebounceC:
 			fsDebouncePending = false
@@ -356,6 +374,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				}
 				restartWorker = false
 				restartCancel = nil
+				restartDone = nil
 				if ev.err != nil {
 					proc = nil
 					state = stateStopped
@@ -413,35 +432,55 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				ev.reply <- makeStatus(state, proc, c.cfg, version, browser)
 			case shutdownRequested:
 				state = stateShuttingDown
-				c.markShuttingDown()
-				cancelFSDebounce()
-				stopWatcher()
-				if restartCancel != nil {
-					restartCancel()
-				}
-				if readinessCancel != nil {
-					readinessCancel()
-				}
-				if proc != nil {
-					_, _ = proc.Stop(context.Background())
-				}
+				c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc)
 				return nil
 			}
 		}
 	}
 }
 
-func (c *Coordinator) restart(ctx context.Context, runID int, oldProc childProcess) {
+func (c *Coordinator) runShutdown(cancelFSDebounce, stopWatcher func(), restartCancel context.CancelFunc, restartDone chan restartCompleteEvent, readinessCancel context.CancelFunc, proc childProcess) {
+	c.markShuttingDown()
+	if c.shutdownHooks.StopSocketAccepts != nil {
+		_ = c.shutdownHooks.StopSocketAccepts()
+	}
+	stopWatcher()
+	cancelFSDebounce()
+	if restartCancel != nil {
+		restartCancel()
+	}
+	if readinessCancel != nil {
+		readinessCancel()
+	}
+	if proc != nil {
+		_, _ = proc.Stop(context.Background())
+	}
+	if restartDone != nil {
+		ev := <-restartDone
+		if ev.proc != nil && (proc == nil || ev.proc.PID() != proc.PID()) {
+			_, _ = ev.proc.Stop(context.Background())
+		}
+	}
+	if c.shutdownHooks.CloseProxy != nil {
+		_ = c.shutdownHooks.CloseProxy()
+	}
+	if c.shutdownHooks.RestoreTerminal != nil {
+		_ = c.shutdownHooks.RestoreTerminal()
+	}
+	if c.shutdownHooks.RemoveSocket != nil {
+		_ = c.shutdownHooks.RemoveSocket()
+	}
+}
+
+func (c *Coordinator) restart(ctx context.Context, runID int, oldProc childProcess) restartCompleteEvent {
 	if oldProc != nil {
 		if _, err := oldProc.Stop(ctx); err != nil {
-			c.send(restartCompleteEvent{runID: runID, err: err})
-			return
+			return restartCompleteEvent{runID: runID, err: err}
 		}
 	}
 	select {
 	case <-ctx.Done():
-		c.send(restartCompleteEvent{runID: runID, err: ctx.Err()})
-		return
+		return restartCompleteEvent{runID: runID, err: ctx.Err()}
 	default:
 	}
 	proc, err := c.runner.Start(process.Options{
@@ -454,7 +493,7 @@ func (c *Coordinator) restart(ctx context.Context, runID int, oldProc childProce
 		Stdout:       os.Stdout,
 		Stderr:       os.Stderr,
 	})
-	c.send(restartCompleteEvent{runID: runID, proc: proc, err: err})
+	return restartCompleteEvent{runID: runID, proc: proc, err: err}
 }
 
 func (c *Coordinator) watchProcess(runID int, proc childProcess) {
@@ -586,10 +625,22 @@ func (c *Coordinator) notifyBrowserError(message string) {
 
 func (c *Coordinator) send(event any) bool {
 	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	select {
 	case c.events <- event:
 		return true
+	case <-c.done:
+		return false
 	default:
-		go func() { c.events <- event }()
+		go func() {
+			select {
+			case c.events <- event:
+			case <-c.done:
+			}
+		}()
 		return true
 	}
 }

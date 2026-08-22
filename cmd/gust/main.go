@@ -37,7 +37,10 @@ func run(ctx context.Context, args []string) error {
 	runCtx, cancel := context.WithCancel(runCtx)
 	defer cancel()
 
-	proxyServer, err := proxy.Start(runCtx, cfg, log)
+	serviceCtx, stopServices := context.WithCancel(ctx)
+	defer stopServices()
+
+	proxyServer, err := proxy.Start(serviceCtx, cfg, log)
 	if err != nil {
 		return err
 	}
@@ -46,7 +49,7 @@ func run(ctx context.Context, args []string) error {
 		coord.SetBrowserNotifier(proxyServer.BrowserHub())
 	}
 
-	socketServer, err := socket.Start(runCtx, cfg, log, coord)
+	socketServer, err := socket.Start(serviceCtx, cfg, log, coord)
 	if err != nil {
 		return err
 	}
@@ -63,6 +66,13 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer termCtl.Restore()
+
+	coord.SetShutdownHooks(coordinator.ShutdownHooks{
+		StopSocketAccepts: socketServer.StopAccepting,
+		CloseProxy:        proxyServer.Close,
+		RestoreTerminal:   termCtl.Restore,
+		RemoveSocket:      socketServer.Remove,
+	})
 
 	if err := coord.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 		return err

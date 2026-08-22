@@ -24,6 +24,7 @@ type fakeRunner struct {
 	started chan *fakeProcess
 	blocks  []chan struct{}
 	err     error
+	onStop  func()
 }
 
 func newFakeRunner() *fakeRunner {
@@ -49,6 +50,7 @@ func (r *fakeRunner) Start(process.Options) (childProcess, error) {
 		return nil, err
 	}
 	proc := newFakeProcess(startNumber)
+	proc.onStop = r.onStop
 	r.started <- proc
 	return proc, nil
 }
@@ -68,9 +70,10 @@ func (r *fakeRunner) startCount() int {
 }
 
 type fakeProcess struct {
-	pid  int
-	done chan struct{}
-	once sync.Once
+	pid    int
+	done   chan struct{}
+	once   sync.Once
+	onStop func()
 }
 
 func newFakeProcess(pid int) *fakeProcess {
@@ -91,7 +94,12 @@ func (p *fakeProcess) ExitEvent() (process.ExitEvent, bool) {
 }
 
 func (p *fakeProcess) Stop(context.Context) (process.ExitEvent, error) {
-	p.once.Do(func() { close(p.done) })
+	p.once.Do(func() {
+		if p.onStop != nil {
+			p.onStop()
+		}
+		close(p.done)
+	})
 	return process.ExitEvent{PID: p.pid, Code: 0}, nil
 }
 
@@ -409,6 +417,99 @@ func TestCoordinatorTriggerDuringReadinessCancelsStaleReadiness(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+func TestCoordinatorShutdownRunsCleanupInOrder(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	var mu sync.Mutex
+	var order []string
+	record := func(step string) func() error {
+		return func() error {
+			mu.Lock()
+			order = append(order, step)
+			mu.Unlock()
+			return nil
+		}
+	}
+	runner := newFakeRunner()
+	runner.onStop = func() {
+		mu.Lock()
+		order = append(order, "child")
+		mu.Unlock()
+	}
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	coord.SetShutdownHooks(ShutdownHooks{
+		StopSocketAccepts: record("socket_accepts"),
+		CloseProxy:        record("proxy"),
+		RestoreTerminal:   record("terminal"),
+		RemoveSocket:      record("socket_remove"),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	if !coord.Shutdown() {
+		t.Fatal("Shutdown returned false")
+	}
+	<-done
+
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	want := []string{"socket_accepts", "child", "proxy", "terminal", "socket_remove"}
+	if len(got) != len(want) {
+		t.Fatalf("cleanup order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("cleanup order = %v, want %v", got, want)
+		}
+	}
+	if coord.Trigger(TriggerManual, "after shutdown") {
+		t.Fatal("trigger accepted after shutdown")
+	}
+}
+
+func TestCoordinatorShutdownWinsDuringRestart(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	first := waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	block := runner.blockNext()
+	coord.Trigger(TriggerManual, "restart")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+	if !coord.Shutdown() {
+		t.Fatal("Shutdown returned false")
+	}
+	close(block)
+	<-done
+	select {
+	case proc := <-runner.started:
+		select {
+		case <-proc.Done():
+		default:
+			t.Fatalf("process %d was left running after shutdown", proc.PID())
+		}
+	default:
+	}
+	select {
+	case <-first.Done():
+	default:
+		t.Fatal("old process was not stopped")
+	}
+	if starts := runner.startCount(); starts != 2 {
+		t.Fatalf("starts = %d, want 2", starts)
+	}
+	if status, err := coord.Status(context.Background()); err == nil || status.State != "" {
+		t.Fatalf("status after shutdown = %+v, err %v; want error", status, err)
+	}
 }
 
 func TestCoordinatorDebouncedFilesystemTriggerCoalescesDuringRestart(t *testing.T) {

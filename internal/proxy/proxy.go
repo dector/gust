@@ -23,10 +23,11 @@ import (
 
 // Server is Gust's development HTTP proxy.
 type Server struct {
-	server   *http.Server
-	listener net.Listener
-	log      *logger.Logger
-	hub      *BrowserHub
+	server    *http.Server
+	listener  net.Listener
+	log       *logger.Logger
+	hub       *BrowserHub
+	closeOnce sync.Once
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -181,10 +182,14 @@ func (s *Server) Close() error {
 	if s == nil || s.server == nil {
 		return nil
 	}
-	s.hub.close()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	return s.server.Shutdown(ctx)
+	var err error
+	s.closeOnce.Do(func() {
+		s.hub.close()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		err = s.server.Shutdown(ctx)
+	})
+	return err
 }
 
 func (s *Server) handler(target *url.URL) http.Handler {
