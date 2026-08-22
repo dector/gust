@@ -55,6 +55,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer socketServer.Close()
 
+	keysEnabled := term.IsTerminal(os.Stdin)
 	termCtl := term.New(os.Stdin, log,
 		func() { coord.Trigger(coordinator.TriggerManual, "keyboard") },
 		func() {
@@ -62,6 +63,15 @@ func run(ctx context.Context, args []string) error {
 			cancel()
 		},
 	)
+	log.PrintStartup(logger.StartupConfig{
+		Exec:         cfg.Exec,
+		HasAppPort:   cfg.HasAppPort,
+		AppPort:      cfg.AppPort,
+		ProxyEnabled: cfg.ProxyEnabled,
+		ProxyPort:    cfg.ProxyPort,
+		HealthPath:   cfg.HealthPath,
+	}, socketServer.Path(), keysEnabled)
+
 	if err := termCtl.Start(runCtx); err != nil {
 		return err
 	}

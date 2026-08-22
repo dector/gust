@@ -49,9 +49,6 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl contr
 		return nil, err
 	}
 	s := &Server{path: path, ln: ln, log: log}
-	if log != nil {
-		log.Printf("socket: %s", path)
-	}
 	go func() {
 		<-ctx.Done()
 		s.Close()
@@ -76,6 +73,14 @@ func Path(root string) (string, error) {
 	sum := sha256.Sum256([]byte(abs))
 	hash := hex.EncodeToString(sum[:])[:32]
 	return filepath.Join(os.TempDir(), fmt.Sprintf("gust-%d", os.Getuid()), hash+".sock"), nil
+}
+
+// Path returns the socket filesystem path.
+func (s *Server) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
 }
 
 // StopAccepting stops accepting new socket requests.

@@ -516,7 +516,7 @@ func (c *Coordinator) forwardWatcherEvents(w *watcher.Watcher) {
 func (c *Coordinator) checkReadiness(ctx context.Context, runID int, proc childProcess) {
 	var err error
 	if c.cfg.HealthPath != "" {
-		err = waitForHealth(ctx, proc, c.cfg.AppPort, c.cfg.HealthPath)
+		err = c.waitForHealth(ctx, proc, c.cfg.AppPort, c.cfg.HealthPath)
 	} else {
 		err = waitForStability(ctx, proc)
 	}
@@ -540,7 +540,7 @@ func waitForStability(ctx context.Context, proc childProcess) error {
 	}
 }
 
-func waitForHealth(ctx context.Context, proc childProcess, appPort int, healthPath string) error {
+func (c *Coordinator) waitForHealth(ctx context.Context, proc childProcess, appPort int, healthPath string) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d%s", appPort, healthPath)
 	deadline := time.NewTimer(readinessHealthTimeout)
 	defer deadline.Stop()
@@ -551,10 +551,19 @@ func waitForHealth(ctx context.Context, proc childProcess, appPort int, healthPa
 	check := func() bool {
 		resp, err := client.Get(url)
 		if err != nil {
+			if c.log != nil {
+				c.log.Verbosef("health retry: GET %s failed: %v", url, err)
+			}
 			return false
 		}
 		defer resp.Body.Close()
-		return resp.StatusCode >= 200 && resp.StatusCode <= 299
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			if c.log != nil {
+				c.log.Verbosef("health retry: GET %s returned %d", url, resp.StatusCode)
+			}
+			return false
+		}
+		return true
 	}
 	for {
 		if check() {

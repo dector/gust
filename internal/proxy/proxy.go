@@ -205,7 +205,7 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		interval: config.ProxyRetryInterval,
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return injectHTMLResponse(resp, s.hub.currentVersion())
+		return injectHTMLResponse(resp, s.hub.currentVersion(), s.log)
 	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -329,8 +329,11 @@ connect();
 })();</script>`, version)
 }
 
-func injectHTMLResponse(resp *http.Response, version int) error {
-	if !shouldInjectHTML(resp) {
+func injectHTMLResponse(resp *http.Response, version int, log *logger.Logger) error {
+	if ok, reason := shouldInjectHTMLReason(resp); !ok {
+		if log != nil {
+			log.Verbosef("skipped HTML injection: %s", reason)
+		}
 		return nil
 	}
 	hadContentLength := resp.Header.Get("Content-Length") != ""
@@ -342,6 +345,9 @@ func injectHTMLResponse(resp *http.Response, version int) error {
 	_ = resp.Body.Close()
 
 	if bytes.Contains(body, []byte("__gust_reload")) {
+		if log != nil {
+			log.Verbosef("skipped HTML injection: marker already present")
+		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		if hadContentLength {
 			resp.ContentLength = int64(len(body))
@@ -403,28 +409,39 @@ func (w *flushNoLengthWriter) flush() {
 }
 
 func shouldInjectHTML(resp *http.Response) bool {
+	ok, _ := shouldInjectHTMLReason(resp)
+	return ok
+}
+
+func shouldInjectHTMLReason(resp *http.Response) (bool, string) {
 	if resp == nil || resp.Request == nil {
-		return false
+		return false, "missing response request"
 	}
-	if resp.Request.Method == http.MethodHead || resp.Request.Header.Get("Range") != "" {
-		return false
+	if resp.Request.Method == http.MethodHead {
+		return false, "HEAD request"
+	}
+	if resp.Request.Header.Get("Range") != "" {
+		return false, "range request"
 	}
 	if resp.StatusCode == http.StatusPartialContent {
-		return false
+		return false, "partial content response"
 	}
 	contentType := resp.Header.Get("Content-Type")
 	lowerContentType := strings.ToLower(contentType)
-	if !strings.Contains(lowerContentType, "text/html") || strings.Contains(lowerContentType, "application/xhtml+xml") {
-		return false
+	if strings.Contains(lowerContentType, "application/xhtml+xml") {
+		return false, "xhtml content type"
+	}
+	if !strings.Contains(lowerContentType, "text/html") {
+		return false, "non-html content type"
 	}
 	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Disposition")), "attachment") {
-		return false
+		return false, "attachment response"
 	}
 	encoding := strings.TrimSpace(strings.ToLower(resp.Header.Get("Content-Encoding")))
 	if encoding != "" && encoding != "identity" {
-		return false
+		return false, "encoded response"
 	}
-	return true
+	return true, ""
 }
 
 type retryTransport struct {
