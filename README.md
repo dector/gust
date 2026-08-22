@@ -14,6 +14,13 @@ mise use -g ubi:dector/gust@snapshot
 
 The `snapshot` release is rebuilt on every push to `trunk`.
 
+As a Go tool:
+
+```sh
+go get -tool github.com/dector/gust@latest
+go tool gust -e 'go run ./cmd/server'
+```
+
 ## Usage
 
 ```sh
