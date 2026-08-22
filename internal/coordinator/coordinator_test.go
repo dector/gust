@@ -589,24 +589,24 @@ func statusSnapshot(coord *Coordinator) (Status, error) {
 
 func withReadinessTimings(t *testing.T, healthTimeout, healthInterval, stabilityWindow time.Duration) {
 	t.Helper()
-	oldHealthTimeout := readinessHealthTimeout
-	oldHealthInterval := readinessHealthInterval
-	oldStabilityWindow := readinessStabilityWindow
-	readinessHealthTimeout = healthTimeout
-	readinessHealthInterval = healthInterval
-	readinessStabilityWindow = stabilityWindow
+	oldHealthTimeout := readinessHealthTimeoutNS.Load()
+	oldHealthInterval := readinessHealthIntervalNS.Load()
+	oldStabilityWindow := readinessStabilityWindowNS.Load()
+	readinessHealthTimeoutNS.Store(int64(healthTimeout))
+	readinessHealthIntervalNS.Store(int64(healthInterval))
+	readinessStabilityWindowNS.Store(int64(stabilityWindow))
 	t.Cleanup(func() {
-		readinessHealthTimeout = oldHealthTimeout
-		readinessHealthInterval = oldHealthInterval
-		readinessStabilityWindow = oldStabilityWindow
+		readinessHealthTimeoutNS.Store(oldHealthTimeout)
+		readinessHealthIntervalNS.Store(oldHealthInterval)
+		readinessStabilityWindowNS.Store(oldStabilityWindow)
 	})
 }
 
 func withFSDebounce(t *testing.T, delay time.Duration) {
 	t.Helper()
-	oldDelay := fsDebounceDelay
-	fsDebounceDelay = delay
-	t.Cleanup(func() { fsDebounceDelay = oldDelay })
+	oldDelay := fsDebounceDelayNS.Load()
+	fsDebounceDelayNS.Store(int64(delay))
+	t.Cleanup(func() { fsDebounceDelayNS.Store(oldDelay) })
 }
 
 func startHealthServer(t *testing.T, code int) (int, func()) {

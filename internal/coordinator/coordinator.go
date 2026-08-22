@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dector/gust/internal/config"
@@ -120,11 +121,34 @@ type statusRequest struct {
 type shutdownRequested struct{}
 
 var (
-	readinessHealthTimeout   = config.HealthTimeout
-	readinessHealthInterval  = config.HealthInterval
-	readinessStabilityWindow = config.StabilityWindow
-	fsDebounceDelay          = config.FSDebounce
+	readinessHealthTimeoutNS   atomic.Int64
+	readinessHealthIntervalNS  atomic.Int64
+	readinessStabilityWindowNS atomic.Int64
+	fsDebounceDelayNS          atomic.Int64
 )
+
+func init() {
+	readinessHealthTimeoutNS.Store(int64(config.HealthTimeout))
+	readinessHealthIntervalNS.Store(int64(config.HealthInterval))
+	readinessStabilityWindowNS.Store(int64(config.StabilityWindow))
+	fsDebounceDelayNS.Store(int64(config.FSDebounce))
+}
+
+func readinessHealthTimeout() time.Duration {
+	return time.Duration(readinessHealthTimeoutNS.Load())
+}
+
+func readinessHealthInterval() time.Duration {
+	return time.Duration(readinessHealthIntervalNS.Load())
+}
+
+func readinessStabilityWindow() time.Duration {
+	return time.Duration(readinessStabilityWindowNS.Load())
+}
+
+func fsDebounceDelay() time.Duration {
+	return time.Duration(fsDebounceDelayNS.Load())
+}
 
 // ShutdownHooks are cleanup steps for resources owned outside the coordinator.
 type ShutdownHooks struct {
@@ -328,7 +352,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					fsDebouncePending = true
 					fsDebounceSeq++
 					if fsDebounceTimer == nil {
-						fsDebounceTimer = time.NewTimer(fsDebounceDelay)
+						fsDebounceTimer = time.NewTimer(fsDebounceDelay())
 					} else {
 						if !fsDebounceTimer.Stop() {
 							select {
@@ -336,7 +360,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 							default:
 							}
 						}
-						fsDebounceTimer.Reset(fsDebounceDelay)
+						fsDebounceTimer.Reset(fsDebounceDelay())
 					}
 					continue
 				}
@@ -528,7 +552,7 @@ func (c *Coordinator) checkReadiness(ctx context.Context, runID int, proc childP
 }
 
 func waitForStability(ctx context.Context, proc childProcess) error {
-	timer := time.NewTimer(readinessStabilityWindow)
+	timer := time.NewTimer(readinessStabilityWindow())
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -542,11 +566,12 @@ func waitForStability(ctx context.Context, proc childProcess) error {
 
 func (c *Coordinator) waitForHealth(ctx context.Context, proc childProcess, appPort int, healthPath string) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d%s", appPort, healthPath)
-	deadline := time.NewTimer(readinessHealthTimeout)
+	healthInterval := readinessHealthInterval()
+	deadline := time.NewTimer(readinessHealthTimeout())
 	defer deadline.Stop()
-	ticker := time.NewTicker(readinessHealthInterval)
+	ticker := time.NewTicker(healthInterval)
 	defer ticker.Stop()
-	client := &http.Client{Timeout: readinessHealthInterval}
+	client := &http.Client{Timeout: healthInterval}
 
 	check := func() bool {
 		resp, err := client.Get(url)
