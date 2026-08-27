@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -9,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dector/gust/internal/config"
+	"github.com/dector/gust/internal/logger"
 	"github.com/dector/gust/internal/process"
 )
 
@@ -372,6 +375,88 @@ func TestCoordinatorManualTriggerCancelsPendingFilesystemDebounce(t *testing.T) 
 	if starts := runner.startCount(); starts != 2 {
 		t.Fatalf("starts after canceled debounce = %d, want 2", starts)
 	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorToggleAutoReloadPausesFilesystemOnly(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 20*time.Millisecond)
+	runner := newFakeRunner()
+	var out bytes.Buffer
+	coord := newWithRunner(config.Config{Exec: "test"}, logger.New(&out, false), runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.ToggleAutoReload()
+	waitFor(t, func() bool { return strings.Contains(out.String(), "Auto-reload paused") })
+	coord.Trigger(TriggerFS, "fs while paused")
+	time.Sleep(50 * time.Millisecond)
+	if starts := runner.startCount(); starts != 1 {
+		t.Fatalf("starts while paused = %d, want 1", starts)
+	}
+	coord.Trigger(TriggerManual, "manual")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+	coord.ToggleAutoReload()
+	waitFor(t, func() bool { return strings.Contains(out.String(), "Auto-reload resumed") })
+	coord.Trigger(TriggerFS, "fs after resume")
+	waitFor(t, func() bool { return runner.startCount() == 3 })
+	if log := out.String(); !strings.Contains(log, "\x1b[3mAuto-reload paused\x1b[23m") || !strings.Contains(log, "\x1b[3mAuto-reload resumed\x1b[23m") {
+		t.Fatalf("log = %q, want italic pause/resume messages", log)
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorToggleAutoReloadResumesMissedFilesystemTrigger(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 20*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.ToggleAutoReload()
+	coord.Trigger(TriggerFS, "fs while paused")
+	time.Sleep(50 * time.Millisecond)
+	if starts := runner.startCount(); starts != 1 {
+		t.Fatalf("starts while paused = %d, want 1", starts)
+	}
+	coord.ToggleAutoReload()
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorToggleAutoReloadResumesCanceledPendingFilesystemDebounce(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 80*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.Trigger(TriggerFS, "fs")
+	time.Sleep(10 * time.Millisecond)
+	coord.ToggleAutoReload()
+	time.Sleep(100 * time.Millisecond)
+	if starts := runner.startCount(); starts != 1 {
+		t.Fatalf("starts after paused debounce = %d, want 1", starts)
+	}
+	coord.ToggleAutoReload()
+	waitFor(t, func() bool { return runner.startCount() == 2 })
 
 	cancel()
 	<-done

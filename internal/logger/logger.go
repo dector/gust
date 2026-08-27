@@ -58,6 +58,6 @@ func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled 
 		l.Printf("socket: %s", socketPath)
 	}
 	if keysEnabled {
-		l.Printf("keys: r=rerun, q=quit")
+		l.Printf("keys: r=rerun, s=pause/resume auto-reload, q=quit")
 	}
 }

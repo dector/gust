@@ -60,6 +60,7 @@ func Run(ctx context.Context, args []string) error {
 	keysEnabled := term.IsTerminal(os.Stdin)
 	termCtl := term.New(os.Stdin, log,
 		func() { coord.Trigger(coordinator.TriggerManual, "keyboard") },
+		func() { coord.ToggleAutoReload() },
 		func() {
 			coord.Shutdown()
 			cancel()

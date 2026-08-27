@@ -143,6 +143,7 @@ Trigger sources:
 
 - filesystem changes
 - keyboard `r`
+- keyboard `s` to pause/resume auto-reload from file watching
 - agent socket `rerun`
 - initial startup
 
@@ -150,6 +151,10 @@ Rules:
 
 - FS triggers are debounced by `500ms`.
 - Manual and agent triggers have higher priority.
+- Keyboard `s` toggles auto-reload from file watching.
+- When auto-reload is paused, FS triggers are remembered and any pending FS debounce is canceled.
+- Resuming auto-reload runs one restart if any FS trigger was missed while paused.
+- Manual `r` and agent rerun still work while auto-reload is paused.
 - Manual/agent trigger during FS debounce cancels the pending FS trigger and runs immediately.
 - During an active restart, new triggers are coalesced into one pending rerun.
 - If a trigger arrives during readiness/reload wait, stale readiness/reload is canceled and the pending rerun starts.
@@ -440,7 +445,7 @@ Startup prints applicable lines:
 [gust] proxy: http://127.0.0.1:5000
 [gust] health: http://127.0.0.1:8080/health
 [gust] socket: /tmp/gust-1000/<hash>.sock
-[gust] keys: r=rerun, q=quit
+[gust] keys: r=rerun, s=pause/resume auto-reload, q=quit
 ```
 
 Verbose `-v` logs include watcher events, skipped injection, socket requests, health retries, and similar diagnostics.

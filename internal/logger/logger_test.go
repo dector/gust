@@ -49,7 +49,7 @@ func TestPrintStartupSelectedOutput(t *testing.T) {
 		"[gust] proxy: http://127.0.0.1:5000\n" +
 		"[gust] health: http://127.0.0.1:8080/health\n" +
 		"[gust] socket: /tmp/gust-1000/hash.sock\n" +
-		"[gust] keys: r=rerun, q=quit\n"
+		"[gust] keys: r=rerun, s=pause/resume auto-reload, q=quit\n"
 	if got := out.String(); got != want {
 		t.Fatalf("startup output = %q, want %q", got, want)
 	}

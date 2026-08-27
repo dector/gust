@@ -45,7 +45,7 @@ Flags:
 
 `--exclude.glob` values use Go filepath glob syntax and are matched against both the project-relative path and the file basename. The pattern must match the whole value. `*` does not cross `/`, so `assets/*.tmp` matches `assets/cache.tmp` but not `assets/nested/cache.tmp`. A basename glob like `*_templ.go` matches files with that name pattern in any directory.
 
-When stdin is a terminal, press `r` to rerun and `q` or Ctrl-C to quit. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
+When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload from file watching, and `q` or Ctrl-C to quit. Manual `r` reruns still work while auto-reload is paused. Resuming runs one reload if file changes were missed. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
 
 ## V1 limitations
 

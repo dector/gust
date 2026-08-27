@@ -32,7 +32,7 @@ func TestStartNonTTYDisablesKeyboardControls(t *testing.T) {
 	defer w.Close()
 
 	var out bytes.Buffer
-	ctl := New(r, logger.New(&out, false), nil, nil)
+	ctl := New(r, logger.New(&out, false), nil, nil, nil)
 	if err := ctl.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}

@@ -19,8 +19,9 @@ type Controller struct {
 	file *os.File
 	log  *logger.Logger
 
-	onRerun func()
-	onQuit  func()
+	onRerun            func()
+	onToggleAutoReload func()
+	onQuit             func()
 
 	mu       sync.Mutex
 	oldState *unix.Termios
@@ -28,8 +29,8 @@ type Controller struct {
 }
 
 // New creates a terminal controller for stdin.
-func New(stdin *os.File, log *logger.Logger, onRerun, onQuit func()) *Controller {
-	return &Controller{file: stdin, log: log, onRerun: onRerun, onQuit: onQuit}
+func New(stdin *os.File, log *logger.Logger, onRerun, onToggleAutoReload, onQuit func()) *Controller {
+	return &Controller{file: stdin, log: log, onRerun: onRerun, onToggleAutoReload: onToggleAutoReload, onQuit: onQuit}
 }
 
 // IsTerminal reports whether f is a terminal.
@@ -101,6 +102,10 @@ func (c *Controller) readKeys(ctx context.Context) {
 		case 'r', 'R':
 			if c.onRerun != nil {
 				c.onRerun()
+			}
+		case 's', 'S':
+			if c.onToggleAutoReload != nil {
+				c.onToggleAutoReload()
 			}
 		case 'q', 'Q', keyCtrlC:
 			if c.onQuit != nil {

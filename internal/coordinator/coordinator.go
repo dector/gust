@@ -108,6 +108,8 @@ type debouncedFSTriggerEvent struct {
 	seq int
 }
 
+type autoReloadToggleEvent struct{}
+
 type readinessCompleteEvent struct {
 	runID int
 	ready bool
@@ -207,6 +209,14 @@ func (c *Coordinator) Trigger(source TriggerSource, reason string) bool {
 	return c.send(triggerEvent{source: source, reason: reason})
 }
 
+// ToggleAutoReload pauses or resumes restarts caused by filesystem watcher events.
+func (c *Coordinator) ToggleAutoReload() bool {
+	if c.isShuttingDown() {
+		return false
+	}
+	return c.send(autoReloadToggleEvent{})
+}
+
 // Status returns the current externally-visible coordinator state.
 func (c *Coordinator) Status(ctx context.Context) (Status, error) {
 	if c.isShuttingDown() {
@@ -245,6 +255,8 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var fsDebounceTimer *time.Timer
 	var fsDebouncePending bool
 	var fsDebounceSeq int
+	var autoReloadPaused bool
+	var autoReloadMissedFS bool
 	browser := BrowserState{}
 
 	var watchCancel context.CancelFunc
@@ -351,6 +363,10 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					continue
 				}
 				if ev.source == TriggerFS {
+					if autoReloadPaused {
+						autoReloadMissedFS = true
+						continue
+					}
 					fsDebouncePending = true
 					fsDebounceSeq++
 					if fsDebounceTimer == nil {
@@ -368,11 +384,31 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				}
 				if ev.source == TriggerManual || ev.source == TriggerAgent {
 					cancelFSDebounce()
+					autoReloadMissedFS = false
 				}
 				requestRestart(ev.reason)
 			case debouncedFSTriggerEvent:
-				if ev.seq == fsDebounceSeq {
+				if !autoReloadPaused && ev.seq == fsDebounceSeq {
 					requestRestart("filesystem change")
+				}
+			case autoReloadToggleEvent:
+				autoReloadPaused = !autoReloadPaused
+				if autoReloadPaused {
+					if fsDebouncePending {
+						autoReloadMissedFS = true
+					}
+					cancelFSDebounce()
+					if c.log != nil {
+						c.log.Printf("\x1b[3mAuto-reload paused\x1b[23m")
+					}
+				} else {
+					if c.log != nil {
+						c.log.Printf("\x1b[3mAuto-reload resumed\x1b[23m")
+					}
+					if autoReloadMissedFS {
+						autoReloadMissedFS = false
+						requestRestart("filesystem change")
+					}
 				}
 			case processExitedEvent:
 				if ev.runID != runID || state == stateShuttingDown {
