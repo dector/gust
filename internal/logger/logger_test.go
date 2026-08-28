@@ -31,6 +31,29 @@ func TestVerbosefHonorsVerboseMode(t *testing.T) {
 	}
 }
 
+func TestPrintfColorsPrefixWhenEnabled(t *testing.T) {
+	var out bytes.Buffer
+	log := NewWithOptions(&out, false, Options{Color: AlwaysColor})
+
+	log.Printf("hello")
+
+	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m hello\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestNoColorDisablesForcedColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	var out bytes.Buffer
+	log := NewWithOptions(&out, false, Options{Color: AlwaysColor})
+
+	log.Printf("hello")
+
+	if got, want := out.String(), "[gust] hello\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestPrintStartupSelectedOutput(t *testing.T) {
 	var out bytes.Buffer
 	log := New(&out, false)
