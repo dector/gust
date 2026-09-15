@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/dector/gust/internal/config"
+	"github.com/dector/gust/internal/coordinator"
 )
 
 func TestProxyForwardsRequestsAndBodies(t *testing.T) {
@@ -83,6 +84,39 @@ func TestProxyReservesGustPaths(t *testing.T) {
 	}
 	if appHit {
 		t.Fatal("reserved Gust path was forwarded to app")
+	}
+}
+
+func TestProxyServesStatus(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+
+	started := time.Now().Add(-time.Second).UTC()
+	server.SetStatusProvider(func(context.Context) (coordinator.Status, error) {
+		uptime := int64(1000)
+		return coordinator.Status{Process: coordinator.ProcessStatus{
+			Running: true, StartedAt: &started, UptimeMS: &uptime,
+			LastExit: &coordinator.LastExit{Code: 1, At: started, PassedMS: 1000, Error: true,
+				Logs: &coordinator.ProcessLogs{Stdout: "out", Stderr: "err"}},
+		}}, nil
+	})
+
+	resp, err := http.Get(proxyURL + "/__gust/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("response = status %d content-type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	var status coordinator.ProcessStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Running || status.UptimeMS == nil || status.LastExit == nil || status.LastExit.PassedMS != 1000 || status.LastExit.Logs.Stderr != "err" {
+		t.Fatalf("status = %+v", status)
 	}
 }
 

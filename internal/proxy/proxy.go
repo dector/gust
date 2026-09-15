@@ -18,6 +18,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/dector/gust/internal/config"
+	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
 )
 
@@ -28,6 +29,9 @@ type Server struct {
 	log       *logger.Logger
 	hub       *BrowserHub
 	closeOnce sync.Once
+
+	statusMu       sync.RWMutex
+	statusProvider func(context.Context) (coordinator.Status, error)
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -177,6 +181,16 @@ func (s *Server) BrowserHub() *BrowserHub {
 	return s.hub
 }
 
+// SetStatusProvider configures the source for /__gust/status responses.
+func (s *Server) SetStatusProvider(provider func(context.Context) (coordinator.Status, error)) {
+	if s == nil {
+		return
+	}
+	s.statusMu.Lock()
+	s.statusProvider = provider
+	s.statusMu.Unlock()
+}
+
 // Close stops the proxy server.
 func (s *Server) Close() error {
 	if s == nil || s.server == nil {
@@ -221,6 +235,10 @@ func (s *Server) handler(target *url.URL) http.Handler {
 			s.serveWebSocket(w, r)
 			return
 		}
+		if r.URL.Path == "/__gust/status" {
+			s.serveStatus(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/__gust/") {
 			http.NotFound(w, r)
 			return
@@ -231,6 +249,28 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		}
 		rp.ServeHTTP(&flushNoLengthWriter{ResponseWriter: w}, r)
 	})
+}
+
+func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.statusMu.RLock()
+	provider := s.statusProvider
+	s.statusMu.RUnlock()
+	if provider == nil {
+		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	status, err := provider(r.Context())
+	if err != nil {
+		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(status.Process)
 }
 
 func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -56,6 +57,32 @@ type Status struct {
 	Version      int
 	BrowserReady bool
 	BrowserError string
+
+	// Process is the status exposed by the proxy's /__gust/status endpoint.
+	Process ProcessStatus
+}
+
+// ProcessStatus is a snapshot of the proxied application process.
+type ProcessStatus struct {
+	Running   bool       `json:"running"`
+	StartedAt *time.Time `json:"startedAt"`
+	UptimeMS  *int64     `json:"uptimeMs"`
+	LastExit  *LastExit  `json:"lastExit"`
+}
+
+// LastExit describes the most recent application process exit.
+type LastExit struct {
+	Code     int          `json:"code"`
+	At       time.Time    `json:"at"`
+	PassedMS int64        `json:"passedMs"`
+	Error    bool         `json:"error"`
+	Logs     *ProcessLogs `json:"logs"`
+}
+
+// ProcessLogs contains output produced by a failed application process.
+type ProcessLogs struct {
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
 }
 
 // BrowserState is the latest app readiness state intended for browser clients.
@@ -99,9 +126,10 @@ type processExitedEvent struct {
 }
 
 type restartCompleteEvent struct {
-	runID int
-	proc  childProcess
-	err   error
+	runID  int
+	proc   childProcess
+	output *processOutput
+	err    error
 }
 
 type debouncedFSTriggerEvent struct {
@@ -119,6 +147,13 @@ type readinessCompleteEvent struct {
 type statusRequest struct {
 	reply chan Status
 }
+
+type processOutput struct {
+	stdout *limitedBuffer
+	stderr *limitedBuffer
+}
+
+const maxCapturedOutput = 64 * 1024
 
 type shutdownRequested struct{}
 
@@ -245,6 +280,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	defer c.doneOnce.Do(func() { close(c.done) })
 	state := stateStopped
 	var proc childProcess
+	var procStartedAt time.Time
+	var procOutput *processOutput
+	var lastExit *LastExit
 	var runID int
 	var version int
 	var pendingRerun bool
@@ -415,6 +453,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					continue
 				}
 				c.logProcessExit(ev.event)
+				lastExit = makeLastExit(ev.event, procOutput)
 				if readinessCancel != nil {
 					readinessCancel()
 					readinessCancel = nil
@@ -449,6 +488,8 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					}
 				} else {
 					proc = ev.proc
+					procStartedAt = time.Now()
+					procOutput = ev.output
 					if c.log != nil {
 						c.log.Printf("started process pid=%d", proc.PID())
 					}
@@ -495,7 +536,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					startRestart("pending")
 				}
 			case statusRequest:
-				ev.reply <- makeStatus(state, proc, c.cfg, version, browser)
+				ev.reply <- makeStatus(state, proc, procStartedAt, lastExit, c.cfg, version, browser)
 			case shutdownRequested:
 				state = stateShuttingDown
 				c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc)
@@ -549,17 +590,20 @@ func (c *Coordinator) restart(ctx context.Context, runID int, oldProc childProce
 		return restartCompleteEvent{runID: runID, err: ctx.Err()}
 	default:
 	}
+	output := &processOutput{
+		stdout: &limitedBuffer{limit: maxCapturedOutput},
+		stderr: &limitedBuffer{limit: maxCapturedOutput},
+	}
 	proc, err := c.runner.Start(process.Options{
-		Command:      c.cfg.Exec,
-		Root:         c.cfg.Root,
-		AppPort:      c.cfg.AppPort,
-		HasAppPort:   c.cfg.HasAppPort,
-		ProxyPort:    c.cfg.ProxyPort,
-		ProxyEnabled: c.cfg.ProxyEnabled,
-		Stdout:       os.Stdout,
-		Stderr:       os.Stderr,
+		Command:    c.cfg.Exec,
+		Root:       c.cfg.Root,
+		AppPort:    c.cfg.AppPort,
+		HasAppPort: c.cfg.HasAppPort,
+		ProxyPort:  c.cfg.ProxyPort,
+		Stdout:     io.MultiWriter(os.Stdout, output.stdout),
+		Stderr:     io.MultiWriter(os.Stderr, output.stderr),
 	})
-	return restartCompleteEvent{runID: runID, proc: proc, err: err}
+	return restartCompleteEvent{runID: runID, proc: proc, output: output, err: err}
 }
 
 func (c *Coordinator) watchProcess(runID int, proc childProcess) {
@@ -669,10 +713,21 @@ func processExitBrowserError(event process.ExitEvent) string {
 	return "process exited"
 }
 
-func makeStatus(state internalState, proc childProcess, cfg config.Config, version int, browser BrowserState) Status {
+func makeStatus(state internalState, proc childProcess, startedAt time.Time, lastExit *LastExit, cfg config.Config, version int, browser BrowserState) Status {
 	pid := 0
+	process := ProcessStatus{LastExit: lastExit}
 	if proc != nil {
 		pid = proc.PID()
+		process.Running = true
+		started := startedAt.UTC()
+		uptime := time.Since(startedAt).Milliseconds()
+		process.StartedAt = &started
+		process.UptimeMS = &uptime
+	}
+	if process.LastExit != nil {
+		exit := *process.LastExit
+		exit.PassedMS = time.Since(exit.At).Milliseconds()
+		process.LastExit = &exit
 	}
 	return Status{
 		State:        externalState(state),
@@ -682,7 +737,16 @@ func makeStatus(state internalState, proc childProcess, cfg config.Config, versi
 		Version:      version,
 		BrowserReady: browser.Ready,
 		BrowserError: browser.Error,
+		Process:      process,
 	}
+}
+
+func makeLastExit(event process.ExitEvent, output *processOutput) *LastExit {
+	exit := &LastExit{Code: event.Code, At: time.Now().UTC(), Error: event.Err != nil || event.Code != 0}
+	if exit.Error && output != nil {
+		exit.Logs = &ProcessLogs{Stdout: output.stdout.String(), Stderr: output.stderr.String()}
+	}
+	return exit
 }
 
 func externalState(state internalState) ExternalState {

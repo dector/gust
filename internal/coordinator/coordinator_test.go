@@ -121,6 +121,9 @@ func TestCoordinatorInitialStartAndStatus(t *testing.T) {
 	if status.AppPort != 8080 || status.ProxyPort != 5000 {
 		t.Fatalf("ports = %d:%d", status.AppPort, status.ProxyPort)
 	}
+	if !status.Process.Running || status.Process.StartedAt == nil || status.Process.UptimeMS == nil || status.Process.LastExit != nil {
+		t.Fatalf("process status = %+v", status.Process)
+	}
 
 	cancel()
 	<-done
