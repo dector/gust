@@ -465,6 +465,28 @@ func TestCoordinatorToggleAutoReloadResumesCanceledPendingFilesystemDebounce(t *
 	<-done
 }
 
+func TestCoordinatorInfoLogsFilesystemTrigger(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 10*time.Millisecond)
+	runner := newFakeRunner()
+	var out bytes.Buffer
+	coord := newWithRunner(config.Config{Exec: "test", Info: true}, logger.New(&out, false), runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.Trigger(TriggerFS, "/project/changed.txt")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+	if !strings.Contains(out.String(), "reload triggered by: /project/changed.txt") {
+		t.Fatalf("log = %q, want filesystem trigger path", out.String())
+	}
+
+	cancel()
+	<-done
+}
+
 func TestCoordinatorRestartsFromWatcherEvent(t *testing.T) {
 	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
 	withFSDebounce(t, 10*time.Millisecond)

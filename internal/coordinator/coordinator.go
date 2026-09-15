@@ -138,6 +138,8 @@ type debouncedFSTriggerEvent struct {
 
 type autoReloadToggleEvent struct{}
 
+type infoToggleEvent struct{}
+
 type readinessCompleteEvent struct {
 	runID int
 	ready bool
@@ -252,6 +254,14 @@ func (c *Coordinator) ToggleAutoReload() bool {
 	return c.send(autoReloadToggleEvent{})
 }
 
+// ToggleInfo enables or disables informational logs about filesystem reloads.
+func (c *Coordinator) ToggleInfo() bool {
+	if c.isShuttingDown() {
+		return false
+	}
+	return c.send(infoToggleEvent{})
+}
+
 // Status returns the current externally-visible coordinator state.
 func (c *Coordinator) Status(ctx context.Context) (Status, error) {
 	if c.isShuttingDown() {
@@ -293,8 +303,10 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var fsDebounceTimer *time.Timer
 	var fsDebouncePending bool
 	var fsDebounceSeq int
+	var fsTriggerReason string
 	var autoReloadPaused bool
 	var autoReloadMissedFS bool
+	infoEnabled := c.cfg.Info
 	browser := BrowserState{}
 
 	var watchCancel context.CancelFunc
@@ -401,6 +413,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					continue
 				}
 				if ev.source == TriggerFS {
+					fsTriggerReason = ev.reason
 					if autoReloadPaused {
 						autoReloadMissedFS = true
 						continue
@@ -427,6 +440,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				requestRestart(ev.reason)
 			case debouncedFSTriggerEvent:
 				if !autoReloadPaused && ev.seq == fsDebounceSeq {
+					if infoEnabled && c.log != nil {
+						c.log.Printf("reload triggered by: %s", fsTriggerReason)
+					}
 					requestRestart("filesystem change")
 				}
 			case autoReloadToggleEvent:
@@ -445,7 +461,19 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					}
 					if autoReloadMissedFS {
 						autoReloadMissedFS = false
+						if infoEnabled && c.log != nil {
+							c.log.Printf("reload triggered by: %s", fsTriggerReason)
+						}
 						requestRestart("filesystem change")
+					}
+				}
+			case infoToggleEvent:
+				infoEnabled = !infoEnabled
+				if c.log != nil {
+					if infoEnabled {
+						c.log.Printf("info logs enabled")
+					} else {
+						c.log.Printf("info logs disabled")
 					}
 				}
 			case processExitedEvent:

@@ -24,5 +24,6 @@ type Config struct {
 	Excludes     []string
 	ExcludeGlobs []string
 	Verbose      bool
+	Info         bool
 	Root         string
 }

@@ -28,6 +28,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	var excludes repeatableStrings
 	var excludeGlobs repeatableStrings
 	var cfg config.Config
+	cfg.Info = os.Getenv("GUST_INFO") == "1"
 	var portSpec string
 
 	fs := flag.NewFlagSet("gust", flag.ContinueOnError)

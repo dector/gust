@@ -21,6 +21,17 @@ func TestParseRequiredExec(t *testing.T) {
 	}
 }
 
+func TestParseInfoFromEnvironment(t *testing.T) {
+	t.Setenv("GUST_INFO", "1")
+	cfg, err := ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil {
+		t.Fatalf("ParseWithOutput returned error: %v", err)
+	}
+	if !cfg.Info {
+		t.Fatal("Info = false, want true")
+	}
+}
+
 func TestParseMinimal(t *testing.T) {
 	var out bytes.Buffer
 	cfg, err := ParseWithOutput([]string{"-e", "go test ./..."}, &out)

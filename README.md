@@ -40,12 +40,13 @@ Flags:
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
 - `-v`: verbose Gust logs.
+- `GUST_INFO=1`: enable info logs initially. Press `i` to toggle them.
 
 `--exclude` values are relative path prefixes. Use them for directories or whole subtrees, for example `--exclude frontend/node_modules`.
 
 `--exclude.glob` values use Go filepath glob syntax and are matched against both the project-relative path and the file basename. The pattern must match the whole value. `*` does not cross `/`, so `assets/*.tmp` matches `assets/cache.tmp` but not `assets/nested/cache.tmp`. A basename glob like `*_templ.go` matches files with that name pattern in any directory.
 
-When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload from file watching, `D` to toggle browser debug outlines (proxy mode), and `q` or Ctrl-C to quit. Manual `r` reruns still work while auto-reload is paused. Resuming runs one reload if file changes were missed. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
+When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload from file watching, `i` to toggle info logs, `D` to toggle browser debug outlines (proxy mode), and `q` or Ctrl-C to quit. Info logs are disabled by default and show the file or directory that triggered a reload. Manual `r` reruns still work while auto-reload is paused. Resuming runs one reload if file changes were missed. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
 
 ## V1 limitations
 

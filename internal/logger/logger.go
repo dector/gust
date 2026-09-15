@@ -118,6 +118,7 @@ func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled 
 	if keysEnabled {
 		l.printKey("r", "rerun")
 		l.printKey("s", "pause/resume auto-reload")
+		l.printKey("i", "toggle info logs")
 		if cfg.ProxyEnabled {
 			l.printKey("D", "toggle debug lines")
 		}

@@ -22,6 +22,7 @@ type Controller struct {
 	onRerun            func()
 	onToggleAutoReload func()
 	onToggleDebug      func()
+	onToggleInfo       func()
 	onQuit             func()
 
 	mu       sync.Mutex
@@ -30,8 +31,8 @@ type Controller struct {
 }
 
 // New creates a terminal controller for stdin.
-func New(stdin *os.File, log *logger.Logger, onRerun, onToggleAutoReload, onToggleDebug, onQuit func()) *Controller {
-	return &Controller{file: stdin, log: log, onRerun: onRerun, onToggleAutoReload: onToggleAutoReload, onToggleDebug: onToggleDebug, onQuit: onQuit}
+func New(stdin *os.File, log *logger.Logger, onRerun, onToggleAutoReload, onToggleDebug, onToggleInfo, onQuit func()) *Controller {
+	return &Controller{file: stdin, log: log, onRerun: onRerun, onToggleAutoReload: onToggleAutoReload, onToggleDebug: onToggleDebug, onToggleInfo: onToggleInfo, onQuit: onQuit}
 }
 
 // IsTerminal reports whether f is a terminal.
@@ -118,6 +119,10 @@ func (c *Controller) handleKey(key byte) (quit bool) {
 	case 'd', 'D':
 		if c.onToggleDebug != nil {
 			c.onToggleDebug()
+		}
+	case 'i', 'I':
+		if c.onToggleInfo != nil {
+			c.onToggleInfo()
 		}
 	case 'q', 'Q', keyCtrlC:
 		if c.onQuit != nil {

@@ -36,6 +36,7 @@ Flags:
 --exclude         repeatable path exclude, extends defaults
 --exclude.glob    repeatable glob exclude for watched events
 -v                verbose Gust logs
+GUST_INFO=1        enable info logs initially
 ```
 
 Semantics:
@@ -145,6 +146,7 @@ Trigger sources:
 - keyboard `r`
 - keyboard `s` to pause/resume auto-reload from file watching
 - keyboard `D` to toggle browser debug outlines when proxy mode is enabled
+- keyboard `i` to toggle info logs
 - agent socket `rerun`
 - initial startup
 
@@ -153,6 +155,7 @@ Rules:
 - FS triggers are debounced by `500ms`.
 - Manual and agent triggers have higher priority.
 - Keyboard `s` toggles auto-reload from file watching.
+- Info logs are disabled by default, or enabled initially with `GUST_INFO=1`. Keyboard `i` toggles them. They report the file or directory that triggered a filesystem reload.
 - When auto-reload is paused, FS triggers are remembered and any pending FS debounce is canceled.
 - Resuming auto-reload runs one restart if any FS trigger was missed while paused.
 - Manual `r` and agent rerun still work while auto-reload is paused.

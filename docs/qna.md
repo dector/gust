@@ -12,6 +12,7 @@
 - `--exclude <path>` is repeatable and extends default watch excludes.
 - `--exclude.glob <glob>` is repeatable and excludes watched events by glob.
 - `-v` enables verbose logging.
+- `GUST_INFO=1` enables info logs initially; `i` toggles them while Gust runs. Info logs report the file or directory that triggered a filesystem reload.
 - Missing `-e` is an error and prints usage.
 - Missing `-p` is allowed; Gust still works as a generic rerunner.
 - Child process inherits Gust environment.

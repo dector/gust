@@ -25,13 +25,25 @@ func TestIsTerminalReportsPipeAsFalse(t *testing.T) {
 
 func TestHandleKeyTogglesDebug(t *testing.T) {
 	count := 0
-	ctl := New(nil, nil, nil, nil, func() { count++ }, nil)
+	ctl := New(nil, nil, nil, nil, func() { count++ }, nil, nil)
 
 	if ctl.handleKey('d') || ctl.handleKey('D') {
 		t.Fatal("debug key requested quit")
 	}
 	if count != 2 {
 		t.Fatalf("debug callback count = %d, want 2", count)
+	}
+}
+
+func TestHandleKeyTogglesInfo(t *testing.T) {
+	count := 0
+	ctl := New(nil, nil, nil, nil, nil, func() { count++ }, nil)
+
+	if ctl.handleKey('i') || ctl.handleKey('I') {
+		t.Fatal("info key requested quit")
+	}
+	if count != 2 {
+		t.Fatalf("info callback count = %d, want 2", count)
 	}
 }
 
@@ -44,7 +56,7 @@ func TestStartNonTTYDisablesKeyboardControls(t *testing.T) {
 	defer w.Close()
 
 	var out bytes.Buffer
-	ctl := New(r, logger.New(&out, false), nil, nil, nil, nil)
+	ctl := New(r, logger.New(&out, false), nil, nil, nil, nil, nil)
 	if err := ctl.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}

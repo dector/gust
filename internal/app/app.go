@@ -73,6 +73,7 @@ func Run(ctx context.Context, args []string) error {
 		func() { coord.Trigger(coordinator.TriggerManual, "keyboard") },
 		func() { coord.ToggleAutoReload() },
 		toggleDebug,
+		func() { coord.ToggleInfo() },
 		func() {
 			coord.Shutdown()
 			cancel()

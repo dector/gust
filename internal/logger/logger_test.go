@@ -60,7 +60,7 @@ func TestPrintStartupHighlightsKeysWhenColored(t *testing.T) {
 
 	log.PrintStartup(StartupConfig{Exec: "command"}, "", true)
 
-	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m exec: command\n\x1b[36m[gust]\x1b[0m key: \x1b[33mr\x1b[0m — rerun\n\x1b[36m[gust]\x1b[0m key: \x1b[33ms\x1b[0m — pause/resume auto-reload\n\x1b[36m[gust]\x1b[0m key: \x1b[33mq\x1b[0m — quit\n"; got != want {
+	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m exec: command\n\x1b[36m[gust]\x1b[0m key: \x1b[33mr\x1b[0m — rerun\n\x1b[36m[gust]\x1b[0m key: \x1b[33ms\x1b[0m — pause/resume auto-reload\n\x1b[36m[gust]\x1b[0m key: \x1b[33mi\x1b[0m — toggle info logs\n\x1b[36m[gust]\x1b[0m key: \x1b[33mq\x1b[0m — quit\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
@@ -85,6 +85,7 @@ func TestPrintStartupSelectedOutput(t *testing.T) {
 		"[gust] socket: /tmp/gust-1000/hash.sock\n" +
 		"[gust] key: r — rerun\n" +
 		"[gust] key: s — pause/resume auto-reload\n" +
+		"[gust] key: i — toggle info logs\n" +
 		"[gust] key: D — toggle debug lines\n" +
 		"[gust] key: q — quit\n"
 	if got := out.String(); got != want {
