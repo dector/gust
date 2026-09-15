@@ -21,6 +21,7 @@ type Controller struct {
 
 	onRerun            func()
 	onToggleAutoReload func()
+	onToggleDebug      func()
 	onQuit             func()
 
 	mu       sync.Mutex
@@ -29,8 +30,8 @@ type Controller struct {
 }
 
 // New creates a terminal controller for stdin.
-func New(stdin *os.File, log *logger.Logger, onRerun, onToggleAutoReload, onQuit func()) *Controller {
-	return &Controller{file: stdin, log: log, onRerun: onRerun, onToggleAutoReload: onToggleAutoReload, onQuit: onQuit}
+func New(stdin *os.File, log *logger.Logger, onRerun, onToggleAutoReload, onToggleDebug, onQuit func()) *Controller {
+	return &Controller{file: stdin, log: log, onRerun: onRerun, onToggleAutoReload: onToggleAutoReload, onToggleDebug: onToggleDebug, onQuit: onQuit}
 }
 
 // IsTerminal reports whether f is a terminal.
@@ -98,22 +99,33 @@ func (c *Controller) readKeys(ctx context.Context) {
 		if n == 0 {
 			continue
 		}
-		switch buf[0] {
-		case 'r', 'R':
-			if c.onRerun != nil {
-				c.onRerun()
-			}
-		case 's', 'S':
-			if c.onToggleAutoReload != nil {
-				c.onToggleAutoReload()
-			}
-		case 'q', 'Q', keyCtrlC:
-			if c.onQuit != nil {
-				c.onQuit()
-			}
+		if c.handleKey(buf[0]) {
 			return
 		}
 	}
+}
+
+func (c *Controller) handleKey(key byte) (quit bool) {
+	switch key {
+	case 'r', 'R':
+		if c.onRerun != nil {
+			c.onRerun()
+		}
+	case 's', 'S':
+		if c.onToggleAutoReload != nil {
+			c.onToggleAutoReload()
+		}
+	case 'd', 'D':
+		if c.onToggleDebug != nil {
+			c.onToggleDebug()
+		}
+	case 'q', 'Q', keyCtrlC:
+		if c.onQuit != nil {
+			c.onQuit()
+		}
+		return true
+	}
+	return false
 }
 
 func makeRaw(fd int) (*unix.Termios, error) {

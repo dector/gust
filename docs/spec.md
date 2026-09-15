@@ -144,6 +144,7 @@ Trigger sources:
 - filesystem changes
 - keyboard `r`
 - keyboard `s` to pause/resume auto-reload from file watching
+- keyboard `D` to toggle browser debug outlines when proxy mode is enabled
 - agent socket `rerun`
 - initial startup
 
@@ -185,6 +186,7 @@ Browser version increments only after readiness succeeds.
 
 - If stdin is a TTY, Gust enters raw mode.
 - `r` reruns immediately.
+- `D` toggles browser debug outlines when proxy mode is enabled.
 - `q` quits.
 - Ctrl-C quits.
 - Terminal state is restored on exit.
@@ -445,7 +447,10 @@ Startup prints applicable lines:
 [gust] proxy: http://127.0.0.1:5000
 [gust] health: http://127.0.0.1:8080/health
 [gust] socket: /tmp/gust-1000/<hash>.sock
-[gust] keys: r=rerun, s=pause/resume auto-reload, q=quit
+[gust] key: r — rerun
+[gust] key: s — pause/resume auto-reload
+[gust] key: D — toggle debug lines
+[gust] key: q — quit
 ```
 
 Verbose `-v` logs include watcher events, skipped injection, socket requests, health retries, and similar diagnostics.

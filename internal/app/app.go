@@ -59,9 +59,20 @@ func Run(ctx context.Context, args []string) error {
 	defer socketServer.Close()
 
 	keysEnabled := term.IsTerminal(os.Stdin)
+	var toggleDebug func()
+	if proxyServer != nil {
+		toggleDebug = func() {
+			if proxyServer.BrowserHub().ToggleDebug() {
+				log.Printf("debug lines enabled")
+			} else {
+				log.Printf("debug lines disabled")
+			}
+		}
+	}
 	termCtl := term.New(os.Stdin, log,
 		func() { coord.Trigger(coordinator.TriggerManual, "keyboard") },
 		func() { coord.ToggleAutoReload() },
+		toggleDebug,
 		func() {
 			coord.Shutdown()
 			cancel()

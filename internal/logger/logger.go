@@ -33,8 +33,9 @@ type Options struct {
 }
 
 const (
-	ansiReset = "\x1b[0m"
-	ansiCyan  = "\x1b[36m"
+	ansiReset  = "\x1b[0m"
+	ansiCyan   = "\x1b[36m"
+	ansiYellow = "\x1b[33m"
 )
 
 // New returns a logger that writes to out.
@@ -115,6 +116,19 @@ func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled 
 		l.Printf("socket: %s", socketPath)
 	}
 	if keysEnabled {
-		l.Printf("keys: r=rerun, s=pause/resume auto-reload, q=quit")
+		l.printKey("r", "rerun")
+		l.printKey("s", "pause/resume auto-reload")
+		if cfg.ProxyEnabled {
+			l.printKey("D", "toggle debug lines")
+		}
+		l.printKey("q", "quit")
 	}
+}
+
+func (l *Logger) printKey(key, action string) {
+	if l.color {
+		l.Printf("key: %s%s%s — %s", ansiYellow, key, ansiReset, action)
+		return
+	}
+	l.Printf("key: %s — %s", key, action)
 }

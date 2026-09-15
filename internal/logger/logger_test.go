@@ -54,6 +54,17 @@ func TestNoColorDisablesForcedColor(t *testing.T) {
 	}
 }
 
+func TestPrintStartupHighlightsKeysWhenColored(t *testing.T) {
+	var out bytes.Buffer
+	log := NewWithOptions(&out, false, Options{Color: AlwaysColor})
+
+	log.PrintStartup(StartupConfig{Exec: "command"}, "", true)
+
+	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m exec: command\n\x1b[36m[gust]\x1b[0m key: \x1b[33mr\x1b[0m — rerun\n\x1b[36m[gust]\x1b[0m key: \x1b[33ms\x1b[0m — pause/resume auto-reload\n\x1b[36m[gust]\x1b[0m key: \x1b[33mq\x1b[0m — quit\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestPrintStartupSelectedOutput(t *testing.T) {
 	var out bytes.Buffer
 	log := New(&out, false)
@@ -72,7 +83,10 @@ func TestPrintStartupSelectedOutput(t *testing.T) {
 		"[gust] proxy: http://127.0.0.1:5000\n" +
 		"[gust] health: http://127.0.0.1:8080/health\n" +
 		"[gust] socket: /tmp/gust-1000/hash.sock\n" +
-		"[gust] keys: r=rerun, s=pause/resume auto-reload, q=quit\n"
+		"[gust] key: r — rerun\n" +
+		"[gust] key: s — pause/resume auto-reload\n" +
+		"[gust] key: D — toggle debug lines\n" +
+		"[gust] key: q — quit\n"
 	if got := out.String(); got != want {
 		t.Fatalf("startup output = %q, want %q", got, want)
 	}

@@ -39,6 +39,7 @@ type BrowserHub struct {
 	mu      sync.Mutex
 	clients map[*browserClient]struct{}
 	latest  browserMessage
+	debug   bool
 }
 
 type browserClient struct {
@@ -50,6 +51,7 @@ type browserMessage struct {
 	Type    string `json:"type"`
 	Version int    `json:"version,omitempty"`
 	Message string `json:"message,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 // BrowserReady records a ready browser state and broadcasts reload to clients.
@@ -58,6 +60,30 @@ func (h *BrowserHub) BrowserReady(version int) {
 		return
 	}
 	h.broadcast(browserMessage{Type: "reload", Version: version}, browserMessage{Type: "ready", Version: version})
+}
+
+// ToggleDebug toggles browser debug outlines, broadcasts the new state, and returns it.
+func (h *BrowserHub) ToggleDebug() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	h.debug = !h.debug
+	enabled := h.debug
+	clients := make([]*browserClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.Unlock()
+
+	data, _ := json.Marshal(browserMessage{Type: "debug", Enabled: &enabled})
+	for _, c := range clients {
+		if err := c.write(data); err != nil {
+			h.remove(c)
+			_ = c.conn.Close(websocket.StatusGoingAway, "write failed")
+		}
+	}
+	return enabled
 }
 
 // BrowserError records and broadcasts a browser error banner message.
@@ -96,12 +122,12 @@ func (h *BrowserHub) broadcast(send browserMessage, latest browserMessage) {
 	}
 }
 
-func (h *BrowserHub) add(conn *websocket.Conn) (*browserClient, browserMessage) {
+func (h *BrowserHub) add(conn *websocket.Conn) (*browserClient, browserMessage, bool) {
 	client := &browserClient{conn: conn}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.clients[client] = struct{}{}
-	return client, h.latest
+	return client, h.latest, h.debug
 }
 
 func (h *BrowserHub) remove(c *browserClient) {
@@ -281,7 +307,7 @@ func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	client, latest := s.hub.add(conn)
+	client, latest, debug := s.hub.add(conn)
 	defer func() {
 		s.hub.remove(client)
 		_ = conn.Close(websocket.StatusNormalClosure, "closed")
@@ -290,6 +316,8 @@ func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 		data, _ := json.Marshal(latest)
 		_ = client.write(data)
 	}
+	data, _ := json.Marshal(browserMessage{Type: "debug", Enabled: &debug})
+	_ = client.write(data)
 	for {
 		_, _, err := conn.Read(r.Context())
 		if err != nil {
@@ -344,6 +372,19 @@ function banner(){
 }
 function showError(message){ banner().textContent = message || "Gust error"; }
 function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
+function setDebug(enabled){
+  const apply = function(){
+    let style = document.getElementById("__gust_debug_style");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "__gust_debug_style";
+      style.textContent = ".gust-debug * { outline: 1px solid rgb(185 28 28 / 45%%); outline-offset: -1px; }.gust-debug *:nth-child(7n + 1) { outline-color: rgb(185 28 28 / 45%%); }.gust-debug *:nth-child(7n + 2) { outline-color: rgb(21 128 61 / 45%%); }.gust-debug *:nth-child(7n + 3) { outline-color: rgb(126 34 206 / 45%%); }.gust-debug *:nth-child(7n + 4) { outline-color: rgb(161 98 7 / 45%%); }.gust-debug *:nth-child(7n + 5) { outline-color: rgb(14 116 144 / 45%%); }.gust-debug *:nth-child(7n + 6) { outline-color: rgb(194 65 12 / 45%%); }.gust-debug *:nth-child(7n) { outline-color: rgb(29 78 216 / 45%%); }";
+      document.head.appendChild(style);
+    }
+    document.body.classList.toggle("gust-debug", enabled);
+  };
+  if (document.body) apply(); else document.addEventListener("DOMContentLoaded", apply, {once:true});
+}
 function connect(){
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const url = proto + "//" + location.host + "/__gust/ws";
@@ -352,6 +393,7 @@ function connect(){
   socket.onmessage = function(event){
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
+    if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
     if (msg.type === "error") { showError(msg.message); return; }
     if (msg.type === "ready") { hideError(); if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
     if (msg.type === "reload") {

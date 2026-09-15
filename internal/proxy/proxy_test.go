@@ -350,6 +350,10 @@ func TestProxyBrowserWebSocketSendsLatestAndReloads(t *testing.T) {
 	if msg.Type != "ready" || msg.Version != 3 {
 		t.Fatalf("connect message = %+v, want ready v3", msg)
 	}
+	msg = readBrowserMessage(t, ctx, conn)
+	if msg.Type != "debug" || msg.Enabled == nil || *msg.Enabled {
+		t.Fatalf("connect debug message = %+v, want disabled", msg)
+	}
 
 	closeProxy.BrowserHub().BrowserReady(4)
 	msg = readBrowserMessage(t, ctx, conn)
@@ -361,6 +365,42 @@ func TestProxyBrowserWebSocketSendsLatestAndReloads(t *testing.T) {
 	msg = readBrowserMessage(t, ctx, conn)
 	if msg.Type != "error" || msg.Message != "health check timed out" {
 		t.Fatalf("error message = %+v", msg)
+	}
+}
+
+func TestProxyBrowserWebSocketTogglesDebug(t *testing.T) {
+	proxyURL, closeProxy := startProxyForTest(t, freePort(t))
+	defer closeProxy.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, strings.Replace(proxyURL, "http://", "ws://", 1)+"/__gust/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	msg := readBrowserMessage(t, ctx, conn)
+	if msg.Type != "debug" || msg.Enabled == nil || *msg.Enabled {
+		t.Fatalf("connect message = %+v, want debug disabled", msg)
+	}
+
+	if enabled := closeProxy.BrowserHub().ToggleDebug(); !enabled {
+		t.Fatal("ToggleDebug() = false, want true")
+	}
+	msg = readBrowserMessage(t, ctx, conn)
+	if msg.Type != "debug" || msg.Enabled == nil || !*msg.Enabled {
+		t.Fatalf("toggle message = %+v, want debug enabled", msg)
+	}
+
+	conn2, _, err := websocket.Dial(ctx, strings.Replace(proxyURL, "http://", "ws://", 1)+"/__gust/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close(websocket.StatusNormalClosure, "done")
+	msg = readBrowserMessage(t, ctx, conn2)
+	if msg.Type != "debug" || msg.Enabled == nil || !*msg.Enabled {
+		t.Fatalf("new client message = %+v, want debug enabled", msg)
 	}
 }
 
@@ -394,6 +434,9 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`setTimeout(connect, retry)`,
 		`__gust_error`,
 		`position:fixed;top:0`,
+		`__gust_debug_style`,
+		`gust-debug`,
+		`outline-offset: -1px`,
 	}
 	for _, check := range checks {
 		if !strings.Contains(script, check) {
