@@ -73,10 +73,12 @@ func (r *fakeRunner) startCount() int {
 }
 
 type fakeProcess struct {
-	pid    int
-	done   chan struct{}
-	once   sync.Once
-	onStop func()
+	pid     int
+	done    chan struct{}
+	once    sync.Once
+	onStop  func()
+	code    int
+	exitErr error
 }
 
 func newFakeProcess(pid int) *fakeProcess {
@@ -90,10 +92,17 @@ func (p *fakeProcess) Done() <-chan struct{} { return p.done }
 func (p *fakeProcess) ExitEvent() (process.ExitEvent, bool) {
 	select {
 	case <-p.done:
-		return process.ExitEvent{PID: p.pid, Code: 0}, true
+		return process.ExitEvent{PID: p.pid, Code: p.code, Err: p.exitErr}, true
 	default:
 		return process.ExitEvent{}, false
 	}
+}
+
+func (p *fakeProcess) exit(code int) {
+	p.once.Do(func() {
+		p.code = code
+		close(p.done)
+	})
 }
 
 func (p *fakeProcess) Stop(context.Context) (process.ExitEvent, error) {
@@ -755,4 +764,97 @@ func waitFor(t *testing.T, fn func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition timed out")
+}
+
+func TestCoordinatorSetAutoReloadReportsStateAndIsIdempotent(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+
+	if paused, err := coord.SetAutoReload(ctx, true); err != nil || !paused {
+		t.Fatalf("pause = %v, %v; want true", paused, err)
+	}
+	if paused, err := coord.SetAutoReload(ctx, true); err != nil || !paused {
+		t.Fatalf("pause again = %v, %v; want true", paused, err)
+	}
+	if status := mustStatus(t, coord); !status.AutoReloadPaused {
+		t.Fatalf("status auto reload paused = false, want true")
+	}
+	if paused, err := coord.SetAutoReload(ctx, false); err != nil || paused {
+		t.Fatalf("resume = %v, %v; want false", paused, err)
+	}
+	if paused, err := coord.SetAutoReload(ctx, false); err != nil || paused {
+		t.Fatalf("resume again = %v, %v; want false", paused, err)
+	}
+	if status := mustStatus(t, coord); status.AutoReloadPaused {
+		t.Fatalf("status auto reload paused = true, want false")
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorSetAutoReloadPausesFilesystemOnly(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 20*time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	if _, err := coord.SetAutoReload(ctx, true); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	coord.Trigger(TriggerFS, "fs while paused")
+	time.Sleep(50 * time.Millisecond)
+	if starts := runner.startCount(); starts != 1 {
+		t.Fatalf("starts while paused = %d, want 1", starts)
+	}
+	coord.Trigger(TriggerManual, "manual")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorLogsReturnsFailureOutput(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	coord := newWithRunner(config.Config{Exec: "test"}, nil, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	proc := waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+
+	if _, err := coord.Logs(ctx); !errors.Is(err, ErrNoLogs) {
+		t.Fatalf("logs before failure err = %v, want ErrNoLogs", err)
+	}
+
+	proc.exit(1)
+	waitStatus(t, coord, ExternalStopped)
+
+	logs, err := coord.Logs(ctx)
+	if err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	if logs.Code != 1 {
+		t.Fatalf("logs code = %d, want 1", logs.Code)
+	}
+	if logs.At.IsZero() {
+		t.Fatalf("logs at is zero")
+	}
+
+	cancel()
+	<-done
 }

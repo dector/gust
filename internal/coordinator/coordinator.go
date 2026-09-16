@@ -58,6 +58,9 @@ type Status struct {
 	BrowserReady bool
 	BrowserError string
 
+	// AutoReloadPaused reports whether filesystem auto-reload is paused.
+	AutoReloadPaused bool
+
 	// Process is the status exposed by the proxy's /__gust/status endpoint.
 	Process ProcessStatus
 }
@@ -84,6 +87,17 @@ type ProcessLogs struct {
 	Stdout string `json:"stdout"`
 	Stderr string `json:"stderr"`
 }
+
+// Logs is captured output from the last failed application exit.
+type Logs struct {
+	Code   int
+	At     time.Time
+	Stdout string
+	Stderr string
+}
+
+// ErrNoLogs is returned when no failure output has been captured.
+var ErrNoLogs = errors.New("no failure logs")
 
 // BrowserState is the latest app readiness state intended for browser clients.
 type BrowserState struct {
@@ -148,6 +162,20 @@ type readinessCompleteEvent struct {
 
 type statusRequest struct {
 	reply chan Status
+}
+
+type setAutoReloadRequest struct {
+	paused bool
+	reply  chan bool
+}
+
+type logsResult struct {
+	logs    Logs
+	present bool
+}
+
+type logsRequest struct {
+	reply chan logsResult
 }
 
 type processOutput struct {
@@ -279,6 +307,44 @@ func (c *Coordinator) Status(ctx context.Context) (Status, error) {
 	}
 }
 
+// SetAutoReload pauses or resumes filesystem-triggered restarts. It returns the
+// resulting paused state once the change has been applied.
+func (c *Coordinator) SetAutoReload(ctx context.Context, paused bool) (bool, error) {
+	if c.isShuttingDown() {
+		return false, errors.New("coordinator stopped")
+	}
+	reply := make(chan bool, 1)
+	if !c.send(setAutoReloadRequest{paused: paused, reply: reply}) {
+		return false, errors.New("coordinator stopped")
+	}
+	select {
+	case state := <-reply:
+		return state, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// Logs returns captured output from the last failed application exit.
+func (c *Coordinator) Logs(ctx context.Context) (Logs, error) {
+	if c.isShuttingDown() {
+		return Logs{}, errors.New("coordinator stopped")
+	}
+	reply := make(chan logsResult, 1)
+	if !c.send(logsRequest{reply: reply}) {
+		return Logs{}, errors.New("coordinator stopped")
+	}
+	select {
+	case result := <-reply:
+		if !result.present {
+			return Logs{}, ErrNoLogs
+		}
+		return result.logs, nil
+	case <-ctx.Done():
+		return Logs{}, ctx.Err()
+	}
+}
+
 // Shutdown requests graceful coordinator shutdown.
 func (c *Coordinator) Shutdown() bool {
 	c.markShuttingDown()
@@ -391,6 +457,33 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		startRestart(reason)
 	}
 
+	applyAutoReload := func(paused bool) {
+		if paused == autoReloadPaused {
+			return
+		}
+		autoReloadPaused = paused
+		if autoReloadPaused {
+			if fsDebouncePending {
+				autoReloadMissedFS = true
+			}
+			cancelFSDebounce()
+			if c.log != nil {
+				c.log.Printf("\x1b[3mAuto-reload paused\x1b[23m")
+			}
+			return
+		}
+		if c.log != nil {
+			c.log.Printf("\x1b[3mAuto-reload resumed\x1b[23m")
+		}
+		if autoReloadMissedFS {
+			autoReloadMissedFS = false
+			if infoEnabled && c.log != nil {
+				c.log.Printf("reload triggered by: %s", fsTriggerReason)
+			}
+			requestRestart("filesystem change")
+		}
+	}
+
 	startRestart("initial")
 
 	for {
@@ -446,27 +539,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					requestRestart("filesystem change")
 				}
 			case autoReloadToggleEvent:
-				autoReloadPaused = !autoReloadPaused
-				if autoReloadPaused {
-					if fsDebouncePending {
-						autoReloadMissedFS = true
-					}
-					cancelFSDebounce()
-					if c.log != nil {
-						c.log.Printf("\x1b[3mAuto-reload paused\x1b[23m")
-					}
-				} else {
-					if c.log != nil {
-						c.log.Printf("\x1b[3mAuto-reload resumed\x1b[23m")
-					}
-					if autoReloadMissedFS {
-						autoReloadMissedFS = false
-						if infoEnabled && c.log != nil {
-							c.log.Printf("reload triggered by: %s", fsTriggerReason)
-						}
-						requestRestart("filesystem change")
-					}
-				}
+				applyAutoReload(!autoReloadPaused)
 			case infoToggleEvent:
 				infoEnabled = !infoEnabled
 				if c.log != nil {
@@ -563,8 +636,22 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					pendingRerun = false
 					startRestart("pending")
 				}
+			case setAutoReloadRequest:
+				applyAutoReload(ev.paused)
+				ev.reply <- autoReloadPaused
+			case logsRequest:
+				if lastExit != nil && lastExit.Logs != nil {
+					ev.reply <- logsResult{present: true, logs: Logs{
+						Code:   lastExit.Code,
+						At:     lastExit.At,
+						Stdout: lastExit.Logs.Stdout,
+						Stderr: lastExit.Logs.Stderr,
+					}}
+				} else {
+					ev.reply <- logsResult{}
+				}
 			case statusRequest:
-				ev.reply <- makeStatus(state, proc, procStartedAt, lastExit, c.cfg, version, browser)
+				ev.reply <- makeStatus(state, proc, procStartedAt, lastExit, c.cfg, version, browser, autoReloadPaused)
 			case shutdownRequested:
 				state = stateShuttingDown
 				c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc)
@@ -741,7 +828,7 @@ func processExitBrowserError(event process.ExitEvent) string {
 	return "process exited"
 }
 
-func makeStatus(state internalState, proc childProcess, startedAt time.Time, lastExit *LastExit, cfg config.Config, version int, browser BrowserState) Status {
+func makeStatus(state internalState, proc childProcess, startedAt time.Time, lastExit *LastExit, cfg config.Config, version int, browser BrowserState, autoReloadPaused bool) Status {
 	pid := 0
 	process := ProcessStatus{LastExit: lastExit}
 	if proc != nil {
@@ -758,14 +845,15 @@ func makeStatus(state internalState, proc childProcess, startedAt time.Time, las
 		process.LastExit = &exit
 	}
 	return Status{
-		State:        externalState(state),
-		PID:          pid,
-		AppPort:      cfg.AppPort,
-		ProxyPort:    cfg.ProxyPort,
-		Version:      version,
-		BrowserReady: browser.Ready,
-		BrowserError: browser.Error,
-		Process:      process,
+		State:            externalState(state),
+		PID:              pid,
+		AppPort:          cfg.AppPort,
+		ProxyPort:        cfg.ProxyPort,
+		Version:          version,
+		BrowserReady:     browser.Ready,
+		BrowserError:     browser.Error,
+		AutoReloadPaused: autoReloadPaused,
+		Process:          process,
 	}
 }
 
