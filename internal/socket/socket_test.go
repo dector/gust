@@ -16,10 +16,13 @@ import (
 )
 
 type fakeControl struct {
-	mu           sync.Mutex
-	status       coordinator.Status
-	triggers     int
-	shuttingDown bool
+	mu               sync.Mutex
+	status           coordinator.Status
+	triggers         int
+	shuttingDown     bool
+	autoReloadPaused bool
+	logs             coordinator.Logs
+	hasLogs          bool
 }
 
 func (f *fakeControl) Trigger(coordinator.TriggerSource, string) bool {
@@ -39,6 +42,28 @@ func (f *fakeControl) Status(context.Context) (coordinator.Status, error) {
 		return coordinator.Status{}, errors.New("shutting down")
 	}
 	return f.status, nil
+}
+
+func (f *fakeControl) SetAutoReload(_ context.Context, paused bool) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.shuttingDown {
+		return false, errors.New("shutting down")
+	}
+	f.autoReloadPaused = paused
+	return f.autoReloadPaused, nil
+}
+
+func (f *fakeControl) Logs(context.Context) (coordinator.Logs, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.shuttingDown {
+		return coordinator.Logs{}, errors.New("shutting down")
+	}
+	if !f.hasLogs {
+		return coordinator.Logs{}, coordinator.ErrNoLogs
+	}
+	return f.logs, nil
 }
 
 func TestStatusRequest(t *testing.T) {
@@ -173,4 +198,93 @@ func requestJSON(t *testing.T, path string, req any) map[string]any {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+func TestPauseAndResumeRequest(t *testing.T) {
+	root := t.TempDir()
+	ctl := &fakeControl{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := startTestServer(t, ctx, root, ctl)
+	defer server.Close()
+
+	resp := requestJSON(t, server.path, map[string]string{"action": "pause"})
+	if resp["ok"] != true || resp["auto_reload"] != "paused" {
+		t.Fatalf("unexpected pause response: %v", resp)
+	}
+	if !ctl.autoReloadPaused {
+		t.Fatalf("control auto reload paused = false, want true")
+	}
+
+	resp = requestJSON(t, server.path, map[string]string{"action": "resume"})
+	if resp["ok"] != true || resp["auto_reload"] != "active" {
+		t.Fatalf("unexpected resume response: %v", resp)
+	}
+	if ctl.autoReloadPaused {
+		t.Fatalf("control auto reload paused = true, want false")
+	}
+}
+
+func TestStatusIncludesAutoReloadAndLastExit(t *testing.T) {
+	root := t.TempDir()
+	exitAt := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	ctl := &fakeControl{status: coordinator.Status{
+		State:            coordinator.ExternalStopped,
+		AutoReloadPaused: true,
+		Process: coordinator.ProcessStatus{
+			LastExit: &coordinator.LastExit{Code: 2, At: exitAt, Error: true},
+		},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := startTestServer(t, ctx, root, ctl)
+	defer server.Close()
+
+	resp := requestJSON(t, server.path, map[string]string{"action": "status"})
+	if resp["auto_reload"] != "paused" {
+		t.Fatalf("auto_reload = %v, want paused", resp["auto_reload"])
+	}
+	lastExit, ok := resp["last_exit"].(map[string]any)
+	if !ok {
+		t.Fatalf("last_exit = %v, want object", resp["last_exit"])
+	}
+	if lastExit["code"] != float64(2) || lastExit["error"] != true || lastExit["at"] != exitAt.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected last_exit: %v", lastExit)
+	}
+}
+
+func TestLogsRequest(t *testing.T) {
+	root := t.TempDir()
+	ctl := &fakeControl{
+		hasLogs: true,
+		logs: coordinator.Logs{
+			Code:   1,
+			At:     time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC),
+			Stdout: "some stdout",
+			Stderr: "some stderr",
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := startTestServer(t, ctx, root, ctl)
+	defer server.Close()
+
+	resp := requestJSON(t, server.path, map[string]string{"action": "logs"})
+	if resp["ok"] != true || resp["code"] != float64(1) || resp["stdout"] != "some stdout" || resp["stderr"] != "some stderr" {
+		t.Fatalf("unexpected logs response: %v", resp)
+	}
+}
+
+func TestLogsRequestWithoutFailure(t *testing.T) {
+	root := t.TempDir()
+	ctl := &fakeControl{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := startTestServer(t, ctx, root, ctl)
+	defer server.Close()
+
+	resp := requestJSON(t, server.path, map[string]string{"action": "logs"})
+	if resp["ok"] != false || resp["error"] != "no_failure_logs" {
+		t.Fatalf("unexpected logs response: %v", resp)
+	}
 }

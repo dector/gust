@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
@@ -24,6 +25,8 @@ const socketDirMode = 0o700
 type control interface {
 	Trigger(coordinator.TriggerSource, string) bool
 	Status(context.Context) (coordinator.Status, error)
+	SetAutoReload(context.Context, bool) (bool, error)
+	Logs(context.Context) (coordinator.Logs, error)
 }
 
 // Server accepts local JSON control requests over a Unix socket.
@@ -170,14 +173,15 @@ func (s *Server) serve(ctx context.Context, ctl control) {
 
 func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
 	defer conn.Close()
+	enc := json.NewEncoder(conn)
 	if ctx.Err() != nil {
-		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
+		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 		return
 	}
 	var req protocol.Request
 	dec := json.NewDecoder(conn)
 	if err := dec.Decode(&req); err != nil {
-		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
+		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
 		return
 	}
 	if s.log != nil {
@@ -186,25 +190,66 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
 	switch req.Action {
 	case protocol.ActionRerun:
 		if !ctl.Trigger(coordinator.TriggerAgent, "socket") {
-			_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
+			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 			return
 		}
-		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: true, Status: "queued"})
+		_ = enc.Encode(protocol.Response{OK: true, Status: "queued"})
+	case protocol.ActionPause, protocol.ActionResume:
+		paused := req.Action == protocol.ActionPause
+		state, err := ctl.SetAutoReload(ctx, paused)
+		if err != nil {
+			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
+			return
+		}
+		_ = enc.Encode(protocol.Response{OK: true, AutoReload: autoReloadValue(state)})
 	case protocol.ActionStatus:
 		status, err := ctl.Status(ctx)
 		if err != nil {
-			_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
+			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 			return
 		}
-		_ = json.NewEncoder(conn).Encode(protocol.Response{
-			OK:        true,
-			State:     string(status.State),
-			PID:       status.PID,
-			AppPort:   status.AppPort,
-			ProxyPort: status.ProxyPort,
-			Version:   status.Version,
+		resp := protocol.Response{
+			OK:         true,
+			State:      string(status.State),
+			PID:        status.PID,
+			AppPort:    status.AppPort,
+			ProxyPort:  status.ProxyPort,
+			Version:    status.Version,
+			AutoReload: autoReloadValue(status.AutoReloadPaused),
+		}
+		if exit := status.Process.LastExit; exit != nil {
+			resp.LastExit = &protocol.ExitSummary{
+				Code:  exit.Code,
+				At:    exit.At.UTC().Format(time.RFC3339Nano),
+				Error: exit.Error,
+			}
+		}
+		_ = enc.Encode(resp)
+	case protocol.ActionLogs:
+		logs, err := ctl.Logs(ctx)
+		if errors.Is(err, coordinator.ErrNoLogs) {
+			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrNoFailureLogs})
+			return
+		}
+		if err != nil {
+			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
+			return
+		}
+		_ = enc.Encode(protocol.Response{
+			OK:     true,
+			Code:   logs.Code,
+			At:     logs.At.UTC().Format(time.RFC3339Nano),
+			Stdout: logs.Stdout,
+			Stderr: logs.Stderr,
 		})
 	default:
-		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
+		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
 	}
+}
+
+func autoReloadValue(paused bool) string {
+	if paused {
+		return protocol.AutoReloadPaused
+	}
+	return protocol.AutoReloadActive
 }
