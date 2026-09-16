@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -292,6 +293,71 @@ func TestProxyUnavailableToReadyRetries(t *testing.T) {
 		// Non-HTML body must not be injected.
 		t.Fatalf("unexpected injection for plain response: %q", body)
 	}
+}
+
+func TestCtlPauseAndResume(t *testing.T) {
+	root := t.TempDir()
+	stateDir := t.TempDir()
+	runs := filepath.Join(stateDir, "runs.txt")
+	watched := filepath.Join(root, "watched.txt")
+	script := writeScript(t, root, "run.sh", "echo run >> "+runs+"\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n")
+	gp := startGust(t, root, "-e", script)
+	waitFor(t, 5*time.Second, func() bool { return readCount(runs) == 1 }, "initial run")
+
+	out, code := ctlCommand(t, root, "pause")
+	if code != 0 || !strings.Contains(out, "auto_reload: paused") {
+		t.Fatalf("pause: code=%d out=%q; logs:\n%s", code, out, gp.out.String())
+	}
+
+	if err := os.WriteFile(watched, []byte("change"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if got := readCount(runs); got != 1 {
+		t.Fatalf("runs while paused = %d, want 1", got)
+	}
+
+	out, code = ctlCommand(t, root, "status")
+	if code != 0 || !strings.Contains(out, "auto_reload: paused") {
+		t.Fatalf("status: code=%d out=%q", code, out)
+	}
+
+	out, code = ctlCommand(t, root, "rerun")
+	if code != 0 || !strings.Contains(out, "status: queued") {
+		t.Fatalf("rerun: code=%d out=%q", code, out)
+	}
+	waitFor(t, 8*time.Second, func() bool { return readCount(runs) == 2 }, "manual rerun while paused")
+
+	out, code = ctlCommand(t, root, "resume")
+	if code != 0 || !strings.Contains(out, "auto_reload: active") {
+		t.Fatalf("resume: code=%d out=%q", code, out)
+	}
+
+	if err := os.WriteFile(watched, []byte("change2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 8*time.Second, func() bool { return readCount(runs) >= 3 }, "filesystem rerun after resume")
+}
+
+func ctlCommand(t *testing.T, root string, args ...string) (string, int) {
+	t.Helper()
+	path, err := socket.Path(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := append([]string{"ctl", "-S", path}, args...)
+	cmd := exec.Command(gustBin, full...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return string(out), exitErr.ExitCode()
+	}
+	t.Fatalf("run gust ctl %v: %v; output:\n%s", args, err, out)
+	return "", -1
 }
 
 func readBrowserMessage(t *testing.T, url string) map[string]any {
