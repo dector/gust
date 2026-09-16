@@ -10,18 +10,28 @@ import (
 
 	"github.com/dector/gust/internal/cli"
 	"github.com/dector/gust/internal/coordinator"
+	"github.com/dector/gust/internal/ctl"
 	"github.com/dector/gust/internal/logger"
 	"github.com/dector/gust/internal/proxy"
 	"github.com/dector/gust/internal/socket"
 	"github.com/dector/gust/internal/term"
 )
 
-// Main runs Gust and exits the process with a non-zero status on failure.
+// Main runs Gust or the ctl client and exits the process with a status code.
 func Main() {
-	if err := Run(context.Background(), os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "[gust] fatal: %v\n", err)
-		os.Exit(1)
+	os.Exit(MainArgs(os.Args[1:]))
+}
+
+// MainArgs dispatches between the control client and the Gust server.
+func MainArgs(args []string) int {
+	if len(args) > 0 && args[0] == "ctl" {
+		return ctl.Run(context.Background(), args[1:], os.Stdout, os.Stderr)
 	}
+	if err := Run(context.Background(), args); err != nil {
+		fmt.Fprintf(os.Stderr, "[gust] fatal: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // Run starts Gust with the provided context and command-line arguments.
