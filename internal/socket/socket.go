@@ -16,6 +16,7 @@ import (
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
+	"github.com/dector/gust/internal/protocol"
 )
 
 const socketDirMode = 0o700
@@ -167,58 +168,43 @@ func (s *Server) serve(ctx context.Context, ctl control) {
 	}
 }
 
-type request struct {
-	Action string `json:"action"`
-}
-
-type response struct {
-	OK        bool                      `json:"ok"`
-	Error     string                    `json:"error,omitempty"`
-	Status    string                    `json:"status,omitempty"`
-	State     coordinator.ExternalState `json:"state,omitempty"`
-	PID       int                       `json:"pid,omitempty"`
-	AppPort   int                       `json:"app_port,omitempty"`
-	ProxyPort int                       `json:"proxy_port,omitempty"`
-	Version   int                       `json:"version,omitempty"`
-}
-
 func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
 	defer conn.Close()
 	if ctx.Err() != nil {
-		_ = json.NewEncoder(conn).Encode(response{OK: false, Error: "shutting_down"})
+		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 		return
 	}
-	var req request
+	var req protocol.Request
 	dec := json.NewDecoder(conn)
 	if err := dec.Decode(&req); err != nil {
-		_ = json.NewEncoder(conn).Encode(response{OK: false, Error: "invalid_request"})
+		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
 		return
 	}
 	if s.log != nil {
 		s.log.Verbosef("socket request: %s", req.Action)
 	}
 	switch req.Action {
-	case "rerun":
+	case protocol.ActionRerun:
 		if !ctl.Trigger(coordinator.TriggerAgent, "socket") {
-			_ = json.NewEncoder(conn).Encode(response{OK: false, Error: "shutting_down"})
+			_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 			return
 		}
-		_ = json.NewEncoder(conn).Encode(response{OK: true, Status: "queued"})
-	case "status":
+		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: true, Status: "queued"})
+	case protocol.ActionStatus:
 		status, err := ctl.Status(ctx)
 		if err != nil {
-			_ = json.NewEncoder(conn).Encode(response{OK: false, Error: "shutting_down"})
+			_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 			return
 		}
-		_ = json.NewEncoder(conn).Encode(response{
+		_ = json.NewEncoder(conn).Encode(protocol.Response{
 			OK:        true,
-			State:     status.State,
+			State:     string(status.State),
 			PID:       status.PID,
 			AppPort:   status.AppPort,
 			ProxyPort: status.ProxyPort,
 			Version:   status.Version,
 		})
 	default:
-		_ = json.NewEncoder(conn).Encode(response{OK: false, Error: "invalid_request"})
+		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
 	}
 }
