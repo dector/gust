@@ -222,6 +222,9 @@ Supported requests:
 ```json
 {"action":"rerun"}
 {"action":"status"}
+{"action":"pause"}
+{"action":"resume"}
+{"action":"logs"}
 ```
 
 Rerun response after coordinator accepts the trigger:
@@ -230,11 +233,33 @@ Rerun response after coordinator accepts the trigger:
 {"ok":true,"status":"queued"}
 ```
 
+Pause and resume responses are sent only after the coordinator applies the
+change:
+
+```json
+{"ok":true,"auto_reload":"paused"}
+{"ok":true,"auto_reload":"active"}
+```
+
+Logs response contains output captured from the last failed application exit:
+
+```json
+{"ok":true,"code":1,"at":"2024-01-02T03:04:05Z","stdout":"...","stderr":"..."}
+```
+
+When no failure output has been captured:
+
+```json
+{"ok":false,"error":"no_failure_logs"}
+```
+
 Shutdown response when possible:
 
 ```json
 {"ok":false,"error":"shutting_down"}
 ```
+
+Unknown actions return `{"ok":false,"error":"invalid_request"}`.
 
 Status response shape:
 
@@ -245,9 +270,44 @@ Status response shape:
   "pid": 123,
   "app_port": 8080,
   "proxy_port": 5000,
-  "version": 12
+  "version": 12,
+  "auto_reload": "active|paused",
+  "last_exit": {"code": 1, "at": "2024-01-02T03:04:05Z", "error": true}
 }
 ```
+
+`last_exit` is omitted until the application process has exited. Log bodies are
+never included in `status`; use `logs` for those.
+
+## Control CLI
+
+`gust ctl` is a client for the agent socket shipped in the same binary.
+
+```sh
+gust ctl status
+gust ctl pause
+gust ctl rerun
+gust ctl resume
+gust ctl logs
+gust ctl help
+```
+
+- The socket path is derived from the current directory unless `-S <socket>` is
+given (`-S <path>`, `-S=<path>`, `--socket <path>`, or `--socket=<path>`).
+- Output is compact human-readable text. There is no JSON output mode.
+- Exit codes: `0` on success, `1` when the instance cannot be reached or the
+  request fails, `2` on usage errors.
+- Errors are written to stderr prefixed with `gust ctl:`.
+
+Pause semantics:
+
+- `pause` stops filesystem-triggered reloads. Manual `r` and `gust ctl rerun`
+  still work while paused.
+- Pausing cancels a pending filesystem debounce and remembers missed changes.
+- A restart already in progress, or a reload already queued, may still complete
+  after `pause` returns (soft pause).
+- `resume` runs one reload if filesystem changes were missed while paused.
+- `pause`/`resume` are idempotent and return the resulting state.
 
 ## Proxy
 

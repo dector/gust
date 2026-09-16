@@ -48,6 +48,23 @@ Flags:
 
 When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload from file watching, `i` to toggle info logs, `D` to toggle browser debug outlines (proxy mode), and `q` or Ctrl-C to quit. Info logs are disabled by default and show the file or directory that triggered a reload. Manual `r` reruns still work while auto-reload is paused. Resuming runs one reload if file changes were missed. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
 
+## Control
+
+Agents and scripts control a running Gust instance with `gust ctl`:
+
+```sh
+gust ctl status   # state, ports, version, auto-reload, last exit
+gust ctl pause    # pause filesystem auto-reload
+gust ctl rerun    # reload now (works while paused)
+gust ctl resume   # resume auto-reload
+gust ctl logs     # output captured from the last failed exit
+gust ctl help
+```
+
+`gust ctl` finds the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
+
+A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
+
 ## V1 limitations
 
 - Linux only.

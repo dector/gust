@@ -80,10 +80,22 @@
 - Supported actions:
   - `{"action":"rerun"}`
   - `{"action":"status"}`
+  - `{"action":"pause"}`
+  - `{"action":"resume"}`
+  - `{"action":"logs"}`
 - `rerun` returns immediately after accepting/queuing trigger:
   - `{"ok":true,"status":"queued"}`
+- `pause`/`resume` are explicit and idempotent (not a toggle).
+  - The reply is sent only after the coordinator applies the change:
+    - `{"ok":true,"auto_reload":"paused"}`
+    - `{"ok":true,"auto_reload":"active"}`
+- `logs` returns captured output from the last failed exit:
+  - `{"ok":true,"code":1,"at":"...","stdout":"...","stderr":"..."}`
+  - `{"ok":false,"error":"no_failure_logs"}` when nothing was captured.
 - During shutdown, socket requests return if possible:
   - `{"ok":false,"error":"shutting_down"}`
+- Unknown actions return:
+  - `{"ok":false,"error":"invalid_request"}`
 - Example `status` response:
 
 ```json
@@ -93,9 +105,43 @@
   "pid": 123,
   "app_port": 8080,
   "proxy_port": 5000,
-  "version": 12
+  "version": 12,
+  "auto_reload": "active|paused",
+  "last_exit": {"code": 1, "at": "...", "error": true}
 }
 ```
+
+## Control CLI (`gust ctl`)
+
+- `gust ctl` is a subcommand of the same binary, not a separate executable.
+  - Dispatched before normal flag parsing.
+- Commands: `status`, `pause`, `resume`, `rerun`, `logs`, `help`.
+  - `help` is the default for no arguments and `-h`/`--help`.
+  - No `stop`/`quit` verb in v1.
+  - No `i`/`D` toggles exposed.
+- Instance discovery:
+  - `-S <socket>` (also `-S=<path>`, `--socket <path>`, `--socket=<path>`)
+    targets an explicit socket path, accepted before or after the verb.
+  - Otherwise the socket derived from the current directory is used.
+  - No `-C`/`--root` flag and no `GUST_SOCKET` env fallback.
+- Output is compact human-readable text; there is no `--json` mode.
+- `logs` prints the exit code, time, and captured stdout/stderr sections.
+- Exit codes:
+  - `0` success, including idempotent `pause`/`resume` no-ops.
+  - `1` operational failure (no socket, dial/decode error, `ok:false`).
+  - `2` usage error (unknown verb, bad `-S`, unexpected argument).
+- Errors are written to stderr prefixed with `gust ctl:`.
+- Pause semantics:
+  - Soft pause: gates future filesystem triggers and cancels a pending
+    debounce, but an in-flight restart or already-queued reload may still
+    complete.
+  - Manual `r` and `gust ctl rerun` still work while paused.
+  - `resume` runs one catch-up reload if filesystem changes were missed.
+  - Keyboard `s` sets the opposite of the current value; socket uses explicit
+    values.
+- Last exit logs are captured only for failed exits, up to 64 KB per stream.
+- Protocol message types live in `internal/protocol`; the server is in
+  `internal/socket` and the client is in `internal/ctl`.
 
 ## Proxy and browser reload
 
