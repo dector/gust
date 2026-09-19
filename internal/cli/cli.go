@@ -27,6 +27,8 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 
 	var excludes repeatableStrings
 	var excludeGlobs repeatableStrings
+	var befores repeatableStrings
+	var afters repeatableStrings
 	var cfg config.Config
 	cfg.Info = os.Getenv("GUST_INFO") == "1"
 	var portSpec string
@@ -34,14 +36,15 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs := flag.NewFlagSet("gust", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.StringVar(&cfg.Exec, "e", "", "command to execute via /bin/sh -c")
+	fs.Var(&befores, "e.before", "command to run before each rerun, repeatable")
+	fs.Var(&afters, "e.after", "command to run after each start, repeatable")
 	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports")
 	fs.StringVar(&cfg.HealthPath, "h", "", "health endpoint path")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: gust -e <cmd> [-p <port>|<app:proxy>] [-h <path>] [--exclude <path>] [--exclude.glob <glob>] [-v]\n\n")
-		fs.PrintDefaults()
+		fmt.Fprint(fs.Output(), usageText)
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -79,6 +82,20 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		}
 	}
 
+	cleanedBefore, err := cleanCommands(befores, "--e.before")
+	if err != nil {
+		fs.Usage()
+		return config.Config{}, err
+	}
+	cfg.Before = cleanedBefore
+
+	cleanedAfter, err := cleanCommands(afters, "--e.after")
+	if err != nil {
+		fs.Usage()
+		return config.Config{}, err
+	}
+	cfg.After = cleanedAfter
+
 	cleanedExcludes, err := cleanExcludes(excludes)
 	if err != nil {
 		fs.Usage()
@@ -100,6 +117,30 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	cfg.Root = root
 
 	return cfg, nil
+}
+
+const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [--exclude <path>] [--exclude.glob <glob>] [-v]
+
+Flags:
+  -e <cmd>              required command, executed via /bin/sh -c
+  --e.before <cmd>      command to run before each rerun, repeatable, fail-fast
+  --e.after <cmd>       command to run after each start, repeatable
+  -p <port>             app port, or app:proxy ports
+  -h <path>             health endpoint path, requires app port
+  --exclude <path>      path exclude, repeatable
+  --exclude.glob <glob> glob exclude, repeatable
+  -v                    enable verbose Gust logs
+`
+
+func cleanCommands(values []string, flagName string) ([]string, error) {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("%s requires a non-empty command", flagName)
+		}
+		cleaned = append(cleaned, value)
+	}
+	return cleaned, nil
 }
 
 func parsePortSpec(spec string) (appPort int, proxyPort int, proxyEnabled bool, err error) {

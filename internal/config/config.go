@@ -16,6 +16,8 @@ const (
 // Config holds Gust runtime configuration.
 type Config struct {
 	Exec         string
+	Before       []string
+	After        []string
 	AppPort      int
 	HasAppPort   bool
 	ProxyPort    int

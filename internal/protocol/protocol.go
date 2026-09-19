@@ -54,8 +54,10 @@ type Response struct {
 	LastExit   *ExitSummary `json:"last_exit,omitempty"`
 
 	// Fields for the logs action.
-	Code   int    `json:"code,omitempty"`
-	At     string `json:"at,omitempty"`
-	Stdout string `json:"stdout,omitempty"`
-	Stderr string `json:"stderr,omitempty"`
+	Code    int    `json:"code,omitempty"`
+	At      string `json:"at,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+	Command string `json:"command,omitempty"`
+	Stdout  string `json:"stdout,omitempty"`
+	Stderr  string `json:"stderr,omitempty"`
 }

@@ -148,6 +148,54 @@ func TestParseVerboseAndRepeatableExcludes(t *testing.T) {
 	}
 }
 
+func TestParseBeforeAndAfter(t *testing.T) {
+	cfg, err := ParseWithOutput([]string{
+		"-e", "run",
+		"--e.before", "templ generate",
+		"--e.before", "sqlc generate",
+		"--e.after", "notify",
+	}, nil)
+	if err != nil {
+		t.Fatalf("ParseWithOutput returned error: %v", err)
+	}
+	wantBefore := []string{"templ generate", "sqlc generate"}
+	if len(cfg.Before) != len(wantBefore) {
+		t.Fatalf("Before = %#v, want %#v", cfg.Before, wantBefore)
+	}
+	for i := range wantBefore {
+		if cfg.Before[i] != wantBefore[i] {
+			t.Fatalf("Before = %#v, want %#v", cfg.Before, wantBefore)
+		}
+	}
+	if len(cfg.After) != 1 || cfg.After[0] != "notify" {
+		t.Fatalf("After = %#v, want [notify]", cfg.After)
+	}
+}
+
+func TestParseRejectsEmptyTaskCommand(t *testing.T) {
+	for _, flagName := range []string{"--e.before", "--e.after"} {
+		t.Run(flagName, func(t *testing.T) {
+			var out bytes.Buffer
+			_, err := ParseWithOutput([]string{"-e", "run", flagName, "   "}, &out)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(out.String(), "Usage: gust") {
+				t.Fatalf("expected usage output, got %q", out.String())
+			}
+		})
+	}
+}
+
+func TestParseUsageShowsTaskFlags(t *testing.T) {
+	var out bytes.Buffer
+	_, _ = ParseWithOutput(nil, &out)
+	usage := out.String()
+	if !strings.Contains(usage, "--e.before") || !strings.Contains(usage, "--e.after") {
+		t.Fatalf("usage does not document task flags: %q", usage)
+	}
+}
+
 func TestParseRejectsUnexpectedArg(t *testing.T) {
 	var out bytes.Buffer
 	_, err := ParseWithOutput([]string{"-e", "run", "extra"}, &out)

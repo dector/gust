@@ -1,3 +1,7 @@
+> **Archived.** This is the original Gust v1 design Q&A, kept for history.
+> It predates the tasks/hooks feature. See `docs/before-after.md` for the
+> current pre/post task design.
+
 # Gust v1 Design Q&A
 
 ## CLI UX and config

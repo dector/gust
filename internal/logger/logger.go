@@ -93,6 +93,8 @@ func isTerminal(out io.Writer) bool {
 // StartupConfig is the subset of runtime config printed at startup.
 type StartupConfig struct {
 	Exec         string
+	Before       []string
+	After        []string
 	HasAppPort   bool
 	AppPort      int
 	ProxyEnabled bool
@@ -103,6 +105,12 @@ type StartupConfig struct {
 // PrintStartup writes the user-facing startup summary.
 func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled bool) {
 	l.Printf("exec: %s", cfg.Exec)
+	for _, command := range cfg.Before {
+		l.Printf("before: %s", command)
+	}
+	for _, command := range cfg.After {
+		l.Printf("after: %s", command)
+	}
 	if cfg.HasAppPort {
 		l.Printf("app: http://127.0.0.1:%d", cfg.AppPort)
 	}

@@ -858,3 +858,223 @@ func TestCoordinatorLogsReturnsFailureOutput(t *testing.T) {
 	cancel()
 	<-done
 }
+
+type fakeCommandRunner struct {
+	mu      sync.Mutex
+	calls   []string
+	gate    chan struct{}
+	code    int
+	exitErr error
+	runErr  error
+}
+
+func (r *fakeCommandRunner) Run(ctx context.Context, opts process.Options) (process.ExitEvent, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, opts.Command)
+	gate := r.gate
+	code := r.code
+	exitErr := r.exitErr
+	runErr := r.runErr
+	r.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return process.ExitEvent{}, ctx.Err()
+		}
+	}
+	if runErr != nil {
+		return process.ExitEvent{Code: -1, Err: runErr}, runErr
+	}
+	return process.ExitEvent{Code: code, Err: exitErr}, nil
+}
+
+func (r *fakeCommandRunner) setResult(code int, exitErr error) {
+	r.mu.Lock()
+	r.code = code
+	r.exitErr = exitErr
+	r.mu.Unlock()
+}
+
+func (r *fakeCommandRunner) setGate(gate chan struct{}) {
+	r.mu.Lock()
+	r.gate = gate
+	r.mu.Unlock()
+}
+
+func (r *fakeCommandRunner) callList() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+func TestCoordinatorBeforeFailureKeepsProcessAndLogsPhase(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	commands := &fakeCommandRunner{}
+	coord := newWithRunner(config.Config{Exec: "test", Before: []string{"templ generate"}}, nil, runner)
+	coord.commands = commands
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	proc := waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+
+	commands.setResult(1, errors.New("exit status 1"))
+	coord.Trigger(TriggerManual, "rerun")
+	waitFor(t, func() bool { return len(commands.callList()) == 2 })
+	waitFor(t, func() bool { return mustStatus(t, coord).BrowserError != "" })
+
+	if runner.startCount() != 1 {
+		t.Fatalf("starts = %d, want old process kept", runner.startCount())
+	}
+	select {
+	case <-proc.Done():
+		t.Fatal("old process was stopped after before failure")
+	default:
+	}
+	status := mustStatus(t, coord)
+	if status.State != ExternalRunning || status.PID != proc.PID() {
+		t.Fatalf("status = %+v, want running pid %d", status, proc.PID())
+	}
+	logs, err := coord.Logs(ctx)
+	if err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	if logs.Phase != "before" || logs.Command != "templ generate" || logs.Code != 1 {
+		t.Fatalf("logs = %+v, want before/templ generate/code 1", logs)
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorBeforeSuccessRestarts(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	commands := &fakeCommandRunner{}
+	coord := newWithRunner(config.Config{Exec: "test", Before: []string{"gen"}}, nil, runner)
+	coord.commands = commands
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+	coord.Trigger(TriggerManual, "rerun")
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorAfterFailureKeepsAppRunning(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	commands := &fakeCommandRunner{code: 1, exitErr: errors.New("exit status 1")}
+	coord := newWithRunner(config.Config{Exec: "test", After: []string{"notify"}}, nil, runner)
+	coord.commands = commands
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	proc := waitStarted(t, runner)
+	waitFor(t, func() bool { return mustStatus(t, coord).BrowserError != "" })
+	if runner.startCount() != 1 {
+		t.Fatalf("starts = %d, want 1", runner.startCount())
+	}
+	select {
+	case <-proc.Done():
+		t.Fatal("app was stopped after after failure")
+	default:
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorSuppressesFilesystemTriggersDuringBefore(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	withFSDebounce(t, 10*time.Millisecond)
+	runner := newFakeRunner()
+	commands := &fakeCommandRunner{}
+	coord := newWithRunner(config.Config{Exec: "test", Before: []string{"gen"}}, nil, runner)
+	coord.commands = commands
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+
+	gate := make(chan struct{})
+	commands.setGate(gate)
+	coord.Trigger(TriggerManual, "rerun")
+	waitFor(t, func() bool { return len(commands.callList()) == 2 })
+	coord.Trigger(TriggerFS, "gen.go")
+	close(gate)
+	waitFor(t, func() bool { return runner.startCount() == 2 })
+	time.Sleep(50 * time.Millisecond)
+	if starts := runner.startCount(); starts != 2 {
+		t.Fatalf("starts = %d, want filesystem trigger suppressed during before", starts)
+	}
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorManualTriggerCoalescesDuringBefore(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	runner := newFakeRunner()
+	commands := &fakeCommandRunner{}
+	coord := newWithRunner(config.Config{Exec: "test", Before: []string{"gen"}}, nil, runner)
+	coord.commands = commands
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitStatus(t, coord, ExternalRunning)
+
+	gate := make(chan struct{})
+	commands.setGate(gate)
+	coord.Trigger(TriggerManual, "first")
+	waitFor(t, func() bool { return len(commands.callList()) == 2 })
+	coord.Trigger(TriggerManual, "second")
+	close(gate)
+	waitFor(t, func() bool { return runner.startCount() == 3 })
+
+	cancel()
+	<-done
+}
+
+func TestCoordinatorAfterRunsAfterHealthReadiness(t *testing.T) {
+	withReadinessTimings(t, 80*time.Millisecond, 5*time.Millisecond, 20*time.Millisecond)
+	port, closeServer := startHealthServer(t, http.StatusNoContent)
+	defer closeServer()
+
+	runner := newFakeRunner()
+	commands := &fakeCommandRunner{}
+	coord := newWithRunner(config.Config{
+		Exec:       "test",
+		AppPort:    port,
+		HasAppPort: true,
+		HealthPath: "/health",
+		After:      []string{"post"},
+	}, nil, runner)
+	coord.commands = commands
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+
+	waitStarted(t, runner)
+	waitFor(t, func() bool { return len(commands.callList()) == 1 })
+	status := waitStatus(t, coord, ExternalRunning)
+	if status.Version != 1 || !status.BrowserReady || status.BrowserError != "" {
+		t.Fatalf("browser status = version %d ready %v error %q", status.Version, status.BrowserReady, status.BrowserError)
+	}
+
+	cancel()
+	<-done
+}

@@ -1,3 +1,7 @@
+> **Archived.** This is the original Gust v1 specification, kept for history.
+> It predates the tasks/hooks feature. See `docs/before-after.md` for the
+> current pre/post task design.
+
 # Gust v1 Specification
 
 ## Summary

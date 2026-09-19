@@ -236,11 +236,13 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
 			return
 		}
 		_ = enc.Encode(protocol.Response{
-			OK:     true,
-			Code:   logs.Code,
-			At:     logs.At.UTC().Format(time.RFC3339Nano),
-			Stdout: logs.Stdout,
-			Stderr: logs.Stderr,
+			OK:      true,
+			Code:    logs.Code,
+			At:      logs.At.UTC().Format(time.RFC3339Nano),
+			Phase:   logs.Phase,
+			Command: logs.Command,
+			Stdout:  logs.Stdout,
+			Stderr:  logs.Stderr,
 		})
 	default:
 		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})

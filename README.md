@@ -25,6 +25,8 @@ go tool gust -e 'go run ./cmd/server'
 
 ```sh
 gust -e 'go run ./cmd/server'
+gust -e 'go run ./cmd/server' --e.before 'templ generate' --e.before 'sqlc generate'
+gust -e 'go run ./cmd/server' --e.after 'notify-send reloaded'
 gust -e 'go run ./cmd/server' -p 8080
 gust -e 'go run ./cmd/server' -p 8080:5000
 gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
@@ -35,6 +37,9 @@ gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
 Flags:
 
 - `-e <cmd>`: required command. Gust runs it with `/bin/sh -c`.
+- `--e.before <cmd>`: repeatable command to run before each rerun. Fail-fast; a
+  failure aborts the rerun and leaves the running app untouched.
+- `--e.after <cmd>`: repeatable command to run after each start.
 - `-p <port>`: optional app port, or `app:proxy` ports.
 - `-h <path>`: optional health endpoint. Requires an app port.
 - `--exclude <path>`: repeatable watched-path exclude.
@@ -45,6 +50,14 @@ Flags:
 `--exclude` values are relative path prefixes. Use them for directories or whole subtrees, for example `--exclude frontend/node_modules`.
 
 `--exclude.glob` values use Go filepath glob syntax and are matched against both the project-relative path and the file basename. The pattern must match the whole value. `*` does not cross `/`, so `assets/*.tmp` matches `assets/cache.tmp` but not `assets/nested/cache.tmp`. A basename glob like `*_templ.go` matches files with that name pattern in any directory.
+
+## Tasks
+
+`--e.before` and `--e.after` wrap `-e` with codegen or asset steps. Before
+commands run first, while the old app is still serving. If any before command
+fails, Gust aborts the rerun and keeps the old app running. After commands run
+once the app is up. Filesystem changes made by tasks are ignored so codegen
+does not trigger another rerun. See `docs/before-after.md` for details.
 
 When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload from file watching, `i` to toggle info logs, `D` to toggle browser debug outlines (proxy mode), and `q` or Ctrl-C to quit. Info logs are disabled by default and show the file or directory that triggered a reload. Manual `r` reruns still work while auto-reload is paused. Resuming runs one reload if file changes were missed. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
 

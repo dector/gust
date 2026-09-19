@@ -144,6 +144,12 @@ func printResponse(w io.Writer, verb string, resp protocol.Response) {
 		fmt.Fprintf(w, "status: %s\n", resp.Status)
 	case "logs":
 		fmt.Fprintf(w, "last_exit: code=%d at=%s\n", resp.Code, resp.At)
+		if resp.Phase != "" {
+			fmt.Fprintf(w, "phase: %s\n", resp.Phase)
+		}
+		if resp.Command != "" {
+			fmt.Fprintf(w, "command: %s\n", resp.Command)
+		}
 		fmt.Fprintf(w, "--- stdout ---\n%s", resp.Stdout)
 		if resp.Stdout != "" && !strings.HasSuffix(resp.Stdout, "\n") {
 			fmt.Fprintln(w)

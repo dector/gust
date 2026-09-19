@@ -339,6 +339,42 @@ func TestCtlPauseAndResume(t *testing.T) {
 	waitFor(t, 8*time.Second, func() bool { return readCount(runs) >= 3 }, "filesystem rerun after resume")
 }
 
+func TestBeforeFailureKeepsRunningApp(t *testing.T) {
+	root := t.TempDir()
+	runs := filepath.Join(root, "runs.txt")
+	beforeRuns := filepath.Join(root, "before.txt")
+	before := writeScript(t, root, "before.sh", "echo before-run >> before.txt\nif [ -f fail ]; then exit 1; fi\n")
+	run := writeScript(t, root, "run.sh", "echo run >> runs.txt\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n")
+	gp := startGust(t, root, "-e", run, "--e.before", before)
+	waitFor(t, 5*time.Second, func() bool { return readCount(runs) == 1 }, "initial run")
+	waitFor(t, 5*time.Second, func() bool { return readCount(beforeRuns) == 1 }, "initial before run")
+	waitFor(t, 5*time.Second, func() bool {
+		return socketRequest(t, root, map[string]string{"action": "status"})["state"] == "running"
+	}, "running after initial start")
+
+	statusBefore := socketRequest(t, root, map[string]string{"action": "status"})
+	pidBefore := int(statusBefore["pid"].(float64))
+
+	// Trigger a rerun whose before step fails.
+	if err := os.WriteFile(filepath.Join(root, "fail"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 8*time.Second, func() bool { return readCount(beforeRuns) >= 2 }, "before rerun")
+	time.Sleep(700 * time.Millisecond)
+
+	if got := readCount(runs); got != 1 {
+		t.Fatalf("app restarted despite before failure: runs=%d; logs:\n%s", got, gp.out.String())
+	}
+	status := socketRequest(t, root, map[string]string{"action": "status"})
+	if status["state"] != "running" || int(status["pid"].(float64)) != pidBefore {
+		t.Fatalf("status = %#v, want running pid %d; logs:\n%s", status, pidBefore, gp.out.String())
+	}
+	logsResp := socketRequest(t, root, map[string]string{"action": "logs"})
+	if logsResp["phase"] != "before" || logsResp["command"] != before {
+		t.Fatalf("logs = %#v, want phase before command %s; logs:\n%s", logsResp, before, gp.out.String())
+	}
+}
+
 func ctlCommand(t *testing.T, root string, args ...string) (string, int) {
 	t.Helper()
 	path, err := socket.Path(root)

@@ -91,6 +91,8 @@ func Run(ctx context.Context, args []string) error {
 	)
 	log.PrintStartup(logger.StartupConfig{
 		Exec:         cfg.Exec,
+		Before:       cfg.Before,
+		After:        cfg.After,
 		HasAppPort:   cfg.HasAppPort,
 		AppPort:      cfg.AppPort,
 		ProxyEnabled: cfg.ProxyEnabled,

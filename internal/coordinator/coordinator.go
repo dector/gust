@@ -79,6 +79,8 @@ type LastExit struct {
 	At       time.Time    `json:"at"`
 	PassedMS int64        `json:"passedMs"`
 	Error    bool         `json:"error"`
+	Phase    string       `json:"phase,omitempty"`
+	Command  string       `json:"command,omitempty"`
 	Logs     *ProcessLogs `json:"logs"`
 }
 
@@ -88,12 +90,14 @@ type ProcessLogs struct {
 	Stderr string `json:"stderr"`
 }
 
-// Logs is captured output from the last failed application exit.
+// Logs is captured output from the last failed application exit or task.
 type Logs struct {
-	Code   int
-	At     time.Time
-	Stdout string
-	Stderr string
+	Code    int
+	At      time.Time
+	Phase   string
+	Command string
+	Stdout  string
+	Stderr  string
 }
 
 // ErrNoLogs is returned when no failure output has been captured.
@@ -183,6 +187,40 @@ type processOutput struct {
 	stderr *limitedBuffer
 }
 
+// taskFailure describes a failed before/after command.
+type taskFailure struct {
+	phase   string
+	command string
+	code    int
+	err     error
+	output  *processOutput
+}
+
+// beforeCompleteEvent reports the outcome of the before task list.
+type beforeCompleteEvent struct {
+	reason   string
+	failure  *taskFailure
+	canceled bool
+}
+
+// afterCompleteEvent reports the outcome of the after task list.
+type afterCompleteEvent struct {
+	runID    int
+	failure  *taskFailure
+	canceled bool
+}
+
+// commandRunner runs a one-shot task command to completion.
+type commandRunner interface {
+	Run(context.Context, process.Options) (process.ExitEvent, error)
+}
+
+type defaultCommandRunner struct{}
+
+func (defaultCommandRunner) Run(ctx context.Context, opts process.Options) (process.ExitEvent, error) {
+	return process.Run(ctx, opts)
+}
+
 const maxCapturedOutput = 64 * 1024
 
 type shutdownRequested struct{}
@@ -231,6 +269,7 @@ type Coordinator struct {
 	log *logger.Logger
 
 	runner          processRunner
+	commands        commandRunner
 	browserNotifier BrowserNotifier
 	shutdownHooks   ShutdownHooks
 	events          chan any
@@ -248,11 +287,12 @@ func New(cfg config.Config, log *logger.Logger) *Coordinator {
 
 func newWithRunner(cfg config.Config, log *logger.Logger, runner processRunner) *Coordinator {
 	return &Coordinator{
-		cfg:    cfg,
-		log:    log,
-		runner: runner,
-		events: make(chan any, 32),
-		done:   make(chan struct{}),
+		cfg:      cfg,
+		log:      log,
+		runner:   runner,
+		commands: defaultCommandRunner{},
+		events:   make(chan any, 32),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -366,6 +406,14 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var restartCancel context.CancelFunc
 	var restartDone chan restartCompleteEvent
 	var readinessCancel context.CancelFunc
+	var beforeWorker bool
+	var beforeCancel context.CancelFunc
+	var beforeDone chan struct{}
+	var afterWorker bool
+	var afterCancel context.CancelFunc
+	var afterDone chan struct{}
+	var fsSuppressRun bool
+	var pendingTaskError string
 	var fsDebounceTimer *time.Timer
 	var fsDebouncePending bool
 	var fsDebounceSeq int
@@ -411,6 +459,30 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}
 	}
 
+	cancelAfter := func() {
+		afterWorker = false
+		if afterCancel != nil {
+			afterCancel()
+			afterCancel = nil
+		}
+	}
+
+	startAfterTasks := func(taskRunID int) {
+		if len(c.cfg.After) == 0 {
+			return
+		}
+		afterWorker = true
+		workerCtx, cancel := context.WithCancel(ctx)
+		afterCancel = cancel
+		done := make(chan struct{})
+		afterDone = done
+		go func() {
+			defer close(done)
+			failure, canceled := c.runCommands(workerCtx, "after", c.cfg.After)
+			c.send(afterCompleteEvent{runID: taskRunID, failure: failure, canceled: canceled})
+		}()
+	}
+
 	startRestart := func(reason string) {
 		if state == stateShuttingDown {
 			return
@@ -419,6 +491,8 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			pendingRerun = true
 			return
 		}
+		cancelAfter()
+		pendingTaskError = ""
 		if c.log != nil {
 			c.log.Verbosef("restart requested: %s", reason)
 		}
@@ -442,11 +516,33 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}()
 	}
 
+	beginRerun := func(reason string) {
+		if state == stateShuttingDown {
+			return
+		}
+		if len(c.cfg.Before) > 0 {
+			fsSuppressRun = true
+			beforeWorker = true
+			state = stateStopping
+			workerCtx, cancel := context.WithCancel(ctx)
+			beforeCancel = cancel
+			done := make(chan struct{})
+			beforeDone = done
+			go func() {
+				defer close(done)
+				failure, canceled := c.runCommands(workerCtx, "before", c.cfg.Before)
+				c.send(beforeCompleteEvent{reason: reason, failure: failure, canceled: canceled})
+			}()
+			return
+		}
+		startRestart(reason)
+	}
+
 	requestRestart := func(reason string) {
 		if state == stateShuttingDown {
 			return
 		}
-		if restartWorker || state == stateStarting || state == stateStopping {
+		if restartWorker || beforeWorker || state == stateStarting || state == stateStopping {
 			pendingRerun = true
 			return
 		}
@@ -454,7 +550,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			readinessCancel()
 			readinessCancel = nil
 		}
-		startRestart(reason)
+		beginRerun(reason)
 	}
 
 	applyAutoReload := func(paused bool) {
@@ -484,7 +580,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}
 	}
 
-	startRestart("initial")
+	beginRerun("initial")
 
 	for {
 		var fsDebounceC <-chan time.Time
@@ -494,7 +590,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			state = stateShuttingDown
-			c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc)
+			c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc, beforeCancel, afterCancel, beforeDone, afterDone)
 			return nil
 		case <-fsDebounceC:
 			fsDebouncePending = false
@@ -506,6 +602,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					continue
 				}
 				if ev.source == TriggerFS {
+					if fsSuppressRun || beforeWorker || afterWorker {
+						continue
+					}
 					fsTriggerReason = ev.reason
 					if autoReloadPaused {
 						autoReloadMissedFS = true
@@ -532,11 +631,54 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				}
 				requestRestart(ev.reason)
 			case debouncedFSTriggerEvent:
+				if fsSuppressRun || beforeWorker || afterWorker {
+					continue
+				}
 				if !autoReloadPaused && ev.seq == fsDebounceSeq {
 					if infoEnabled && c.log != nil {
 						c.log.Printf("reload triggered by: %s", fsTriggerReason)
 					}
 					requestRestart("filesystem change")
+				}
+			case beforeCompleteEvent:
+				beforeWorker = false
+				beforeCancel = nil
+				if state == stateShuttingDown || ev.canceled {
+					continue
+				}
+				if ev.failure != nil {
+					fsSuppressRun = false
+					pendingRerun = false
+					lastExit = makeTaskLastExit(ev.failure)
+					browser.Ready = false
+					browser.Error = taskBrowserError(ev.failure)
+					c.notifyBrowserError(browser.Error)
+					if c.log != nil {
+						c.log.Printf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
+					}
+					if proc == nil {
+						state = stateStopped
+					} else {
+						state = stateRunning
+					}
+					continue
+				}
+				startRestart(ev.reason)
+			case afterCompleteEvent:
+				afterWorker = false
+				afterCancel = nil
+				if ev.runID != runID || state == stateShuttingDown || ev.canceled {
+					continue
+				}
+				if ev.failure != nil {
+					lastExit = makeTaskLastExit(ev.failure)
+					pendingTaskError = taskBrowserError(ev.failure)
+					browser.Ready = false
+					browser.Error = pendingTaskError
+					c.notifyBrowserError(pendingTaskError)
+					if c.log != nil {
+						c.log.Printf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
+					}
 				}
 			case autoReloadToggleEvent:
 				applyAutoReload(!autoReloadPaused)
@@ -581,6 +723,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				if ev.err != nil {
 					proc = nil
 					state = stateStopped
+					fsSuppressRun = false
 					browser.Ready = false
 					browser.Error = ev.err.Error()
 					c.notifyBrowserError(browser.Error)
@@ -601,6 +744,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					readyCtx, cancel := context.WithCancel(ctx)
 					readinessCancel = cancel
 					go c.checkReadiness(readyCtx, runID, proc)
+					if c.cfg.HealthPath == "" {
+						startAfterTasks(runID)
+					}
 				}
 				if pendingRerun && state != stateShuttingDown && state != stateWaitingReady {
 					pendingRerun = false
@@ -611,13 +757,20 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					continue
 				}
 				readinessCancel = nil
+				fsSuppressRun = false
 				if ev.ready {
 					version++
 					browser.Ready = true
 					browser.Version = version
 					browser.Error = ""
 					c.notifyBrowserReady(version)
+					if pendingTaskError != "" {
+						c.notifyBrowserError(pendingTaskError)
+					}
 					state = stateRunning
+					if c.cfg.HealthPath != "" {
+						startAfterTasks(ev.runID)
+					}
 				} else {
 					browser.Ready = false
 					browser.Error = ev.err.Error()
@@ -642,10 +795,12 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			case logsRequest:
 				if lastExit != nil && lastExit.Logs != nil {
 					ev.reply <- logsResult{present: true, logs: Logs{
-						Code:   lastExit.Code,
-						At:     lastExit.At,
-						Stdout: lastExit.Logs.Stdout,
-						Stderr: lastExit.Logs.Stderr,
+						Code:    lastExit.Code,
+						At:      lastExit.At,
+						Phase:   lastExit.Phase,
+						Command: lastExit.Command,
+						Stdout:  lastExit.Logs.Stdout,
+						Stderr:  lastExit.Logs.Stderr,
 					}}
 				} else {
 					ev.reply <- logsResult{}
@@ -654,14 +809,14 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				ev.reply <- makeStatus(state, proc, procStartedAt, lastExit, c.cfg, version, browser, autoReloadPaused)
 			case shutdownRequested:
 				state = stateShuttingDown
-				c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc)
+				c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc, beforeCancel, afterCancel, beforeDone, afterDone)
 				return nil
 			}
 		}
 	}
 }
 
-func (c *Coordinator) runShutdown(cancelFSDebounce, stopWatcher func(), restartCancel context.CancelFunc, restartDone chan restartCompleteEvent, readinessCancel context.CancelFunc, proc childProcess) {
+func (c *Coordinator) runShutdown(cancelFSDebounce, stopWatcher func(), restartCancel context.CancelFunc, restartDone chan restartCompleteEvent, readinessCancel context.CancelFunc, proc childProcess, beforeCancel, afterCancel context.CancelFunc, beforeDone, afterDone chan struct{}) {
 	c.markShuttingDown()
 	if c.shutdownHooks.StopSocketAccepts != nil {
 		_ = c.shutdownHooks.StopSocketAccepts()
@@ -673,6 +828,18 @@ func (c *Coordinator) runShutdown(cancelFSDebounce, stopWatcher func(), restartC
 	}
 	if readinessCancel != nil {
 		readinessCancel()
+	}
+	if beforeCancel != nil {
+		beforeCancel()
+	}
+	if afterCancel != nil {
+		afterCancel()
+	}
+	if beforeDone != nil {
+		<-beforeDone
+	}
+	if afterDone != nil {
+		<-afterDone
 	}
 	if proc != nil {
 		_, _ = proc.Stop(context.Background())
@@ -719,6 +886,39 @@ func (c *Coordinator) restart(ctx context.Context, runID int, oldProc childProce
 		Stderr:     io.MultiWriter(os.Stderr, output.stderr),
 	})
 	return restartCompleteEvent{runID: runID, proc: proc, output: output, err: err}
+}
+
+// runCommands runs a task list sequentially, streaming output. It returns the
+// first failure, or canceled=true when the context was canceled.
+func (c *Coordinator) runCommands(ctx context.Context, phase string, commands []string) (*taskFailure, bool) {
+	for _, command := range commands {
+		if c.log != nil {
+			c.log.Verbosef("%s: %s", phase, command)
+		}
+		output := &processOutput{
+			stdout: &limitedBuffer{limit: maxCapturedOutput},
+			stderr: &limitedBuffer{limit: maxCapturedOutput},
+		}
+		event, runErr := c.commands.Run(ctx, process.Options{
+			Command:    command,
+			Root:       c.cfg.Root,
+			AppPort:    c.cfg.AppPort,
+			HasAppPort: c.cfg.HasAppPort,
+			ProxyPort:  c.cfg.ProxyPort,
+			Stdout:     io.MultiWriter(os.Stdout, output.stdout),
+			Stderr:     io.MultiWriter(os.Stderr, output.stderr),
+		})
+		if runErr != nil && ctx.Err() != nil {
+			return nil, true
+		}
+		if runErr != nil {
+			return &taskFailure{phase: phase, command: command, code: -1, err: runErr, output: output}, false
+		}
+		if event.Code != 0 {
+			return &taskFailure{phase: phase, command: command, code: event.Code, err: event.Err, output: output}, false
+		}
+	}
+	return nil, false
 }
 
 func (c *Coordinator) watchProcess(runID int, proc childProcess) {
@@ -863,6 +1063,24 @@ func makeLastExit(event process.ExitEvent, output *processOutput) *LastExit {
 		exit.Logs = &ProcessLogs{Stdout: output.stdout.String(), Stderr: output.stderr.String()}
 	}
 	return exit
+}
+
+func makeTaskLastExit(failure *taskFailure) *LastExit {
+	exit := &LastExit{
+		Code:    failure.code,
+		At:      time.Now().UTC(),
+		Error:   true,
+		Phase:   failure.phase,
+		Command: failure.command,
+	}
+	if failure.output != nil {
+		exit.Logs = &ProcessLogs{Stdout: failure.output.stdout.String(), Stderr: failure.output.stderr.String()}
+	}
+	return exit
+}
+
+func taskBrowserError(failure *taskFailure) string {
+	return fmt.Sprintf("%s failed: %s (exit %d)", failure.phase, failure.command, failure.code)
 }
 
 func externalState(state internalState) ExternalState {

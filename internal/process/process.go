@@ -167,6 +167,25 @@ func (p *Process) Stop(ctx context.Context) (ExitEvent, error) {
 	}
 }
 
+// Run starts opts.Command and waits until it exits. If ctx is canceled, the
+// process group is stopped before Run returns. A start failure is reported as
+// an exit event with code -1.
+func Run(ctx context.Context, opts Options) (ExitEvent, error) {
+	p, err := Start(opts)
+	if err != nil {
+		return ExitEvent{Code: -1, Err: err}, err
+	}
+	select {
+	case <-p.done:
+		event, _ := p.ExitEvent()
+		return event, nil
+	case <-ctx.Done():
+		_, _ = p.Stop(context.Background())
+		event, _ := p.ExitEvent()
+		return event, ctx.Err()
+	}
+}
+
 func (p *Process) wait() {
 	err := p.cmd.Wait()
 	event := ExitEvent{PID: p.pid, Code: p.cmd.ProcessState.ExitCode(), Err: err}
