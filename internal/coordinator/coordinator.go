@@ -50,13 +50,14 @@ const (
 
 // Status is a snapshot of coordinator-owned runtime state.
 type Status struct {
-	State        ExternalState
-	PID          int
-	AppPort      int
-	ProxyPort    int
-	Version      int
-	BrowserReady bool
-	BrowserError string
+	State         ExternalState
+	PID           int
+	AppPort       int
+	ProxyPort     int
+	Version       int
+	BrowserReady  bool
+	BrowserError  string
+	BrowserNotice string
 
 	// AutoReloadPaused reports whether filesystem auto-reload is paused.
 	AutoReloadPaused bool
@@ -115,12 +116,17 @@ type BrowserState struct {
 	Ready   bool
 	Version int
 	Error   string
+
+	// Notice is a lower-severity message shown in the floating panel only,
+	// without the full-width error banner.
+	Notice string
 }
 
 // BrowserNotifier receives browser websocket state updates.
 type BrowserNotifier interface {
 	BrowserReady(version int)
 	BrowserError(message string)
+	BrowserNotice(message string)
 }
 
 type childProcess interface {
@@ -666,8 +672,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					pendingRerun = false
 					lastExit = makeTaskLastExit(ev.failure)
 					browser.Ready = false
-					browser.Error = taskBrowserError(ev.failure)
-					c.notifyBrowserError(browser.Error)
+					browser.Error = ""
+					browser.Notice = taskBrowserError(ev.failure)
+					c.notifyBrowserNotice(browser.Notice)
 					if c.log != nil {
 						c.log.Printf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
 					}
@@ -689,6 +696,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					lastExit = makeTaskLastExit(ev.failure)
 					pendingTaskError = taskBrowserError(ev.failure)
 					browser.Ready = false
+					browser.Notice = ""
 					browser.Error = pendingTaskError
 					c.notifyBrowserError(pendingTaskError)
 					if c.log != nil {
@@ -720,6 +728,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					proc = nil
 				}
 				browser.Ready = false
+				browser.Notice = ""
 				browser.Error = processExitBrowserError(ev.event)
 				c.notifyBrowserError(browser.Error)
 				if !restartWorker {
@@ -740,6 +749,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					state = stateStopped
 					fsSuppressRun = false
 					browser.Ready = false
+					browser.Notice = ""
 					browser.Error = ev.err.Error()
 					c.notifyBrowserError(browser.Error)
 					if c.log != nil {
@@ -779,6 +789,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					browser.Ready = true
 					browser.Version = version
 					browser.Error = ""
+					browser.Notice = ""
 					c.notifyBrowserReady(version)
 					if pendingTaskError != "" {
 						c.notifyBrowserError(pendingTaskError)
@@ -790,6 +801,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				} else {
 					browser.Ready = false
 					browser.Error = ev.err.Error()
+					browser.Notice = ""
 					c.notifyBrowserError(browser.Error)
 					if c.log != nil {
 						c.log.Printf("readiness failed: %v", ev.err)
@@ -1068,6 +1080,7 @@ func makeStatus(state internalState, proc childProcess, startedAt time.Time, las
 		Version:          version,
 		BrowserReady:     browser.Ready,
 		BrowserError:     browser.Error,
+		BrowserNotice:    browser.Notice,
 		AutoReloadPaused: autoReloadPaused,
 		LastTrigger:      lastTrigger,
 		LastReadyIn:      lastReadyIn,
@@ -1123,6 +1136,12 @@ func (c *Coordinator) notifyBrowserReady(version int) {
 func (c *Coordinator) notifyBrowserError(message string) {
 	if c.browserNotifier != nil {
 		c.browserNotifier.BrowserError(message)
+	}
+}
+
+func (c *Coordinator) notifyBrowserNotice(message string) {
+	if c.browserNotifier != nil {
+		c.browserNotifier.BrowserNotice(message)
 	}
 }
 

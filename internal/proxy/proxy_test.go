@@ -134,6 +134,7 @@ func TestProxyServesInfo(t *testing.T) {
 			AutoReloadPaused: true,
 			LastTrigger:      coordinator.TriggerFS,
 			LastReadyIn:      420 * time.Millisecond,
+			BrowserNotice:    "before failed: templ generate (exit 1)",
 		}, nil
 	})
 
@@ -149,7 +150,7 @@ func TestProxyServesInfo(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		t.Fatal(err)
 	}
-	want := browserInfo{Status: "running", PID: 4242, Version: 7, AutoReload: "paused", Trigger: "filesystem", ReadyMS: 420}
+	want := browserInfo{Status: "running", PID: 4242, Version: 7, AutoReload: "paused", Trigger: "filesystem", ReadyMS: 420, Notice: "before failed: templ generate (exit 1)"}
 	if info != want {
 		t.Fatalf("info = %+v, want %+v", info, want)
 	}
@@ -458,6 +459,25 @@ func TestProxyBrowserWebSocketSendsLatestErrorOnConnect(t *testing.T) {
 	}
 }
 
+func TestProxyBrowserWebSocketSendsLatestNoticeOnConnect(t *testing.T) {
+	proxyURL, closeProxy := startProxyForTest(t, freePort(t))
+	defer closeProxy.Close()
+
+	closeProxy.BrowserHub().BrowserNotice("before failed: templ generate (exit 1)")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, strings.Replace(proxyURL, "http://", "ws://", 1)+"/__gust/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	msg := readBrowserMessage(t, ctx, conn)
+	if msg.Type != "notice" || msg.Message != "before failed: templ generate (exit 1)" {
+		t.Fatalf("connect message = %+v, want latest notice", msg)
+	}
+}
+
 func TestProxyInjectedScriptContent(t *testing.T) {
 	script := reloadScript(12, 8765)
 	checks := []string{
@@ -480,6 +500,10 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`#22c55e`,
 		`#dc2626`,
 		`#f59e0b`,
+		`__gust_notice`,
+		`msg.type === "notice"`,
+		`gustInfo.notice`,
+		`function esc(`,
 		`cursor:pointer`,
 		`__gust_pinned`,
 		`localStorage.getItem("__gust_pinned")`,

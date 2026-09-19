@@ -924,7 +924,10 @@ func TestCoordinatorBeforeFailureKeepsProcessAndLogsPhase(t *testing.T) {
 	commands.setResult(1, errors.New("exit status 1"))
 	coord.Trigger(TriggerManual, "rerun")
 	waitFor(t, func() bool { return len(commands.callList()) == 2 })
-	waitFor(t, func() bool { return mustStatus(t, coord).BrowserError != "" })
+	waitFor(t, func() bool {
+		status := mustStatus(t, coord)
+		return status.BrowserNotice != "" && status.BrowserError == ""
+	})
 
 	if runner.startCount() != 1 {
 		t.Fatalf("starts = %d, want old process kept", runner.startCount())

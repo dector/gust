@@ -65,6 +65,7 @@ type browserInfo struct {
 	AutoReload string `json:"autoReload"`
 	Trigger    string `json:"trigger"`
 	ReadyMS    int64  `json:"readyMs"`
+	Notice     string `json:"notice,omitempty"`
 }
 
 // BrowserReady records a ready browser state and broadcasts reload to clients.
@@ -106,6 +107,16 @@ func (h *BrowserHub) BrowserError(message string) {
 		return
 	}
 	msg := browserMessage{Type: "error", Message: message}
+	h.broadcast(msg, msg)
+}
+
+// BrowserNotice records and broadcasts a low-severity message shown in the
+// floating panel only, without the error banner.
+func (h *BrowserHub) BrowserNotice(message string) {
+	if h == nil || message == "" {
+		return
+	}
+	msg := browserMessage{Type: "notice", Message: message}
 	h.broadcast(msg, msg)
 }
 
@@ -346,6 +357,7 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request) {
 		AutoReload: autoReload,
 		Trigger:    string(status.LastTrigger),
 		ReadyMS:    status.LastReadyIn.Milliseconds(),
+		Notice:     status.BrowserNotice,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(info)
@@ -447,6 +459,7 @@ function ago(ms){
 }
 function applyIconState(){ if (!gustIcon) return; gustIcon.classList.toggle("__gust_icon_offline", !connected); gustIcon.classList.toggle("__gust_icon_failing", connected && failing); }
 function panelRow(label, value){ return '<div class="__gust_row"><span class="__gust_label">' + label + '</span><span>' + value + '</span></div>'; }
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]; }); }
 function statusColor(state){
   if (state === "running") return "#22c55e";
   if (state === "restarting") return "#f59e0b";
@@ -460,6 +473,9 @@ function renderPanel(){
     const state = gustInfo.status || "unknown";
     html += panelRow("Status", '<span class="__gust_dot" style="background:' + statusColor(state) + '"></span>' + state);
     html += panelRow("Auto-reload", gustInfo.autoReload || "unknown");
+  }
+  if (gustInfo && gustInfo.notice) {
+    html += panelRow("Before", '<span class="__gust_notice">' + esc(gustInfo.notice) + '</span>');
   }
   html += panelRow("Reloaded", ago(reloadedAt));
   if (gustInfo) {
@@ -510,7 +526,7 @@ function mountIcon(){
   if (!style) {
     style = document.createElement("style");
     style.id = "__gust_icon_style";
-    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647}#__gust_icon{width:24px;height:24px;color:#9ca3af;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_icon.__gust_icon_failing{color:#f59e0b;opacity:1}#__gust_panel{display:none;position:absolute;right:0;top:32px;background:#111827;color:#e5e7eb;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:nowrap}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#9ca3af}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}";
+    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647}#__gust_icon{width:24px;height:24px;color:#9ca3af;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_icon.__gust_icon_failing{color:#f59e0b;opacity:1}#__gust_panel{display:none;position:absolute;right:0;top:32px;background:#111827;color:#e5e7eb;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:nowrap}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#9ca3af}#__gust_panel .__gust_notice{color:#f59e0b}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}";
     document.head.appendChild(style);
   }
   const widget = document.createElement("div");
@@ -555,7 +571,8 @@ function connect(){
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
     if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
-    if (msg.type === "error") { failing = true; applyIconState(); showError(msg.message); return; }
+    if (msg.type === "notice") { failing = true; applyIconState(); refreshInfo(); return; }
+    if (msg.type === "error") { failing = true; applyIconState(); refreshInfo(); showError(msg.message); return; }
     if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
     if (msg.type === "reload") {
       failing = false; applyIconState();
