@@ -417,7 +417,7 @@ function banner(){
   if (!el) {
     el = document.createElement("div");
     el.id = "__gust_error";
-    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#b00020;color:white;padding:8px 12px;font:14px sans-serif;text-align:left;white-space:pre-wrap";
+    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483646;background:#b00020;color:white;padding:8px 40px 8px 12px;font:14px sans-serif;text-align:left;white-space:pre-wrap";
     document.documentElement.appendChild(el);
   }
   return el;
@@ -425,6 +425,7 @@ function banner(){
 function showError(message){ banner().textContent = message || "Gust error"; }
 function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
 let connected = false;
+let failing = false;
 let gustIcon;
 let gustWidget;
 let gustPanel;
@@ -444,7 +445,7 @@ function ago(ms){
   if (h < 24) return h + "h ago";
   return Math.floor(h / 24) + "d ago";
 }
-function applyIconState(){ if (gustIcon) gustIcon.classList.toggle("__gust_icon_offline", !connected); }
+function applyIconState(){ if (!gustIcon) return; gustIcon.classList.toggle("__gust_icon_offline", !connected); gustIcon.classList.toggle("__gust_icon_failing", connected && failing); }
 function panelRow(label, value){ return '<div class="__gust_row"><span class="__gust_label">' + label + '</span><span>' + value + '</span></div>'; }
 function statusColor(state){
   if (state === "running") return "#22c55e";
@@ -509,7 +510,7 @@ function mountIcon(){
   if (!style) {
     style = document.createElement("style");
     style.id = "__gust_icon_style";
-    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647}#__gust_icon{width:24px;height:24px;color:#9ca3af;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_panel{display:none;position:absolute;right:0;top:32px;background:#111827;color:#e5e7eb;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:nowrap}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#9ca3af}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}";
+    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647}#__gust_icon{width:24px;height:24px;color:#9ca3af;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_icon.__gust_icon_failing{color:#f59e0b;opacity:1}#__gust_panel{display:none;position:absolute;right:0;top:32px;background:#111827;color:#e5e7eb;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:nowrap}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#9ca3af}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}";
     document.head.appendChild(style);
   }
   const widget = document.createElement("div");
@@ -554,9 +555,10 @@ function connect(){
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
     if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
-    if (msg.type === "error") { showError(msg.message); return; }
-    if (msg.type === "ready") { hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
+    if (msg.type === "error") { failing = true; applyIconState(); showError(msg.message); return; }
+    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
     if (msg.type === "reload") {
+      failing = false; applyIconState();
       hideError();
       if (typeof msg.at === "number") reloadedAt = msg.at;
       if (typeof msg.version === "number" && msg.version > lastVersion) {
