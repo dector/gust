@@ -676,7 +676,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					browser.Notice = taskBrowserError(ev.failure)
 					c.notifyBrowserNotice(browser.Notice)
 					if c.log != nil {
-						c.log.Printf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
+						c.log.Warnf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
 					}
 					if proc == nil {
 						state = stateStopped
@@ -700,7 +700,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					browser.Error = pendingTaskError
 					c.notifyBrowserError(pendingTaskError)
 					if c.log != nil {
-						c.log.Printf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
+						c.log.Warnf("%s task failed: %s (exit %d)", ev.failure.phase, ev.failure.command, ev.failure.code)
 					}
 				}
 			case autoReloadToggleEvent:
@@ -753,7 +753,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					browser.Error = ev.err.Error()
 					c.notifyBrowserError(browser.Error)
 					if c.log != nil {
-						c.log.Printf("restart failed: %v", ev.err)
+						c.log.Errorf("restart failed: %v", ev.err)
 					}
 				} else {
 					proc = ev.proc
@@ -804,7 +804,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					browser.Notice = ""
 					c.notifyBrowserError(browser.Error)
 					if c.log != nil {
-						c.log.Printf("readiness failed: %v", ev.err)
+						c.log.Errorf("readiness failed: %v", ev.err)
 					}
 					select {
 					case <-proc.Done():
@@ -1040,7 +1040,11 @@ func (c *Coordinator) logProcessExit(event process.ExitEvent) {
 		return
 	}
 	if event.Err != nil {
-		c.log.Printf("process exited pid=%d: %v", event.PID, event.Err)
+		c.log.Errorf("process exited pid=%d: %v", event.PID, event.Err)
+		return
+	}
+	if event.Code != 0 {
+		c.log.Errorf("process exited pid=%d code=%d", event.PID, event.Code)
 		return
 	}
 	c.log.Printf("process exited pid=%d code=%d", event.PID, event.Code)

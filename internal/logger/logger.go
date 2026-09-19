@@ -36,6 +36,8 @@ const (
 	ansiReset  = "\x1b[0m"
 	ansiCyan   = "\x1b[36m"
 	ansiYellow = "\x1b[33m"
+	ansiRed    = "\x1b[31m"
+	ansiOrange = "\x1b[38;5;208m"
 )
 
 // New returns a logger that writes to out.
@@ -62,6 +64,27 @@ func (l *Logger) Verbosef(format string, args ...any) {
 		return
 	}
 	l.Printf(format, args...)
+}
+
+// Errorf writes a Gust-prefixed log line in red when colors are enabled.
+func (l *Logger) Errorf(format string, args ...any) {
+	l.colorf(ansiRed, format, args...)
+}
+
+// Warnf writes a Gust-prefixed log line in orange when colors are enabled.
+func (l *Logger) Warnf(format string, args ...any) {
+	l.colorf(ansiOrange, format, args...)
+}
+
+func (l *Logger) colorf(color, format string, args ...any) {
+	if l == nil || l.out == nil {
+		return
+	}
+	message := fmt.Sprintf(format, args...)
+	if l.color {
+		message = color + message + ansiReset
+	}
+	fmt.Fprintf(l.out, "%s%s\n", l.prefix(), message)
 }
 
 func (l *Logger) prefix() string {

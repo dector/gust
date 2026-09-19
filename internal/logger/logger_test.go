@@ -42,6 +42,40 @@ func TestPrintfColorsPrefixWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestErrorfColorsMessageWhenEnabled(t *testing.T) {
+	var out bytes.Buffer
+	log := NewWithOptions(&out, false, Options{Color: AlwaysColor})
+
+	log.Errorf("restart failed: %v", "boom")
+
+	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m \x1b[31mrestart failed: boom\x1b[0m\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestWarnfColorsMessageWhenEnabled(t *testing.T) {
+	var out bytes.Buffer
+	log := NewWithOptions(&out, false, Options{Color: AlwaysColor})
+
+	log.Warnf("%s task failed: %s (exit %d)", "before", "templ generate", 1)
+
+	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m \x1b[38;5;208mbefore task failed: templ generate (exit 1)\x1b[0m\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestErrorfAndWarnfPlainWhenColorDisabled(t *testing.T) {
+	var out bytes.Buffer
+	log := New(&out, false)
+
+	log.Errorf("restart failed: %v", "boom")
+	log.Warnf("%s task failed", "before")
+
+	if got, want := out.String(), "[gust] restart failed: boom\n[gust] before task failed\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestNoColorDisablesForcedColor(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	var out bytes.Buffer
