@@ -1,0 +1,34 @@
+gust ctl - control a running instance
+
+Usage:
+  gust ctl [-S <socket>] <command>
+
+Commands:
+  status    show instance state and last exit
+  pause     pause filesystem auto-reload
+  resume    resume filesystem auto-reload
+  rerun     reload now (works while paused)
+  logs      show output captured from the last failed exit
+  help      show the ctl help
+
+Discovery:
+  Without -S, the socket path is derived from the current directory.
+
+Samples:
+  gust ctl status
+  gust ctl pause
+  gust ctl rerun
+  gust ctl resume
+  gust ctl logs
+  gust ctl -S /tmp/gust-1000/abc.sock status
+
+Typical agent flow:
+  gust ctl pause        # stop filesystem-triggered reloads
+  # edit files
+  gust ctl rerun        # start the app with your changes
+  gust ctl resume       # resume auto-reload (reloads if changes were missed)
+
+Exit codes:
+  0  success
+  1  could not reach or control the instance
+  2  usage error

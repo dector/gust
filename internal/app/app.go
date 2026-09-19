@@ -12,6 +12,7 @@ import (
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/ctl"
 	"github.com/dector/gust/internal/logger"
+	"github.com/dector/gust/internal/man"
 	"github.com/dector/gust/internal/proxy"
 	"github.com/dector/gust/internal/socket"
 	"github.com/dector/gust/internal/term"
@@ -26,6 +27,9 @@ func Main() {
 func MainArgs(args []string) int {
 	if len(args) > 0 && args[0] == "ctl" {
 		return ctl.Run(context.Background(), args[1:], os.Stdout, os.Stderr)
+	}
+	if len(args) > 0 && args[0] == "man" {
+		return man.Run(args[1:], os.Stdout, os.Stderr)
 	}
 	if err := Run(context.Background(), args); err != nil {
 		fmt.Fprintf(os.Stderr, "[gust] fatal: %v\n", err)

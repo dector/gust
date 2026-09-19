@@ -1,0 +1,19 @@
+gust - local development runner
+
+Gust runs one command, watches the current directory, and restarts the command
+when files change. It can also run an HTTP proxy that injects a small browser
+reload script, and it exposes a Unix socket for agent control. Linux only.
+
+Usage:
+  gust -e <cmd> [flags]         run and watch a command
+  gust ctl [-S <socket>] <cmd>  control a running instance
+  gust man [topic]              show this manual (topics: run, ctl)
+
+Samples:
+  gust -e 'go run ./cmd/server'
+  gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
+  gust -e 'go run ./cmd/server' --e.before 'templ generate'
+  gust ctl status
+  gust ctl pause; gust ctl rerun; gust ctl resume
+
+Run "gust man run" for runner flags and "gust man ctl" for control commands.

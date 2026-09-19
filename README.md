@@ -78,6 +78,20 @@ gust ctl help
 
 A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
 
+## Manual
+
+Run `gust man` for a brief manual with samples. `gust man run` covers the
+runner flags, `gust man ctl` covers the control commands.
+
+```sh
+gust man
+gust man run
+gust man ctl
+```
+
+The pages are plain text files under `docs/man/` and are embedded into the
+binary with `go:embed`.
+
 ## V1 limitations
 
 - Linux only.

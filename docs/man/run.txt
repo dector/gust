@@ -1,0 +1,33 @@
+gust run - run and watch a command
+
+Usage:
+  gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]...
+       [-p <port>|<app:proxy>] [-h <path>]
+       [--exclude <path>] [--exclude.glob <glob>] [-v]
+
+Flags:
+  -e <cmd>              required command, executed via /bin/sh -c
+  --e.before <cmd>      command to run before each rerun, repeatable, fail-fast
+  --e.after <cmd>       command to run after each start, repeatable
+  -p <port>             app port, or app:proxy ports
+  -h <path>             health endpoint path, requires app port
+  --exclude <path>      path exclude, repeatable
+  --exclude.glob <glob> glob exclude, repeatable
+  -v                    enable verbose Gust logs
+
+Samples:
+  gust -e 'go run ./cmd/server'
+  gust -e 'go run ./cmd/server' --e.before 'templ generate' --e.before 'sqlc generate'
+  gust -e 'go run ./cmd/server' --e.after 'notify-send reloaded'
+  gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
+  gust -e 'go run ./cmd/server' --exclude frontend/node_modules -v
+  gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
+
+Keys (when stdin is a terminal):
+  r  rerun now
+  s  pause/resume auto-reload
+  i  toggle info logs
+  D  toggle browser debug lines (proxy mode)
+  q  quit
+
+Details: see README.md and docs/before-after.md.

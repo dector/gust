@@ -130,6 +130,8 @@ Flags:
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   -v                    enable verbose Gust logs
+
+Run "gust man" for a brief manual and samples.
 `
 
 func cleanCommands(values []string, flagName string) ([]string, error) {
