@@ -61,6 +61,13 @@ type Status struct {
 	// AutoReloadPaused reports whether filesystem auto-reload is paused.
 	AutoReloadPaused bool
 
+	// LastTrigger identifies what caused the most recent restart.
+	LastTrigger TriggerSource
+
+	// LastReadyIn is how long the most recent successful startup took to
+	// become ready after the process started.
+	LastReadyIn time.Duration
+
 	// Process is the status exposed by the proxy's /__gust/status endpoint.
 	Process ProcessStatus
 }
@@ -418,6 +425,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	var fsDebouncePending bool
 	var fsDebounceSeq int
 	var fsTriggerReason string
+	var pendingTrigger TriggerSource
+	var lastTrigger TriggerSource
+	var lastReadyIn time.Duration
 	var autoReloadPaused bool
 	var autoReloadMissedFS bool
 	infoEnabled := c.cfg.Info
@@ -491,6 +501,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			pendingRerun = true
 			return
 		}
+		lastTrigger = pendingTrigger
 		cancelAfter()
 		pendingTaskError = ""
 		if c.log != nil {
@@ -576,10 +587,12 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if infoEnabled && c.log != nil {
 				c.log.Printf("reload triggered by: %s", fsTriggerReason)
 			}
+			pendingTrigger = TriggerFS
 			requestRestart("filesystem change")
 		}
 	}
 
+	pendingTrigger = TriggerInitial
 	beginRerun("initial")
 
 	for {
@@ -629,6 +642,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					cancelFSDebounce()
 					autoReloadMissedFS = false
 				}
+				pendingTrigger = ev.source
 				requestRestart(ev.reason)
 			case debouncedFSTriggerEvent:
 				if fsSuppressRun || beforeWorker || afterWorker {
@@ -638,6 +652,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					if infoEnabled && c.log != nil {
 						c.log.Printf("reload triggered by: %s", fsTriggerReason)
 					}
+					pendingTrigger = TriggerFS
 					requestRestart("filesystem change")
 				}
 			case beforeCompleteEvent:
@@ -760,6 +775,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				fsSuppressRun = false
 				if ev.ready {
 					version++
+					lastReadyIn = time.Since(procStartedAt)
 					browser.Ready = true
 					browser.Version = version
 					browser.Error = ""
@@ -806,7 +822,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 					ev.reply <- logsResult{}
 				}
 			case statusRequest:
-				ev.reply <- makeStatus(state, proc, procStartedAt, lastExit, c.cfg, version, browser, autoReloadPaused)
+				ev.reply <- makeStatus(state, proc, procStartedAt, lastExit, c.cfg, version, browser, autoReloadPaused, lastTrigger, lastReadyIn)
 			case shutdownRequested:
 				state = stateShuttingDown
 				c.runShutdown(cancelFSDebounce, stopWatcher, restartCancel, restartDone, readinessCancel, proc, beforeCancel, afterCancel, beforeDone, afterDone)
@@ -1028,7 +1044,7 @@ func processExitBrowserError(event process.ExitEvent) string {
 	return "process exited"
 }
 
-func makeStatus(state internalState, proc childProcess, startedAt time.Time, lastExit *LastExit, cfg config.Config, version int, browser BrowserState, autoReloadPaused bool) Status {
+func makeStatus(state internalState, proc childProcess, startedAt time.Time, lastExit *LastExit, cfg config.Config, version int, browser BrowserState, autoReloadPaused bool, lastTrigger TriggerSource, lastReadyIn time.Duration) Status {
 	pid := 0
 	process := ProcessStatus{LastExit: lastExit}
 	if proc != nil {
@@ -1053,6 +1069,8 @@ func makeStatus(state internalState, proc childProcess, startedAt time.Time, las
 		BrowserReady:     browser.Ready,
 		BrowserError:     browser.Error,
 		AutoReloadPaused: autoReloadPaused,
+		LastTrigger:      lastTrigger,
+		LastReadyIn:      lastReadyIn,
 		Process:          process,
 	}
 }

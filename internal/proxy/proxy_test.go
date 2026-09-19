@@ -120,6 +120,41 @@ func TestProxyServesStatus(t *testing.T) {
 	}
 }
 
+func TestProxyServesInfo(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+
+	server.SetStatusProvider(func(context.Context) (coordinator.Status, error) {
+		return coordinator.Status{
+			State:            coordinator.ExternalRunning,
+			PID:              4242,
+			Version:          7,
+			AutoReloadPaused: true,
+			LastTrigger:      coordinator.TriggerFS,
+			LastReadyIn:      420 * time.Millisecond,
+		}, nil
+	})
+
+	resp, err := http.Get(proxyURL + "/__gust/info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("response = status %d content-type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	var info browserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		t.Fatal(err)
+	}
+	want := browserInfo{Status: "running", PID: 4242, Version: 7, AutoReload: "paused", Trigger: "filesystem", ReadyMS: 420}
+	if info != want {
+		t.Fatalf("info = %+v, want %+v", info, want)
+	}
+}
+
 func TestProxyRetriesUntilAppAvailable(t *testing.T) {
 	appPort := freePort(t)
 	proxyPort := freePort(t)
@@ -424,7 +459,7 @@ func TestProxyBrowserWebSocketSendsLatestErrorOnConnect(t *testing.T) {
 }
 
 func TestProxyInjectedScriptContent(t *testing.T) {
-	script := reloadScript(12)
+	script := reloadScript(12, 8765)
 	checks := []string{
 		`<script id="__gust_reload">`,
 		`let lastVersion = 12;`,
@@ -434,6 +469,33 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`setTimeout(connect, retry)`,
 		`__gust_error`,
 		`position:fixed;top:0`,
+		`__gust_icon`,
+		`position:fixed;right:8px;top:8px`,
+		`__gust_icon_offline`,
+		`color:#9ca3af`,
+		`opacity:.45`,
+		`#22c55e`,
+		`#dc2626`,
+		`cursor:pointer`,
+		`__gust_pinned`,
+		`localStorage.getItem("__gust_pinned")`,
+		`localStorage.setItem("__gust_pinned"`,
+		`const gustAppPort = 8765;`,
+		`__gust_panel`,
+		`/__gust/info`,
+		`__gust_widget`,
+		`#__gust_widget.__gust_open #__gust_panel`,
+		`__gust_dot`,
+		`font:14px/1.6`,
+		`Proxying`,
+		`Reloaded`,
+		`Status`,
+		`Version`,
+		`Auto-reload`,
+		`Trigger`,
+		`Ready In`,
+		`pinned`,
+		`127.0.0.1:`,
 		`__gust_debug_style`,
 		`gust-debug`,
 		`outline-offset: -1px`,

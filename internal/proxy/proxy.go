@@ -28,6 +28,8 @@ type Server struct {
 	listener  net.Listener
 	log       *logger.Logger
 	hub       *BrowserHub
+	appPort   int
+	proxyPort int
 	closeOnce sync.Once
 
 	statusMu       sync.RWMutex
@@ -52,6 +54,17 @@ type browserMessage struct {
 	Version int    `json:"version,omitempty"`
 	Message string `json:"message,omitempty"`
 	Enabled *bool  `json:"enabled,omitempty"`
+	At      int64  `json:"at,omitempty"`
+}
+
+// browserInfo is the JSON payload served by /__gust/info.
+type browserInfo struct {
+	Status     string `json:"status"`
+	PID        int    `json:"pid"`
+	Version    int    `json:"version"`
+	AutoReload string `json:"autoReload"`
+	Trigger    string `json:"trigger"`
+	ReadyMS    int64  `json:"readyMs"`
 }
 
 // BrowserReady records a ready browser state and broadcasts reload to clients.
@@ -59,7 +72,8 @@ func (h *BrowserHub) BrowserReady(version int) {
 	if h == nil {
 		return
 	}
-	h.broadcast(browserMessage{Type: "reload", Version: version}, browserMessage{Type: "ready", Version: version})
+	at := time.Now().UnixMilli()
+	h.broadcast(browserMessage{Type: "reload", Version: version, At: at}, browserMessage{Type: "ready", Version: version, At: at})
 }
 
 // ToggleDebug toggles browser debug outlines, broadcasts the new state, and returns it.
@@ -178,7 +192,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -245,7 +259,7 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		interval: config.ProxyRetryInterval,
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return injectHTMLResponse(resp, s.hub.currentVersion(), s.log)
+		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log)
 	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -263,6 +277,10 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		}
 		if r.URL.Path == "/__gust/status" {
 			s.serveStatus(w, r)
+			return
+		}
+		if r.URL.Path == "/__gust/info" {
+			s.serveInfo(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/__gust/") {
@@ -297,6 +315,40 @@ func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(status.Process)
+}
+
+func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.statusMu.RLock()
+	provider := s.statusProvider
+	s.statusMu.RUnlock()
+	if provider == nil {
+		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	status, err := provider(r.Context())
+	if err != nil {
+		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	autoReload := "active"
+	if status.AutoReloadPaused {
+		autoReload = "paused"
+	}
+	info := browserInfo{
+		Status:     string(status.State),
+		PID:        status.PID,
+		Version:    status.Version,
+		AutoReload: autoReload,
+		Trigger:    string(status.LastTrigger),
+		ReadyMS:    status.LastReadyIn.Milliseconds(),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(info)
 }
 
 func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -355,7 +407,7 @@ func prepareBodyForRetry(r *http.Request) error {
 
 const flushNoLengthHeader = "X-Gust-Flush-No-Length"
 
-func reloadScript(version int) string {
+func reloadScript(version, appPort int) string {
 	return fmt.Sprintf(`<script id="__gust_reload">(function(){
 let lastVersion = %d;
 let retry = 250;
@@ -372,6 +424,114 @@ function banner(){
 }
 function showError(message){ banner().textContent = message || "Gust error"; }
 function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
+let connected = false;
+let gustIcon;
+let gustWidget;
+let gustPanel;
+let pinned = false;
+let hovering = false;
+let reloadedAt = 0;
+let gustInfo = null;
+let infoTimer = null;
+const gustAppPort = %d;
+function ago(ms){
+  if (!ms) return "unknown";
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (s < 60) return s + "s ago";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+function applyIconState(){ if (gustIcon) gustIcon.classList.toggle("__gust_icon_offline", !connected); }
+function panelRow(label, value){ return '<div class="__gust_row"><span class="__gust_label">' + label + '</span><span>' + value + '</span></div>'; }
+function statusColor(state){
+  if (state === "running") return "#22c55e";
+  if (state === "restarting") return "#f59e0b";
+  if (state === "stopped") return "#ef4444";
+  return "#6b7280";
+}
+function renderPanel(){
+  if (!gustPanel) return;
+  let html = "";
+  if (gustInfo) {
+    const state = gustInfo.status || "unknown";
+    html += panelRow("Status", '<span class="__gust_dot" style="background:' + statusColor(state) + '"></span>' + state);
+    html += panelRow("Auto-reload", gustInfo.autoReload || "unknown");
+  }
+  html += panelRow("Reloaded", ago(reloadedAt));
+  if (gustInfo) {
+    html += panelRow("Trigger", gustInfo.trigger || "—");
+    html += panelRow("Version", String(gustInfo.version || 0));
+    html += panelRow("Ready In", gustInfo.readyMs ? gustInfo.readyMs + "ms" : "—");
+  }
+  html += panelRow("Proxying", "127.0.0.1:" + gustAppPort);
+  gustPanel.innerHTML = html;
+}
+function refreshInfo(){
+  fetch("/__gust/info", {cache: "no-store"}).then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
+    if (data) gustInfo = data;
+    renderPanel();
+  }).catch(function(){ renderPanel(); });
+}
+function startInfo(){
+  if (infoTimer) return;
+  refreshInfo();
+  infoTimer = setInterval(refreshInfo, 1000);
+}
+function stopInfo(){
+  if (!infoTimer) return;
+  clearInterval(infoTimer);
+  infoTimer = null;
+}
+function syncPanel(){
+  if (!gustWidget) return;
+  if (gustIcon) gustIcon.classList.toggle("__gust_pinned", pinned);
+  if (pinned || hovering) {
+    gustWidget.classList.add("__gust_open");
+    startInfo();
+    renderPanel();
+    return;
+  }
+  gustWidget.classList.remove("__gust_open");
+  stopInfo();
+}
+function loadPinned(){
+  try { return localStorage.getItem("__gust_pinned") === "1"; } catch (_) { return false; }
+}
+function savePinned(){
+  try { localStorage.setItem("__gust_pinned", pinned ? "1" : "0"); } catch (_) {}
+}
+function mountIcon(){
+  if (document.getElementById("__gust_icon")) { gustIcon = document.getElementById("__gust_icon"); applyIconState(); return; }
+  let style = document.getElementById("__gust_icon_style");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "__gust_icon_style";
+    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647}#__gust_icon{width:24px;height:24px;color:#9ca3af;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_panel{display:none;position:absolute;right:0;top:32px;background:#111827;color:#e5e7eb;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:nowrap}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#9ca3af}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}";
+    document.head.appendChild(style);
+  }
+  const widget = document.createElement("div");
+  widget.id = "__gust_widget";
+  gustWidget = widget;
+  gustIcon = document.createElement("div");
+  gustIcon.id = "__gust_icon";
+  gustIcon.title = "Gust";
+  gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z"/></svg>';
+  gustPanel = document.createElement("div");
+  gustPanel.id = "__gust_panel";
+  widget.appendChild(gustIcon);
+  widget.appendChild(gustPanel);
+  widget.addEventListener("mouseenter", function(){ hovering = true; syncPanel(); });
+  widget.addEventListener("mouseleave", function(){ hovering = false; syncPanel(); });
+  gustIcon.addEventListener("click", function(e){ e.stopPropagation(); pinned = !pinned; savePinned(); syncPanel(); });
+  document.body.appendChild(widget);
+  pinned = loadPinned();
+  applyIconState();
+  syncPanel();
+}
+if (document.body) mountIcon(); else document.addEventListener("DOMContentLoaded", mountIcon, {once:true});
 function setDebug(enabled){
   const apply = function(){
     let style = document.getElementById("__gust_debug_style");
@@ -389,29 +549,30 @@ function connect(){
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const url = proto + "//" + location.host + "/__gust/ws";
   socket = new WebSocket(url);
-  socket.onopen = function(){ retry = 250; };
+  socket.onopen = function(){ retry = 250; connected = true; applyIconState(); };
   socket.onmessage = function(event){
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
     if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
     if (msg.type === "error") { showError(msg.message); return; }
-    if (msg.type === "ready") { hideError(); if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
+    if (msg.type === "ready") { hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
     if (msg.type === "reload") {
       hideError();
+      if (typeof msg.at === "number") reloadedAt = msg.at;
       if (typeof msg.version === "number" && msg.version > lastVersion) {
         lastVersion = msg.version;
         location.reload();
       }
     }
   };
-  socket.onclose = function(){ setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  socket.onclose = function(){ connected = false; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();
-})();</script>`, version)
+})();</script>`, version, appPort)
 }
 
-func injectHTMLResponse(resp *http.Response, version int, log *logger.Logger) error {
+func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.Logger) error {
 	if ok, reason := shouldInjectHTMLReason(resp); !ok {
 		if log != nil {
 			log.Verbosef("skipped HTML injection: %s", reason)
@@ -439,7 +600,7 @@ func injectHTMLResponse(resp *http.Response, version int, log *logger.Logger) er
 		return nil
 	}
 
-	body = append(body, reloadScript(version)...)
+	body = append(body, reloadScript(version, appPort)...)
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	if hadContentLength {
 		resp.ContentLength = int64(len(body))
