@@ -71,8 +71,10 @@ func Run(ctx context.Context, args []string) error {
 		coord.SetBrowserNotifier(proxyServer.BrowserHub())
 		proxyServer.SetStatusProvider(coord.Status)
 	}
+	var tailscaleURL string
+	var tailscaleURLReady <-chan string
 	if expose != nil {
-		expose.StartReady()
+		tailscaleURLReady = expose.StartReady()
 	}
 
 	socketServer, err := socket.Start(serviceCtx, cfg, log, coord)
@@ -81,6 +83,12 @@ func Run(ctx context.Context, args []string) error {
 	}
 	defer socketServer.Close()
 
+	if tailscaleURLReady != nil {
+		select {
+		case tailscaleURL = <-tailscaleURLReady:
+		case <-runCtx.Done():
+		}
+	}
 	keysEnabled := term.IsTerminal(os.Stdin)
 	var toggleDebug func()
 	if proxyServer != nil {
@@ -111,6 +119,7 @@ func Run(ctx context.Context, args []string) error {
 		ProxyEnabled: cfg.ProxyEnabled,
 		ProxyPort:    cfg.ProxyPort,
 		HealthPath:   cfg.HealthPath,
+		TailscaleURL: tailscaleURL,
 	}, socketServer.Path(), keysEnabled)
 
 	if err := termCtl.Start(runCtx); err != nil {

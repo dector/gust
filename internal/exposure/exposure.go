@@ -30,18 +30,19 @@ type session interface {
 
 type starter func(context.Context, tailscale.Config) (session, error)
 
-// Manager keeps the same session across app restarts. Failed exposure can be
-// retried on the next successful readiness event.
+// Manager keeps the same session across app restarts and publishes the URL
+// when Serve reports it.
 type Manager struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	running bool
-	root    string
-	appPort int
-	log     *logger.Logger
-	start   starter
+	mu         sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	running    bool
+	root       string
+	appPort    int
+	log        *logger.Logger
+	start      starter
+	startupURL chan string
 }
 
 // New creates an exposure manager. StartReady begins exposure asynchronously.
@@ -57,15 +58,21 @@ func newManager(root string, appPort int, log *logger.Logger, start starter) *Ma
 }
 
 // StartReady starts exposure asynchronously once. A running exposure is reused.
-func (m *Manager) StartReady() {
+func (m *Manager) StartReady() <-chan string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.running || m.ctx.Err() != nil {
-		return
+		return m.startupURL
+	}
+	m.startupURL = make(chan string, 1)
+	if m.ctx.Err() != nil {
+		close(m.startupURL)
+		return m.startupURL
 	}
 	m.running = true
 	m.wg.Add(1)
-	go m.run()
+	go m.run(m.startupURL)
+	return m.startupURL
 }
 
 // Close cancels startup or stops and reaps the foreground Serve process.
@@ -76,8 +83,9 @@ func (m *Manager) Close() {
 	m.wg.Wait()
 }
 
-func (m *Manager) run() {
+func (m *Manager) run(startupURL chan string) {
 	defer m.wg.Done()
+	defer close(startupURL)
 	defer func() {
 		m.mu.Lock()
 		m.running = false
@@ -104,7 +112,7 @@ func (m *Manager) run() {
 	select {
 	case url, ok := <-s.URL():
 		if ok && m.ctx.Err() == nil {
-			m.log.Printf("Tailscale exposure: %s", url)
+			startupURL <- url
 		}
 	case <-m.ctx.Done():
 	case <-done:

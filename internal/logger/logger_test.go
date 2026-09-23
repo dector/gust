@@ -110,12 +110,14 @@ func TestPrintStartupSelectedOutput(t *testing.T) {
 		ProxyEnabled: true,
 		ProxyPort:    5000,
 		HealthPath:   "/health",
+		TailscaleURL: "https://gust.example.ts.net",
 	}, "/tmp/gust-1000/hash.sock", true)
 
 	want := "[gust] exec: go run ./cmd/server\n" +
 		"[gust] app: http://127.0.0.1:8080\n" +
 		"[gust] proxy: http://127.0.0.1:5000\n" +
 		"[gust] health: http://127.0.0.1:8080/health\n" +
+		"[gust] tailscale: https://gust.example.ts.net\n" +
 		"[gust] socket: /tmp/gust-1000/hash.sock\n" +
 		"[gust] key: r — rerun\n" +
 		"[gust] key: s — pause/resume auto-reload\n" +

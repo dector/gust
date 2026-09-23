@@ -123,6 +123,7 @@ type StartupConfig struct {
 	ProxyEnabled bool
 	ProxyPort    int
 	HealthPath   string
+	TailscaleURL string
 }
 
 // PrintStartup writes the user-facing startup summary.
@@ -142,6 +143,9 @@ func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled 
 	}
 	if cfg.HealthPath != "" {
 		l.Printf("health: http://127.0.0.1:%d%s", cfg.AppPort, cfg.HealthPath)
+	}
+	if cfg.TailscaleURL != "" {
+		l.Printf("tailscale: %s", cfg.TailscaleURL)
 	}
 	if socketPath != "" {
 		l.Printf("socket: %s", socketPath)

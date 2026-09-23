@@ -82,8 +82,10 @@ func TestManagerReuseCollisionAndShutdown(t *testing.T) {
 		s.url <- "https://example.ts.net:50000"
 		return s, nil
 	})
-	m.StartReady()
-	await(t, func() bool { return strings.Contains(output.String(), "Tailscale exposure:") })
+	urlReady := m.StartReady()
+	if got := <-urlReady; got != "https://example.ts.net:50000" {
+		t.Fatalf("exposure URL = %q", got)
+	}
 	m.StartReady() // next app readiness must reuse the same foreground session
 	mu.Lock()
 	if len(ports) != 2 || ports[0] != candidate("/work/app", 8080, 0) || ports[1] != candidate("/work/app", 8080, 1) {
@@ -114,10 +116,13 @@ func TestManagerReportsFailureAndRetriesAfterReadiness(t *testing.T) {
 		s.url <- "https://example.ts.net"
 		return s, nil
 	})
-	m.StartReady()
+	if got := <-m.StartReady(); got != "" {
+		t.Fatalf("URL after failed start = %q, want empty", got)
+	}
 	await(t, func() bool { return strings.Contains(output.String(), "tailscale missing") })
-	m.StartReady()
-	await(t, func() bool { return strings.Contains(output.String(), "Tailscale exposure: https://") })
+	if got := <-m.StartReady(); got != "https://example.ts.net" {
+		t.Fatalf("retry URL = %q", got)
+	}
 	m.Close()
 	mu.Lock()
 	defer mu.Unlock()
@@ -145,8 +150,9 @@ func TestManagerNoticesUnexpectedExit(t *testing.T) {
 		s.url <- "https://example.ts.net"
 		return s, nil
 	})
-	m.StartReady()
-	await(t, func() bool { return strings.Contains(output.String(), "Tailscale exposure: https://") })
+	if got := <-m.StartReady(); got != "https://example.ts.net" {
+		t.Fatalf("exposure URL = %q", got)
+	}
 	_ = s.Close()
 	await(t, func() bool { return strings.Contains(output.String(), "stopped unexpectedly") })
 	m.Close()
