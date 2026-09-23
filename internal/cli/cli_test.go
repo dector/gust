@@ -75,6 +75,30 @@ func TestParseProxyPorts(t *testing.T) {
 	}
 }
 
+func TestParseTailscale(t *testing.T) {
+	for _, args := range [][]string{
+		{"-e", "run", "-p", "8080", "-T"},
+		{"-e", "run", "-p", "8080:5000", "-h", "/health", "-T"},
+	} {
+		cfg, err := ParseWithOutput(args, nil)
+		if err != nil || !cfg.Tailscale || cfg.AppPort != 8080 {
+			t.Fatalf("ParseWithOutput(%v) = %+v, %v", args, cfg, err)
+		}
+	}
+	var out bytes.Buffer
+	_, err := ParseWithOutput([]string{"-e", "run", "-T"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "-T requires -p") {
+		t.Fatalf("missing port error = %v", err)
+	}
+	if !strings.Contains(out.String(), "-T") {
+		t.Fatalf("usage missing -T: %q", out.String())
+	}
+	_, err = ParseWithOutput([]string{"-e", "run", "-T=true", "-p", "8080"}, nil)
+	if err != nil {
+		t.Fatalf("bool flag rejected: %v", err)
+	}
+}
+
 func TestParseHealthRequiresAppPort(t *testing.T) {
 	var out bytes.Buffer
 	_, err := ParseWithOutput([]string{"-e", "run", "-h", "/health"}, &out)

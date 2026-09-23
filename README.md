@@ -30,6 +30,8 @@ gust -e 'go run ./cmd/server' --e.after 'notify-send reloaded'
 gust -e 'go run ./cmd/server' -p 8080
 gust -e 'go run ./cmd/server' -p 8080:5000
 gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
+gust -e 'go run ./cmd/server' -p 8080 -h /health -T
+gust -e 'go run ./cmd/server' -p 8080:5000 -h /health -T
 gust -e 'go run ./cmd/server' -p 8080 --exclude frontend/node_modules -v
 gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
 ```
@@ -42,6 +44,7 @@ Flags:
 - `--e.after <cmd>`: repeatable command to run after each start.
 - `-p <port>`: optional app port, or `app:proxy` ports.
 - `-h <path>`: optional health endpoint. Requires an app port.
+- `-T`: expose the reload-proxy port through Tailscale Serve when enabled; otherwise expose the app port. Requires `-p`; no argument.
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
 - `-v`: verbose Gust logs.
@@ -50,6 +53,26 @@ Flags:
 `--exclude` values are relative path prefixes. Use them for directories or whole subtrees, for example `--exclude frontend/node_modules`.
 
 `--exclude.glob` values use Go filepath glob syntax and are matched against both the project-relative path and the file basename. The pattern must match the whole value. `*` does not cross `/`, so `assets/*.tmp` matches `assets/cache.tmp` but not `assets/nested/cache.tmp`. A basename glob like `*_templ.go` matches files with that name pattern in any directory.
+
+## Tailscale exposure
+
+Install and sign in to Tailscale, then use `-T -p <app port>` or
+`-T -p <app port>:<proxy port>`. Gust starts a foreground `tailscale serve`
+only after the app is ready: a successful `-h` health check when specified,
+otherwise Gust's normal 300ms process stability check. It targets
+`127.0.0.1:<proxy port>` when the reload proxy is enabled, including its
+WebSocket traffic; otherwise it targets `127.0.0.1:<app port>`. Gust logs
+the HTTPS URL when Serve reports it and warns if exposure fails or exits. An
+exposure failure does not stop the local app; a later successful app restart
+retries it.
+
+The HTTPS port is deterministic for the project directory and exposed port, in the
+high range 49152–65535. If it is already configured in Tailscale, Gust probes
+up to 64 successive ports without overwriting existing Serve settings. The
+same foreground session stays open through app restarts, and Gust closes it on
+shutdown. Occupancy can change the selected port between Gust invocations.
+Tailscale Serve's status check is not atomic with startup: another process
+configuring the same port at the same time can still race it.
 
 ## Tasks
 

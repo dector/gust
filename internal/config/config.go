@@ -23,9 +23,18 @@ type Config struct {
 	ProxyPort    int
 	ProxyEnabled bool
 	HealthPath   string
+	Tailscale    bool
 	Excludes     []string
 	ExcludeGlobs []string
 	Verbose      bool
 	Info         bool
 	Root         string
+}
+
+// ExposurePort returns the browser-facing proxy port when available, otherwise the app port.
+func (c Config) ExposurePort() int {
+	if c.ProxyEnabled {
+		return c.ProxyPort
+	}
+	return c.AppPort
 }

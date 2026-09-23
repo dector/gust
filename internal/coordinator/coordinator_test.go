@@ -241,6 +241,31 @@ func TestCoordinatorHealthReadinessSuccessIncrementsVersion(t *testing.T) {
 	<-done
 }
 
+func TestCoordinatorReadyHookOnlyAfterSuccessfulReadiness(t *testing.T) {
+	withReadinessTimings(t, 25*time.Millisecond, 5*time.Millisecond, 20*time.Millisecond)
+	var code atomic.Int32
+	code.Store(http.StatusInternalServerError)
+	port, closeServer := startDynamicHealthServer(t, func() int { return int(code.Load()) })
+	defer closeServer()
+	coord := newWithRunner(config.Config{Exec: "test", AppPort: port, HasAppPort: true, HealthPath: "/health"}, nil, newFakeRunner())
+	var called atomic.Int32
+	coord.SetReadyHook(func() { called.Add(1) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runCoordinator(t, coord, ctx)
+	waitFor(t, func() bool { return mustStatus(t, coord).BrowserError == "health check timed out" })
+	if called.Load() != 0 {
+		t.Fatal("exposure started before health succeeded")
+	}
+	code.Store(http.StatusOK)
+	coord.Trigger(TriggerManual, "retry")
+	waitFor(t, func() bool { return called.Load() == 1 })
+	coord.Trigger(TriggerManual, "again")
+	waitFor(t, func() bool { return called.Load() == 2 })
+	cancel()
+	<-done
+}
+
 func TestCoordinatorHealthTimeoutDoesNotIncrementVersion(t *testing.T) {
 	withReadinessTimings(t, 25*time.Millisecond, 5*time.Millisecond, 20*time.Millisecond)
 	port, closeServer := startHealthServer(t, http.StatusInternalServerError)

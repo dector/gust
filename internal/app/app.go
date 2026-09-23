@@ -11,6 +11,7 @@ import (
 	"github.com/dector/gust/internal/cli"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/ctl"
+	"github.com/dector/gust/internal/exposure"
 	"github.com/dector/gust/internal/logger"
 	"github.com/dector/gust/internal/man"
 	"github.com/dector/gust/internal/proxy"
@@ -47,6 +48,11 @@ func Run(ctx context.Context, args []string) error {
 
 	log := logger.New(os.Stderr, cfg.Verbose)
 	coord := coordinator.New(cfg, log)
+	if cfg.Tailscale {
+		expose := exposure.New(cfg.Root, cfg.ExposurePort(), log)
+		defer expose.Close()
+		coord.SetReadyHook(expose.StartReady)
+	}
 
 	runCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stopSignals()

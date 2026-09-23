@@ -40,6 +40,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.Var(&afters, "e.after", "command to run after each start, repeatable")
 	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports")
 	fs.StringVar(&cfg.HealthPath, "h", "", "health endpoint path")
+	fs.BoolVar(&cfg.Tailscale, "T", false, "expose app port via Tailscale Serve")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
@@ -69,6 +70,11 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		cfg.HasAppPort = true
 		cfg.ProxyPort = proxyPort
 		cfg.ProxyEnabled = proxyEnabled
+	}
+
+	if cfg.Tailscale && !cfg.HasAppPort {
+		fs.Usage()
+		return config.Config{}, errors.New("-T requires -p app port")
 	}
 
 	if cfg.HealthPath != "" {
@@ -119,7 +125,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	return cfg, nil
 }
 
-const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [--exclude <path>] [--exclude.glob <glob>] [-v]
+const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T] [--exclude <path>] [--exclude.glob <glob>] [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
@@ -127,6 +133,7 @@ Flags:
   --e.after <cmd>       command to run after each start, repeatable
   -p <port>             app port, or app:proxy ports
   -h <path>             health endpoint path, requires app port
+  -T                    expose app port via Tailscale Serve, requires -p
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   -v                    enable verbose Gust logs

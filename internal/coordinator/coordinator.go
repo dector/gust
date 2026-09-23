@@ -284,6 +284,7 @@ type Coordinator struct {
 	runner          processRunner
 	commands        commandRunner
 	browserNotifier BrowserNotifier
+	readyHook       func()
 	shutdownHooks   ShutdownHooks
 	events          chan any
 	done            chan struct{}
@@ -317,6 +318,12 @@ func (c *Coordinator) SetBrowserNotifier(notifier BrowserNotifier) {
 // SetShutdownHooks configures cleanup steps owned by outer packages.
 func (c *Coordinator) SetShutdownHooks(hooks ShutdownHooks) {
 	c.shutdownHooks = hooks
+}
+
+// SetReadyHook registers a nonblocking callback invoked after each successful readiness check.
+// Configure it before Run.
+func (c *Coordinator) SetReadyHook(hook func()) {
+	c.readyHook = hook
 }
 
 // Trigger queues a restart request from a producer such as keyboard or socket.
@@ -795,6 +802,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 						c.notifyBrowserError(pendingTaskError)
 					}
 					state = stateRunning
+					if c.readyHook != nil {
+						c.readyHook()
+					}
 					if c.cfg.HealthPath != "" {
 						startAfterTasks(ev.runID)
 					}

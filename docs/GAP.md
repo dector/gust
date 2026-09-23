@@ -1,6 +1,6 @@
 # Gust Ally Protocol (GAP) — experimental design
 
-GAP is a proposed protocol for Gust to discover and manage optional tools. It is **not implemented**. Gust is the **Leader**: it starts and owns the app and an optional foreground **Ally** such as `serv`.
+GAP is a proposed protocol for Gust to discover and manage optional tools. It is **not implemented**. The `-T` flag instead uses `github.com/dector/serv/pkg/tailscale` directly, without GAP or an Ally. Gust is the **Leader** in this proposal: it starts and owns the app and an optional foreground **Ally** such as `serv`.
 
 The first capability is `gust:expose-tailscale/v1`. `gust:` means Gust defines this experimental contract, not that only Gust or `serv` can participate.
 
@@ -31,14 +31,14 @@ On the connected child, Gust asks only about the capability it needs:
 
 Gust already owns the app and knows its port (`-p`). With `-h`, Gust waits for the health check; exposure starts at the same readiness point that precedes `--e.after`. The after hook remains a short-lived task, **not** the owner of the Ally. For this first experiment, require `-p` and `-h` for exposure rather than silently interpreting app spawn as readiness. Config syntax for selecting the Ally and capability is still TBD.
 
-After readiness, Gust sends the app's port to the Ally:
+After readiness, Gust sends the browser-facing port to the Ally (proxy port if enabled; app port otherwise):
 
 ```json
 {"i":2,"m":"start","p":{"cap":"gust:expose-tailscale/v1","for":":3000","port":"stable-random"}}
 {"i":2,"r":{"url":"https://example.ts.net"}}
 ```
 
-For this capability, `for: ":3000"` means HTTP on `127.0.0.1:3000`, including WebSocket upgrades. Gust sends the **app port**, not its optional reload-proxy port. `port` selects the Tailscale HTTPS port; stable-random selection still needs a definition. `start` replies once the public URL is available; startup failures return `e` with the same `i`. Use a bounded timeout. Only one exposure per Ally connection is proposed for now.
+For this capability, `for: ":3000"` means HTTP on `127.0.0.1:3000`, including WebSocket upgrades. With the reload proxy enabled, Gust instead sends its proxy port so remote browsers receive reloads; without the proxy, it sends the app port. `port` selects the Tailscale HTTPS port; stable-random selection still needs a definition. `start` replies once the public URL is available; startup failures return `e` with the same `i`. Use a bounded timeout. Only one exposure per Ally connection is proposed for now.
 
 On shutdown, Gust requests stop, waits for the reply, closes the Ally's stdin, and waits for its exit:
 
