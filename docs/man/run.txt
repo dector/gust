@@ -32,8 +32,8 @@ Keys (when stdin is a terminal):
   D  toggle browser debug lines (proxy mode)
   q  quit
 
-Tailscale: -T starts Serve after health readiness (or the normal 300ms
-stability check without -h). The proxy port is exposed when enabled;
+Tailscale: -T starts Serve after proxy setup, before app readiness checks.
+The proxy port is exposed when enabled;
 otherwise the app port is exposed. The HTTPS port is stable for the
 directory and exposed port unless occupied;
 existing Serve ports are skipped. Exposure stays up across reruns and is

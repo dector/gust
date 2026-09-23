@@ -48,10 +48,10 @@ func Run(ctx context.Context, args []string) error {
 
 	log := logger.New(os.Stderr, cfg.Verbose)
 	coord := coordinator.New(cfg, log)
+	var expose *exposure.Manager
 	if cfg.Tailscale {
-		expose := exposure.New(cfg.Root, cfg.ExposurePort(), log)
+		expose = exposure.New(cfg.Root, cfg.ExposurePort(), log)
 		defer expose.Close()
-		coord.SetReadyHook(expose.StartReady)
 	}
 
 	runCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -70,6 +70,9 @@ func Run(ctx context.Context, args []string) error {
 	if proxyServer != nil {
 		coord.SetBrowserNotifier(proxyServer.BrowserHub())
 		proxyServer.SetStatusProvider(coord.Status)
+	}
+	if expose != nil {
+		expose.StartReady()
 	}
 
 	socketServer, err := socket.Start(serviceCtx, cfg, log, coord)

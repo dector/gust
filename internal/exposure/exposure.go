@@ -44,7 +44,7 @@ type Manager struct {
 	start   starter
 }
 
-// New creates an exposure manager. StartReady must be called only after Gust readiness.
+// New creates an exposure manager. StartReady begins exposure asynchronously.
 func New(root string, appPort int, log *logger.Logger) *Manager {
 	return newManager(root, appPort, log, func(ctx context.Context, cfg tailscale.Config) (session, error) {
 		return tailscale.Start(ctx, cfg)

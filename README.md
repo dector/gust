@@ -58,8 +58,7 @@ Flags:
 
 Install and sign in to Tailscale, then use `-T -p <app port>` or
 `-T -p <app port>:<proxy port>`. Gust starts a foreground `tailscale serve`
-only after the app is ready: a successful `-h` health check when specified,
-otherwise Gust's normal 300ms process stability check. It targets
+when startup reaches the proxy setup, before app readiness checks. It targets
 `127.0.0.1:<proxy port>` when the reload proxy is enabled, including its
 WebSocket traffic; otherwise it targets `127.0.0.1:<app port>`. Gust logs
 the HTTPS URL when Serve reports it and warns if exposure fails or exits. An
