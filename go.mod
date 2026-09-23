@@ -1,6 +1,6 @@
 module github.com/dector/gust
 
-go 1.22
+go 1.27.1
 
 require (
 	github.com/coder/websocket v1.8.13
