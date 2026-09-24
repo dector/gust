@@ -306,7 +306,7 @@ func TestProxyUnavailableToReadyRetries(t *testing.T) {
 	proxyPort := freePort(t)
 	server := writeHTTPServer(t, root, 1200*time.Millisecond, "ready")
 	gp := startGust(t, root, "-e", "go run "+server, "-p", fmt.Sprintf("%d:%d", appPort, proxyPort))
-	waitFor(t, 5*time.Second, func() bool { return strings.Contains(gp.out.String(), "proxy: http://") }, "proxy startup log")
+	waitFor(t, 5*time.Second, func() bool { return strings.Contains(gp.out.String(), "proxy (browser): http://") }, "proxy startup log")
 	body := waitHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/", proxyPort), "ready", 10*time.Second)
 	if strings.Contains(body, "__gust_reload") {
 		// Non-HTML body must not be injected.
@@ -330,7 +330,7 @@ func TestCommentsOptIn(t *testing.T) {
 			args := append([]string{"-e", run}, tt.args...)
 			gp := startGust(t, root, args...)
 			waitFor(t, 5*time.Second, func() bool {
-				return strings.Contains(gp.out.String(), "socket:")
+				return strings.Contains(gp.out.String(), "socket (control):")
 			}, "gust socket startup")
 			out, code := ctlCommand(t, root, "comments", "--pending")
 			if code != tt.code || !strings.Contains(out, tt.want) {
