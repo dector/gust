@@ -158,7 +158,7 @@ Flags:
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   --optin <feature>     opt-in feature, repeatable (comments)
-  --self-dev            allow Alt+click selection of Gust panel and reload after proxy restart
+  --self-dev            allow Ctrl+click selection of Gust panel and reload after proxy restart
   -v                    enable verbose Gust logs
 
 Run "gust man" for a brief manual and samples.

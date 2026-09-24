@@ -50,7 +50,7 @@ Flags:
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
 - `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments` (disabled by default).
-- `--self-dev`: with `--optin comments` and a proxy, let Alt+click select Gust panel elements in comment mode; reload the page after the proxy process reconnects. Works with `-T`. Default behavior still excludes Gust's UI.
+- `--self-dev`: with `--optin comments` and a proxy, let Ctrl+click select Gust panel elements in comment mode; reload the page after the proxy process reconnects. Works with `-T`. Default behavior still excludes Gust's UI.
 - `-v`: verbose Gust logs.
 - `GUST_INFO=1`: enable info logs initially. Press `i` to toggle them.
 
@@ -68,7 +68,7 @@ keyboard controls (`r`, `s`, `i`, `D`) work through the wrapper. Press `q` or
 Ctrl+C to restart Gust; press Ctrl+C again to stop the wrapper. To disable
 Tailscale locally, use `DEV_SELF_TAILSCALE=0 ror dev:self`.
 
-In comment mode, Alt+click a **panel** element to select it; normal clicks
+In comment mode, Ctrl+click a **panel** element to select it; normal clicks
 still operate the panel. Logs and existing comments are not selectable. Gust's
 icon and floating editor remain unselectable. `-T` exposes this dev mode to
 anyone allowed to access the Tailscale Serve URL; use it only with trusted viewers.

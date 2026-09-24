@@ -803,7 +803,7 @@ function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPa
 function updateCommentUI(){
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
-  const toggle=commentToolbar.querySelector("button:not(#__gust_wind_button)"),active=selecting||editorOpen;toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?(selfDev?"Exit comment mode (Alt+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Alt+click to select Gust panel elements)":"Add comment");const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
+  const toggle=commentToolbar.querySelector("button:not(#__gust_wind_button)"),active=selecting||editorOpen;toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?(selfDev?"Exit comment mode (Ctrl+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click to select Gust panel elements)":"Add comment");const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
@@ -926,7 +926,7 @@ function updateHoverPath(target){
 }
 document.addEventListener("mousemove",function(e){
   if(!selecting)return;
-  if(blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}
+  if(blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}
   updateHoverPath(e.target);
 },true);
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
@@ -934,7 +934,7 @@ window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition()
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
 document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(editorOpen){const box=document.querySelector("[data-editor] textarea");if(box)box.value="";resumeSelection();}else if(selecting)closeCommentMode();}},true);
 document.addEventListener("click",function(e){
-  if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey))return;
+  if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey))return;
   if(!updateHoverPath(e.target))return;
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
   chooseSelection(e);
