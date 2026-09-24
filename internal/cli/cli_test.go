@@ -271,6 +271,45 @@ func TestParseRejectsUnexpectedArg(t *testing.T) {
 	}
 }
 
+func TestParseRandomPorts(t *testing.T) {
+	for _, tt := range []struct {
+		spec       string
+		proxy      bool
+		fixedApp   int
+		fixedProxy int
+	}{
+		{spec: "?"},
+		{spec: "?:?", proxy: true},
+		{spec: "?:", proxy: false},
+		{spec: "8080:?", proxy: true, fixedApp: 8080},
+		{spec: "?:5000", proxy: true, fixedProxy: 5000},
+		{spec: "8080:", fixedApp: 8080},
+	} {
+		t.Run(tt.spec, func(t *testing.T) {
+			cfg, err := ParseWithOutput([]string{"-e", "run", "-p", tt.spec, "-T", "-h", "/health"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cfg.HasAppPort || cfg.AppPort < 1 || cfg.AppPort > 65535 || cfg.ProxyEnabled != tt.proxy {
+				t.Fatalf("unexpected ports: %+v", cfg)
+			}
+			if tt.fixedApp != 0 && cfg.AppPort != tt.fixedApp {
+				t.Fatalf("app port = %d, want %d", cfg.AppPort, tt.fixedApp)
+			}
+			if tt.proxy {
+				if cfg.ProxyPort < 1 || cfg.ProxyPort > 65535 || cfg.ProxyPort == cfg.AppPort {
+					t.Fatalf("invalid proxy port: %+v", cfg)
+				}
+			} else if cfg.ProxyPort != 0 {
+				t.Fatalf("unexpected proxy port: %d", cfg.ProxyPort)
+			}
+			if tt.fixedProxy != 0 && cfg.ProxyPort != tt.fixedProxy {
+				t.Fatalf("proxy port = %d, want %d", cfg.ProxyPort, tt.fixedProxy)
+			}
+		})
+	}
+}
+
 func TestParsePortValidation(t *testing.T) {
 	tests := []struct {
 		name string
@@ -280,7 +319,7 @@ func TestParsePortValidation(t *testing.T) {
 		{name: "too high", port: "65536"},
 		{name: "not number", port: "abc"},
 		{name: "missing app", port: ":5000"},
-		{name: "missing proxy", port: "8080:"},
+		{name: "unknown app for proxy", port: ":?"},
 		{name: "too many parts", port: "8080:5000:1"},
 		{name: "same ports", port: "8080:8080"},
 	}

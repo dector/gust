@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,7 +40,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.StringVar(&cfg.Exec, "e", "", "command to execute via /bin/sh -c")
 	fs.Var(&befores, "e.before", "command to run before each rerun, repeatable")
 	fs.Var(&afters, "e.after", "command to run after each start, repeatable")
-	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports")
+	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports (? selects a free port)")
 	fs.StringVar(&cfg.HealthPath, "h", "", "health endpoint path")
 	fs.BoolVar(&cfg.Tailscale, "T", false, "expose app port via Tailscale Serve")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
@@ -151,7 +152,7 @@ Flags:
   -e <cmd>              required command, executed via /bin/sh -c
   --e.before <cmd>      command to run before each rerun, repeatable, fail-fast
   --e.after <cmd>       command to run after each start, repeatable
-  -p <port>             app port, or app:proxy ports
+  -p <port>             app port, or app:proxy ports; ? selects a free port
   -h <path>             health endpoint path, requires app port
   -T                    expose app port via Tailscale Serve, requires -p
   --exclude <path>      path exclude, repeatable
@@ -180,22 +181,59 @@ func parsePortSpec(spec string) (appPort int, proxyPort int, proxyEnabled bool, 
 	}
 
 	parts := strings.Split(spec, ":")
-	appPort, err = parsePort(parts[0])
+	if parts[0] == "" {
+		return 0, 0, false, errors.New("invalid app port: proxy requires a known app port; use ? for a free port")
+	}
+	if parts[0] == "?" {
+		appPort, err = freePort(0)
+	} else {
+		appPort, err = parsePort(parts[0])
+	}
 	if err != nil {
 		return 0, 0, false, fmt.Errorf("invalid app port: %w", err)
 	}
-	if len(parts) == 1 {
+	if len(parts) == 1 || parts[1] == "" {
 		return appPort, 0, false, nil
 	}
 
-	proxyPort, err = parsePort(parts[1])
+	if parts[1] == "?" {
+		proxyPort, err = freePort(appPort)
+	} else {
+		proxyPort, err = parsePort(parts[1])
+	}
 	if err != nil {
 		return 0, 0, false, fmt.Errorf("invalid proxy port: %w", err)
 	}
 	if proxyPort == appPort {
-		return 0, 0, false, errors.New("proxy port must differ from app port")
+		if parts[0] == "?" {
+			appPort, err = freePort(proxyPort)
+			if err != nil {
+				return 0, 0, false, fmt.Errorf("invalid app port: %w", err)
+			}
+		} else {
+			return 0, 0, false, errors.New("proxy port must differ from app port")
+		}
 	}
 	return appPort, proxyPort, true, nil
+}
+
+// freePort asks the OS for an available loopback port. The app needs the number
+// in its environment, so the listener cannot remain held while the app starts.
+func freePort(exclude int) (int, error) {
+	for range 10 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, err
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		if err := ln.Close(); err != nil {
+			return 0, err
+		}
+		if port != exclude {
+			return port, nil
+		}
+	}
+	return 0, errors.New("could not find a distinct free port")
 }
 
 func parsePort(value string) (int, error) {

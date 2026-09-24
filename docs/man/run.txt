@@ -9,7 +9,7 @@ Flags:
   -e <cmd>              required command, executed via /bin/sh -c
   --e.before <cmd>      command to run before each rerun, repeatable, fail-fast
   --e.after <cmd>       command to run after each start, repeatable
-  -p <port>             app port, or app:proxy ports
+  -p <port>             app port, or app:proxy ports; ? selects a free port
   -h <path>             health endpoint path, requires app port
   -T                    expose proxy port if enabled, else app port via Tailscale Serve; requires -p
   --exclude <path>      path exclude, repeatable
@@ -23,6 +23,7 @@ Samples:
   gust -e 'go run ./cmd/server' --e.before 'templ generate' --e.before 'sqlc generate'
   gust -e 'go run ./cmd/server' --e.after 'notify-send reloaded'
   gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
+  gust -e 'go run ./cmd/server' -p '?:?' -h /health -T
   gust -e 'go run ./cmd/server' -p 8080 -h /health -T
   gust -e 'go run ./cmd/server' --exclude frontend/node_modules -v
   gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
@@ -34,6 +35,11 @@ Keys (when stdin is a terminal):
   i  toggle info logs
   D  toggle browser debug lines (proxy mode)
   q  quit
+
+Use -p '?' for a free app port, or -p '?:?' for free app and proxy ports.
+An empty proxy slot disables the proxy; an empty app slot cannot be proxied.
+The app must listen on GUST_APP_PORT. Without -p, the app decides its own port.
+Port selection and app binding are not atomic; another process can take the port.
 
 Tailscale: -T starts Serve after proxy setup, before app readiness checks.
 The proxy port is exposed when enabled;

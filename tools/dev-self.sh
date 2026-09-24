@@ -14,7 +14,7 @@
 # Usage: tools/dev-self.sh [extra gust flags...]
 #
 # Environment overrides (defaults match the shared VPS dev setup):
-#   DEV_SELF_PORTS      port spec, default 8000:8001
+#   DEV_SELF_PORTS      port spec, default ?:? (new free ports on each restart)
 #   DEV_SELF_TAILSCALE  1 to pass -T, default 1
 #   DEV_SELF_POLL       poll interval in seconds, default 1
 #   DEV_SELF_DEBOUNCE   settle delay after a change, default 0.4
@@ -28,7 +28,7 @@ DEMO_DIR="$ROOT/docs/demo"
 OUT_DIR="$ROOT/out"
 BIN="$OUT_DIR/gust"
 
-PORT_SPEC="${DEV_SELF_PORTS:-8000:8001}"
+PORT_SPEC="${DEV_SELF_PORTS:-?:?}"
 WANT_TAILSCALE="${DEV_SELF_TAILSCALE:-1}"
 POLL_INTERVAL="${DEV_SELF_POLL:-1}"
 DEBOUNCE="${DEV_SELF_DEBOUNCE:-0.4}"

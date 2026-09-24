@@ -196,6 +196,25 @@ func TestAppPortWithoutProxy(t *testing.T) {
 	}
 }
 
+func TestRandomAppAndProxyPorts(t *testing.T) {
+	root := t.TempDir()
+	server := writeHTTPServer(t, root, 0, "<html>hello</html>")
+	gp := startGust(t, root, "-e", "go run "+server, "-p", "?:?", "-h", "/health")
+	var appPort, proxyPort int
+	waitFor(t, 5*time.Second, func() bool {
+		resp := socketRequest(t, root, map[string]string{"action": "status"})
+		appPort, proxyPort = int(resp["app_port"].(float64)), int(resp["proxy_port"].(float64))
+		return appPort > 0 && proxyPort > 0
+	}, "random ports in status")
+	if appPort == proxyPort {
+		t.Fatalf("ports overlap: %d; logs:\n%s", appPort, gp.out.String())
+	}
+	body := waitHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/", proxyPort), "__gust_reload", 10*time.Second)
+	if !strings.Contains(body, "hello") {
+		t.Fatalf("proxy body missing app response: %q; logs:\n%s", body, gp.out.String())
+	}
+}
+
 func TestProxyModeInjectsAndForwards(t *testing.T) {
 	root := t.TempDir()
 	appPort := freePort(t)
