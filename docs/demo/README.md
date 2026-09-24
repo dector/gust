@@ -22,5 +22,6 @@ ror dev:self
 
 It builds the new binary before stopping the running Gust, so a failed build
 keeps the current session alive. It uses ports 8000:8001 and passes `-T`
-(Tailscale Serve), matching the shared VPS setup. Extra Gust flags can be
+(Tailscale Serve), matching the shared VPS setup. Gust keyboard commands work
+normally; `q` or Ctrl+C restarts Gust, and a second Ctrl+C stops the wrapper. Extra Gust flags can be
 appended, for example `ror dev:self -v`.

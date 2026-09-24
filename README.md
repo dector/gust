@@ -62,7 +62,9 @@ Flags:
 Run `ror dev:self` from the repository root. The external supervisor in
 `tools/dev-self.sh` builds Gust before restarting it on source changes; if a
 build fails, the running instance stays up. It serves `docs/demo` at port 8000
-through the proxy at port 8001 and enables Tailscale Serve (`-T`). To disable
+through the proxy at port 8001 and enables Tailscale Serve (`-T`). Gust's
+keyboard controls (`r`, `s`, `i`, `D`) work through the wrapper. Press `q` or
+Ctrl+C to restart Gust; press Ctrl+C again to stop the wrapper. To disable
 Tailscale locally, use `DEV_SELF_TAILSCALE=0 ror dev:self`.
 
 In comment mode, Alt+click a **panel** element to select it; normal clicks

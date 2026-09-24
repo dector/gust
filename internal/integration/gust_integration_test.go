@@ -431,15 +431,22 @@ func readBrowserMessage(t *testing.T, url string) map[string]any {
 		t.Fatal(err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "test done")
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var msg map[string]any
+		if err := json.Unmarshal(data, &msg); err != nil {
+			t.Fatal(err)
+		}
+		if msg["type"] != "boot" {
+			return msg
+		}
+		if msg["bootId"] == "" {
+			t.Fatalf("missing proxy boot ID: %#v", msg)
+		}
 	}
-	var msg map[string]any
-	if err := json.Unmarshal(data, &msg); err != nil {
-		t.Fatal(err)
-	}
-	return msg
 }
 
 func waitHTTP(t *testing.T, url, want string, timeout time.Duration) string {

@@ -39,6 +39,8 @@ EXTRA_ARGS=("$@")
 GUST_PID=""
 TMP_BIN=""
 STOPPING=0
+PREVIOUS_CTRL_C=0
+INTERACTIVE=0
 
 log() { printf '[dev:self] %s\n' "$*" >&2; }
 
@@ -112,10 +114,17 @@ start_gust() {
   args+=(${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
 
   log "starting Gust on $PORT_SPEC (demo: $DEMO_DIR)"
-  (
-    cd "$DEMO_DIR" || exit 1
-    exec "$BIN" "${args[@]}"
-  ) &
+  if [ "$INTERACTIVE" -eq 1 ]; then
+    (
+      cd "$DEMO_DIR" || exit 1
+      DEV_SELF_PREVIOUS_CTRL_C="$PREVIOUS_CTRL_C" exec python3 "$SCRIPT_DIR/dev-self-tty.py" "$BIN" "${args[@]}" </dev/tty
+    ) &
+  else
+    (
+      cd "$DEMO_DIR" || exit 1
+      exec "$BIN" "${args[@]}" </dev/null
+    ) &
+  fi
   GUST_PID=$!
   log "Gust pid $GUST_PID"
 }
@@ -139,6 +148,10 @@ main() {
   command -v go >/dev/null 2>&1 || { log "go is required"; exit 1; }
   [ -d "$DEMO_DIR" ] || { log "missing demo directory: $DEMO_DIR"; exit 1; }
   command -v uv >/dev/null 2>&1 || log "warning: uv not found; the demo app may fail to start"
+  if [ -t 1 ] && ( : </dev/tty ) 2>/dev/null; then
+    command -v python3 >/dev/null 2>&1 || { log "python3 is required for keyboard controls"; exit 1; }
+    INTERACTIVE=1
+  fi
 
   trap on_signal INT TERM HUP
   trap cleanup EXIT
@@ -155,6 +168,24 @@ main() {
   while [ "$STOPPING" -eq 0 ]; do
     sleep "$POLL_INTERVAL" || true
     [ "$STOPPING" -eq 0 ] || break
+
+    if [ -n "$GUST_PID" ] && ! kill -0 "$GUST_PID" 2>/dev/null; then
+      local exit_code=0
+      wait "$GUST_PID" || exit_code=$?
+      GUST_PID=""
+      if [ "$exit_code" -eq 43 ]; then
+        log "second Ctrl+C: stopping supervisor"
+        break
+      fi
+      if [ "$exit_code" -eq 42 ]; then
+        PREVIOUS_CTRL_C=1
+        log "Ctrl+C: restarting Gust (press Ctrl+C again to stop dev:self)"
+      else
+        PREVIOUS_CTRL_C=0
+        log "Gust exited; restarting"
+      fi
+      start_gust
+    fi
 
     local current
     current="$(snapshot)"
@@ -173,6 +204,7 @@ main() {
     log "source change detected; rebuilding"
     if build; then
       stop_gust
+      PREVIOUS_CTRL_C=0
       start_gust
     else
       log "build failed; keeping the running Gust"
