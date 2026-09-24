@@ -505,6 +505,11 @@ let gustProcess = null;
 let infoTimer = null;
 let commentUI = null;
 let commentToolbar = null;
+let windButton = null;
+let windEnabled = false;
+let windTimer = null;
+let windOverlay = null;
+const windMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let selecting = false;
 let hoverPath = [];
 let selectedIndex = 0;
@@ -797,7 +802,7 @@ function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPa
 function updateCommentUI(){
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
-  if(commentToolbar){const toggle=commentToolbar.querySelector("button"),active=selecting||editorOpen;toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?(selfDev?"Exit comment mode (Alt+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Alt+click to select Gust panel elements)":"Add comment");const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;}
+  const toggle=commentToolbar.querySelector("button:not(#__gust_wind_button)"),active=selecting||editorOpen;toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?(selfDev?"Exit comment mode (Alt+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Alt+click to select Gust panel elements)":"Add comment");const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
@@ -840,11 +845,10 @@ function safeOuterHTML(el){
 function createCommentUI(){
   if(commentUI)return;
   commentUI=document.createElement("div"); commentUI.id="__gust_comments";
-  commentToolbar=document.createElement("div");commentToolbar.id="__gust_comment_toolbar";
   const add=document.createElement("button");add.type="button";add.title="Add comment";add.setAttribute("aria-label","Add comment");add.setAttribute("aria-pressed","false");
   add.innerHTML=commentIconSvg;
-  add.addEventListener("click",beginSelection);commentToolbar.appendChild(add);
-  const modeTitle=document.createElement("span");modeTitle.dataset.modeTitle="";modeTitle.textContent="Comment Mode";modeTitle.hidden=true;commentToolbar.appendChild(modeTitle);
+  add.addEventListener("click",beginSelection);commentToolbar.insertBefore(add,windButton);
+  const modeTitle=document.createElement("span");modeTitle.dataset.modeTitle="";modeTitle.textContent="Comment Mode";modeTitle.hidden=true;commentToolbar.insertBefore(modeTitle,windButton);
   const autoLabel=document.createElement("label");autoLabel.dataset.autosubmitLabel="";autoLabel.className="__gust_autosubmit";autoLabel.hidden=true;
   const auto=document.createElement("input");auto.type="checkbox";auto.checked=true;auto.dataset.autosubmit="";autoLabel.append(auto,document.createTextNode(" Autosubmit"));
   const status=document.createElement("div");status.dataset.status="";
@@ -940,6 +944,46 @@ function loadCommentMode(){
 function saveCommentMode(){
   try { sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0"); } catch (_) {}
 }
+function loadWind(){
+  try { return localStorage.getItem("__gust_wind") === "1"; } catch (_) { return false; }
+}
+function clearWind(){
+  clearTimeout(windTimer);windTimer=null;
+  if(windOverlay){windOverlay.remove();windOverlay=null;}
+}
+function scheduleWind(immediate){
+  if(!windEnabled||windMotion.matches||document.hidden)return;
+  // Start on activation, then leave a quiet gap between five-to-seven-second gusts.
+  windTimer=setTimeout(function(){
+    windTimer=null;
+    if(!windEnabled||windMotion.matches||document.hidden)return;
+    windOverlay=document.createElement("div");windOverlay.id="__gust_wind";
+    windOverlay.setAttribute("aria-hidden","true");windOverlay.dataset.gustOverlay="";
+    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"><path d="M-100 190 C180 60 300 320 580 170 S950 90 1300 130"/><path d="M-100 440 C180 300 340 540 620 390 S960 300 1300 420"/><path d="M-100 680 C180 560 380 730 680 580 S990 510 1300 610"/></svg><i></i><i></i><i></i>';
+    const duration=5000+Math.random()*2000;
+    windOverlay.style.setProperty("--gust-wind-duration",duration+"ms");
+    document.documentElement.appendChild(windOverlay);
+    windTimer=setTimeout(function(){clearWind();scheduleWind();},duration);
+  },immediate?0:12000+Math.random()*18000);
+}
+function setWind(enabled){
+  windEnabled=enabled;
+  if(windButton)windButton.setAttribute("aria-pressed",String(enabled));
+  try { localStorage.setItem("__gust_wind",enabled?"1":"0"); } catch (_) {}
+  clearWind();scheduleWind(enabled);
+}
+windMotion.addEventListener("change",function(){clearWind();scheduleWind();});
+document.addEventListener("visibilitychange",function(){clearWind();scheduleWind();});
+function createToolbar(){
+  commentToolbar=document.createElement("div");commentToolbar.id="__gust_comment_toolbar";
+  windButton=document.createElement("button");windButton.type="button";
+  windButton.title="Wind effect";windButton.setAttribute("aria-label","Wind effect");
+  windButton.setAttribute("aria-pressed","false");windButton.id="__gust_wind_button";
+  windButton.innerHTML='<svg viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128 192c3 9 14 16 24 16a24 24 0 0 0 0-48H40M96 64c3-9 14-16 24-16a24 24 0 0 1 0 48H24M184 96c3-9 14-16 24-16a24 24 0 0 1 0 48H32" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  windButton.addEventListener("click",function(){setWind(!windEnabled);});
+  commentToolbar.appendChild(windButton);
+  windEnabled=loadWind();windButton.setAttribute("aria-pressed",String(windEnabled));scheduleWind(true);
+}
 function loadPinned(){
   try { return localStorage.getItem("__gust_pinned") === "1"; } catch (_) { return false; }
 }
@@ -1005,6 +1049,21 @@ function mountIcon(){
 #__gust_panel .__gust_group_title,#__gust_panel .__gust_notice{color:#ffca81}
 #__gust_panel .__gust_log pre{background:#24180f;border-color:#f9bb7133}
 #__gust_comment_toolbar{border-color:#f9bb7133}
+#__gust_wind_button{margin-left:auto}
+#__gust_wind_button svg{width:24px;height:24px}
+#__gust_wind{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;z-index:2147483645;opacity:.65;animation:__gust_wind_fade var(--gust-wind-duration) ease-in-out both}
+#__gust_wind *{pointer-events:none!important}
+#__gust_wind svg{position:absolute;width:100%%;height:100%%;opacity:.65}
+#__gust_wind path{fill:none;stroke:#f9bb71;stroke-width:2;stroke-linecap:round;stroke-dasharray:180 1100;animation:__gust_wind_stream var(--gust-wind-duration) linear both}
+#__gust_wind path:nth-child(2){animation-delay:.25s}
+#__gust_wind path:nth-child(3){animation-delay:.5s}
+#__gust_wind i{position:absolute;width:5px;height:5px;border-radius:50%%;background:#fbd18e;box-shadow:0 0 20px #ed9a50;animation:__gust_wind_drift var(--gust-wind-duration) linear both}
+#__gust_wind i:nth-of-type(1){top:23%%;left:12%%}
+#__gust_wind i:nth-of-type(2){top:65%%;left:25%%;animation-delay:.3s}
+#__gust_wind i:nth-of-type(3){top:42%%;left:8%%;animation-delay:.6s}
+@keyframes __gust_wind_fade{0%%,100%%{opacity:0}15%%,80%%{opacity:.65}}
+@keyframes __gust_wind_stream{from{stroke-dashoffset:1280}to{stroke-dashoffset:0}}
+@keyframes __gust_wind_drift{from{transform:translate(-15vw,6vh);opacity:0}15%%,85%%{opacity:1}to{transform:translate(95vw,-8vh);opacity:0}}
 #__gust_comment_toolbar button{color:#e0cfba}
 #__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#49301c;color:#fff7e9}
 #__gust_comment_toolbar button:focus-visible{outline-color:#f9bb71}
@@ -1034,9 +1093,11 @@ function mountIcon(){
   gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,192c3.39,9.15,13.67,16,24,16a24,24,0,0,0,0-48H40" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M96,64c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M184,96c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
   gustPanel = document.createElement("div");
   gustPanel.id = "__gust_panel";
+  createToolbar();
   if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
   widget.appendChild(gustIcon);
   widget.appendChild(gustPanel);
+  if (!commentUI) gustPanel.prepend(commentToolbar);
   widget.addEventListener("mouseenter", function(){ hovering = true; syncPanel(); });
   widget.addEventListener("mouseleave", function(){ hovering = false; syncPanel(); });
   gustIcon.addEventListener("click", function(e){ e.stopPropagation(); pinned = !pinned; savePinned(); syncPanel(); });

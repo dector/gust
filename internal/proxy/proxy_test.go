@@ -20,6 +20,29 @@ import (
 	"github.com/dector/gust/internal/coordinator"
 )
 
+func TestWindOverlayInjectedWithoutComments(t *testing.T) {
+	script := reloadScript(1, 8765, false)
+	for _, fragment := range []string{
+		`createToolbar();`,
+		`if (false) { selecting=loadCommentMode(); createCommentUI();`,
+		`if (!commentUI) gustPanel.prepend(commentToolbar);`,
+		`commentToolbar.insertBefore(add,windButton);`,
+		`windButton.setAttribute("aria-pressed",String(windEnabled))`,
+		`localStorage.setItem("__gust_wind",enabled?"1":"0")`,
+		`if(!windEnabled||windMotion.matches||document.hidden)return;`,
+		`immediate?0:12000+Math.random()*18000`,
+		`clearWind();scheduleWind(enabled);`,
+		`windEnabled=loadWind();windButton.setAttribute("aria-pressed",String(windEnabled));scheduleWind(true);`,
+		`5000+Math.random()*2000`,
+		`pointer-events:none!important`,
+		`#__gust_wind_button{margin-left:auto}`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("wind injection missing %q", fragment)
+		}
+	}
+}
+
 func TestProxyForwardsRequestsAndBodies(t *testing.T) {
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/echo" || r.URL.RawQuery != "x=1" {
