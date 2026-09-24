@@ -180,6 +180,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("GUST_APP_PORT", "8000"))
+    port = int(os.environ.get("PORT", "8000"))
     print(f"Serving on http://127.0.0.1:{port}", flush=True)
     HTTPServer(("127.0.0.1", port), Handler).serve_forever()

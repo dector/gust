@@ -45,7 +45,9 @@ Use -p '?' for a free app port, or -p '?:?' for free app and proxy ports.
 The first candidate is path-derived, so ports stay stable when available;
 occupied ports cause Gust to try the next candidate.
 An empty proxy slot disables the proxy; an empty app slot cannot be proxied.
-The app must listen on GUST_APP_PORT. Without -p, the app decides its own port.
+Gust passes the app port as PORT (overriding an inherited PORT); the app must
+listen on it. Without -p, Gust leaves PORT unchanged and the app decides its
+own port.
 Port selection and app binding are not atomic; another process can take the port.
 
 Tailscale: -T starts Serve after proxy setup, before app readiness checks.

@@ -200,7 +200,7 @@ func gustEnv(opts Options) []string {
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "GUST=1")
 	if opts.HasAppPort {
-		env = append(env, fmt.Sprintf("GUST_APP_PORT=%d", opts.AppPort))
+		env = append(env, fmt.Sprintf("PORT=%d", opts.AppPort))
 	}
 	if opts.ProxyEnabled || opts.ProxyPort != 0 {
 		env = append(env, fmt.Sprintf("GUST_PROXY_PORT=%d", opts.ProxyPort))

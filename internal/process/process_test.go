@@ -15,10 +15,11 @@ import (
 
 func TestStartAddsGustEnvironment(t *testing.T) {
 	t.Setenv("GUST_TEST_INHERITED", "yes")
+	t.Setenv("PORT", "9999")
 
 	var stdout bytes.Buffer
 	p, err := Start(Options{
-		Command:      `printf '%s|%s|%s|%s' "$GUST" "$GUST_APP_PORT" "$GUST_PROXY_PORT" "$GUST_TEST_INHERITED"`,
+		Command:      `printf '%s|%s|%s|%s' "$GUST" "$PORT" "$GUST_PROXY_PORT" "$GUST_TEST_INHERITED"`,
 		HasAppPort:   true,
 		AppPort:      8080,
 		ProxyEnabled: true,
@@ -36,6 +37,22 @@ func TestStartAddsGustEnvironment(t *testing.T) {
 	want := "1|8080|5000|yes"
 	if got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestStartWithoutAppPortPreservesPort(t *testing.T) {
+	t.Setenv("PORT", "7001")
+
+	var stdout bytes.Buffer
+	p, err := Start(Options{Command: `printf '%s' "$PORT"`, Stdout: &stdout})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if event, err := p.Wait(context.Background()); err != nil || event.Code != 0 {
+		t.Fatalf("Wait() = (%+v, %v), want code 0", event, err)
+	}
+	if got := stdout.String(); got != "7001" {
+		t.Fatalf("PORT = %q, want 7001", got)
 	}
 }
 

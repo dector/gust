@@ -498,9 +498,9 @@ import (
 )
 
 func main() {
-	port := os.Getenv("GUST_APP_PORT")
+	port := os.Getenv("PORT")
 	if port == "" {
-		panic("missing GUST_APP_PORT")
+		panic("missing PORT")
 	}
 	delay, _ := time.ParseDuration(%q)
 	time.Sleep(delay)

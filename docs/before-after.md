@@ -88,7 +88,7 @@ codegen must not block quit.
 
 - Each task runs through `/bin/sh -c` in the project root.
 - Tasks inherit the same environment as `-e`, including `GUST`,
-  `GUST_APP_PORT`, and `GUST_PROXY_PORT`.
+  `PORT` (when an app port is set), and `GUST_PROXY_PORT`.
 - `before` / `after` output streams raw to the terminal.
 - Tasks have no timeout. A stuck task blocks the rerun until quit or a new
   trigger (which coalesces, it does not preempt).
