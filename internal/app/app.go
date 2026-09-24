@@ -84,7 +84,16 @@ func Run(ctx context.Context, args []string) error {
 
 	var commentStore *comments.Store
 	if cfg.CommentsEnabled {
-		commentStore, err = comments.Open()
+		if cfg.SelfDev {
+			// dev:self survives its own rebuilds by keeping comments on tmpfs.
+			path, pathErr := comments.SelfDevPath(cfg.Root)
+			if pathErr != nil {
+				return pathErr
+			}
+			commentStore, err = comments.OpenAt(path)
+		} else {
+			commentStore, err = comments.Open()
+		}
 		if err != nil {
 			return err
 		}

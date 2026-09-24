@@ -3,6 +3,8 @@ package comments
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +25,65 @@ func create(t *testing.T, s *Store, id string) Comment {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func TestOpenAtPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "comments.db")
+	ctx := context.Background()
+
+	first, err := OpenAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := create(t, first, "kept")
+	if _, err := first.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := OpenAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	got, err := second.ListSeenUnfinished(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != c.ID || got[0].State != StateSeen {
+		t.Fatalf("reopened comments = %+v, want one seen comment %s", got, c.ID)
+	}
+}
+
+func TestSelfDevPathIsStablePerRoot(t *testing.T) {
+	root := t.TempDir()
+	other := t.TempDir()
+	first, err := SelfDevPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := SelfDevPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	different, err := SelfDevPath(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Fatalf("path not stable: %q vs %q", first, again)
+	}
+	if first == different {
+		t.Fatalf("different roots share path %q", first)
+	}
+	if !strings.HasSuffix(first, ".db") {
+		t.Fatalf("path %q lacks .db suffix", first)
+	}
 }
 
 func TestCreateSubmitAndTransitions(t *testing.T) {

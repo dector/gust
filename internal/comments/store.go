@@ -1,13 +1,17 @@
-// Package comments provides an in-memory store for element comments.
+// Package comments provides a store for element comments. It is in-memory by
+// default; dev:self can back it with a tmpfs file so comments survive restarts.
 package comments
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -64,7 +68,8 @@ type Batch struct {
 	Comments    []Comment `json:"comments"`
 }
 
-// Store is an in-memory SQLite comment database. Close it when its owner exits.
+// Store is a SQLite comment database. In-memory by default; a file path keeps
+// comments across instances. Close it when its owner exits.
 type Store struct {
 	db      *sql.DB
 	mu      sync.Mutex
@@ -72,20 +77,34 @@ type Store struct {
 	closed  bool
 }
 
-// Open creates a fresh in-memory store.
+// Open creates a fresh in-memory store. Comments are lost when it closes.
 func Open() (*Store, error) {
-	db, err := sql.Open("sqlite", ":memory:")
+	return OpenAt(":memory:")
+}
+
+// OpenAt opens a store backed by the SQLite database at path, creating the
+// schema when needed. ":memory:" gives a transient store; a file path keeps
+// comments across store instances.
+func OpenAt(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, changed: make(chan struct{})}
-	_, err = db.Exec(`
-CREATE TABLE batches (
+	if _, err = db.Exec(schema); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+const schema = `
+CREATE TABLE IF NOT EXISTS batches (
  id TEXT PRIMARY KEY,
  submitted_at INTEGER NOT NULL
 );
-CREATE TABLE comments (
+CREATE TABLE IF NOT EXISTS comments (
  id TEXT PRIMARY KEY,
  batch_id TEXT REFERENCES batches(id),
  path TEXT NOT NULL,
@@ -100,13 +119,40 @@ CREATE TABLE comments (
  seen_at INTEGER,
  finished_at INTEGER
 );
-CREATE INDEX comments_state_batch ON comments(state, batch_id);
-`)
+CREATE INDEX IF NOT EXISTS comments_state_batch ON comments(state, batch_id);
+`
+
+const stateDirMode = 0o700
+
+// SelfDevPath returns the tmpfs-backed SQLite path dev:self uses to keep
+// comments across Gust restarts. It is keyed by project root so a restart
+// reopens the same store, and prefers RAM-backed storage so nothing is written
+// to disk. Normal Gust usage keeps the in-memory store instead.
+func SelfDevPath(root string) (string, error) {
+	dir, err := stateDir()
 	if err != nil {
-		_ = db.Close()
-		return nil, err
+		return "", err
 	}
-	return s, nil
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return filepath.Join(dir, hex.EncodeToString(sum[:])[:32]+".db"), nil
+}
+
+// stateDir returns a per-user directory on RAM-backed storage, preferring
+// tmpfs when the platform provides it.
+func stateDir() (string, error) {
+	base := os.TempDir()
+	if info, err := os.Stat("/dev/shm"); err == nil && info.IsDir() {
+		base = "/dev/shm"
+	}
+	dir := filepath.Join(base, fmt.Sprintf("gust-%d", os.Getuid()))
+	if err := os.MkdirAll(dir, stateDirMode); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // Close releases the database. It is safe to call more than once.
