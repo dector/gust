@@ -51,6 +51,8 @@ class Handler(BaseHTTPRequestHandler):
     .sky path { fill: none; stroke: #f9bb71; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 180 1100; animation: stream 9s linear infinite; }
     .sky path:nth-child(2) { animation-delay: -3s; }
     .sky path:nth-child(3) { animation-delay: -6s; }
+    body.wind-off .sky::before, body.wind-off .sky::after,
+    body.wind-off .sky path, body.wind-off .sky .spark { animation: none; }
     .spark { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: #fbd18e; box-shadow: 0 0 20px #ed9a50; animation: drift 12s linear infinite; }
     .spark:nth-of-type(1) { top: 23%; left: 12%; }
     .spark:nth-of-type(2) { top: 65%; left: 25%; animation-delay: -4s; }
@@ -67,7 +69,12 @@ class Handler(BaseHTTPRequestHandler):
       backdrop-filter: blur(18px);
       animation: arrive 1s ease-out both;
     }
+    .hero-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
     .badge { display: inline-flex; align-items: center; gap: .6rem; color: #ffd18d; font-size: .8rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .wind-toggle { flex: none; padding: .45rem .75rem; border: 1px solid #ffffff30; border-radius: .65rem; background: #ffffff0d; color: #fff3de; font: inherit; font-size: .85rem; cursor: pointer; }
+    .wind-toggle:hover, .wind-toggle:focus-visible { background: #ffffff18; }
+    .wind-toggle:focus-visible { outline: 2px solid #f9bb71; outline-offset: 2px; }
+    @media (max-width: 420px) { .hero-heading { align-items: flex-start; flex-direction: column; } }
     .badge::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: #f9bb71; box-shadow: 0 0 18px #f9bb71; animation: glow 2s ease-in-out infinite; }
     h1 { margin: 1.5rem 0 1rem; font-size: clamp(3rem, 9vw, 5rem); line-height: 1.05; letter-spacing: -.065em; }
     h1 span { background: linear-gradient(90deg, #ffc172, #e7a35e, #ffc172); background-size: 200% auto; background-clip: text; -webkit-text-fill-color: transparent; animation: shimmer 5s linear infinite; }
@@ -112,7 +119,10 @@ class Handler(BaseHTTPRequestHandler):
   </div>
   <div class="page">
     <main>
-      <div class="badge">The flow starts here</div>
+      <div class="hero-heading">
+        <div class="badge">The flow starts here</div>
+        <button type="button" class="wind-toggle" id="wind-toggle" aria-pressed="true">Wind: on</button>
+      </div>
       <h1>Hello from <span>Gust!</span></h1>
       <p class="lead">Gust watches your project files while you work. When you save a change to this demo, it restarts the server and reloads the page for you, so you can see the result right away. No tab switching or manual refresh needed: just edit, save, and keep creating.</p>
       <p class="instruction">Edit <code>server.py</code> and refresh automatically.</p>
@@ -131,6 +141,19 @@ class Handler(BaseHTTPRequestHandler):
     </section>
   </div>
   <script>
+    const windToggle = document.getElementById('wind-toggle');
+    let windEnabled = true;
+    try { windEnabled = localStorage.getItem('gust-demo-wind') !== 'off'; } catch (_) {}
+    function setWindEnabled(enabled) {
+      windEnabled = enabled;
+      document.body.classList.toggle('wind-off', !enabled);
+      windToggle.setAttribute('aria-pressed', String(enabled));
+      windToggle.textContent = `Wind: ${enabled ? 'on' : 'off'}`;
+      try { localStorage.setItem('gust-demo-wind', enabled ? 'on' : 'off'); } catch (_) {}
+    }
+    setWindEnabled(windEnabled);
+    windToggle.addEventListener('click', () => setWindEnabled(!windEnabled));
+
     document.getElementById('copy-command').addEventListener('click', async function () {
       try {
         await navigator.clipboard.writeText('ror dev');
