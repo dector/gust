@@ -508,6 +508,7 @@ let commentToolbar = null;
 let windButton = null;
 let windEnabled = false;
 let windTimer = null;
+let windFrame = null;
 let windOverlay = null;
 const windMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let selecting = false;
@@ -949,6 +950,7 @@ function loadWind(){
 }
 function clearWind(){
   clearTimeout(windTimer);windTimer=null;
+  if(windFrame!==null){cancelAnimationFrame(windFrame);windFrame=null;}
   if(windOverlay){windOverlay.remove();windOverlay=null;}
 }
 function windTraceCount(){
@@ -958,30 +960,65 @@ function windTraceCount(){
 }
 function scheduleWind(immediate){
   if(!windEnabled||windMotion.matches||document.hidden)return;
-  // Start on activation, then leave a quiet gap between five-to-seven-second gusts.
+  // Start on activation, then leave a three-to-seven-second gap after each gust.
   windTimer=setTimeout(function(){
     windTimer=null;
     if(!windEnabled||windMotion.matches||document.hidden)return;
     windOverlay=document.createElement("div");windOverlay.id="__gust_wind";
     windOverlay.setAttribute("aria-hidden","true");windOverlay.dataset.gustOverlay="";
-    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"></svg><i></i><i></i><i></i>';
-    const svg=windOverlay.querySelector("svg");
+    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"></svg>';
+    document.documentElement.appendChild(windOverlay);
+    const svg=windOverlay.querySelector("svg"), traces=[];
     for(let n=0;n<windTraceCount();n++){
       const y=130+Math.random()*540, rise=80+Math.random()*100, dip=50+Math.random()*110;
       const path=document.createElementNS("http://www.w3.org/2000/svg","path");
       path.setAttribute("d","M-100 "+y+" C180 "+(y-rise)+" 340 "+(y+dip)+" 620 "+(y-50)+" S960 "+(y-rise)+" 1300 "+(y-20));
-      path.style.animationDelay="-"+(Math.random()*9)+"s";
       svg.appendChild(path);
+      const length=path.getTotalLength(), delay=Math.random()*1500;
+      path.style.strokeDasharray="180 "+(length+180);
+      path.style.strokeDashoffset="180";
+      path.style.setProperty("--gust-wind-end",-(length+180));
+      path.style.animationDelay=delay+"ms";
+      const trace={path:path,length:length,delay:delay,sparks:[]};
+      for(let i=0;i<2+Math.floor(Math.random()*2);i++){
+        const spark=document.createElementNS("http://www.w3.org/2000/svg","circle");
+        spark.setAttribute("r",2+Math.random()*2);spark.setAttribute("class","__gust_wind_follow");
+        svg.appendChild(spark);
+        trace.sparks.push({offset:8+Math.random()*140,jitter:(Math.random()-.5)*24,el:spark});
+      }
+      traces.push(trace);
     }
-    windOverlay.querySelectorAll("i").forEach(function(spark){
+    // Nearby sparks track their own trace's dash; separate wanderers live 3–10 seconds.
+    const started=performance.now(), period=9000;
+    function moveFollowers(now){
+      let running=false;
+      traces.forEach(function(tr){
+        const elapsed=(now-started-tr.delay)/period;
+        if(elapsed<0||elapsed>1)return;
+        running=running||elapsed<1;
+        const at=(tr.length+360)*elapsed;
+        tr.sparks.forEach(function(f){
+          const s=at-f.offset;
+          if(s<0||s>tr.length){f.el.style.opacity="0";return;}
+          const p=tr.path.getPointAtLength(s),next=tr.path.getPointAtLength(Math.min(s+2,tr.length));
+          const angle=Math.atan2(next.y-p.y,next.x-p.x);
+          f.el.setAttribute("cx",p.x-Math.sin(angle)*f.jitter);
+          f.el.setAttribute("cy",p.y+Math.cos(angle)*f.jitter);
+          f.el.style.opacity="1";
+        });
+      });
+      windFrame=running?requestAnimationFrame(moveFollowers):null;
+    }
+    windFrame=requestAnimationFrame(moveFollowers);
+    for(let i=0;i<3+Math.floor(Math.random()*4);i++){
+      const spark=document.createElement("i");spark.className="__gust_wind_wander";
       spark.style.top=(10+Math.random()*80)+"%%";
-      spark.style.left=(5+Math.random()*30)+"%%";
-      spark.style.animationDelay="-"+(Math.random()*12)+"s";
-    });
-    const duration=5000+Math.random()*2000;
-    windOverlay.style.setProperty("--gust-wind-duration",duration+"ms");
-    document.documentElement.appendChild(windOverlay);
-    windTimer=setTimeout(function(){clearWind();scheduleWind();},duration);
+      spark.style.left=(5+Math.random()*85)+"%%";
+      spark.style.animationDuration=(3+Math.random()*7)+"s";
+      windOverlay.appendChild(spark);
+    }
+    // A trace needs up to 10.5s to clear the viewport; wait for wanderers too.
+    windTimer=setTimeout(function(){clearWind();scheduleWind();},11000);
   },immediate?0:3000+Math.random()*4000);
 }
 function setWind(enabled){
@@ -1069,14 +1106,15 @@ function mountIcon(){
 #__gust_comment_toolbar{border-color:#f9bb7133}
 #__gust_wind_button{margin-left:auto}
 #__gust_wind_button svg{width:24px;height:24px}
-#__gust_wind{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;z-index:2147483645;opacity:.65;animation:__gust_wind_fade var(--gust-wind-duration) ease-in-out both}
+#__gust_wind{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;z-index:2147483645;opacity:.65;animation:__gust_wind_fade 11s ease-in-out both}
 #__gust_wind *{pointer-events:none!important}
 #__gust_wind svg{position:absolute;width:100%%;height:100%%;opacity:.65}
-#__gust_wind path{fill:none;stroke:#f9bb71;stroke-width:2;stroke-linecap:round;stroke-dasharray:180 1100;animation:__gust_wind_stream 9s linear infinite}
-#__gust_wind i{position:absolute;width:5px;height:5px;border-radius:50%%;background:#fbd18e;box-shadow:0 0 20px #ed9a50;animation:__gust_wind_drift 12s linear infinite}
-@keyframes __gust_wind_fade{0%%,100%%{opacity:0}15%%,80%%{opacity:.65}}
-@keyframes __gust_wind_stream{from{stroke-dashoffset:1280}to{stroke-dashoffset:0}}
-@keyframes __gust_wind_drift{from{transform:translate(-15vw,6vh);opacity:0}15%%,85%%{opacity:1}to{transform:translate(95vw,-8vh);opacity:0}}
+#__gust_wind path{fill:none;stroke:#f9bb71;stroke-width:2;stroke-linecap:round;animation:__gust_wind_stream 9s linear both}
+#__gust_wind circle{fill:#fbd18e;filter:drop-shadow(0 0 6px #ed9a50);opacity:0}
+#__gust_wind i{position:absolute;width:5px;height:5px;border-radius:50%%;background:#fbd18e;box-shadow:0 0 20px #ed9a50;animation-name:__gust_wind_wander;animation-timing-function:linear;animation-fill-mode:both}
+@keyframes __gust_wind_fade{0%%{opacity:0}6%%,88%%{opacity:.65}100%%{opacity:0}}
+@keyframes __gust_wind_stream{to{stroke-dashoffset:var(--gust-wind-end)}}
+@keyframes __gust_wind_wander{0%%{transform:translate(-12vw,4vh) scale(.6);opacity:0}20%%,75%%{opacity:.9}100%%{transform:translate(40vw,-6vh) scale(1.1);opacity:0}}
 #__gust_comment_toolbar button{color:#e0cfba}
 #__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#49301c;color:#fff7e9}
 #__gust_comment_toolbar button:focus-visible{outline-color:#f9bb71}
