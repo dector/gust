@@ -1123,12 +1123,14 @@ function applySoundIcon(){
     soundButton.setAttribute("aria-label",soundEnabled?"Turn sound off":"Turn sound on");
   }
 }
+const soundVolume=0.8;
 function ensureRain(){
   if(rainAudio)return rainAudio;
   const url=soundAssets["rain-light-loop"];
   if(!url)return null;
   rainAudio=new Audio(url);
   rainAudio.loop=true;
+  rainAudio.volume=soundVolume;
   rainAudio.preload="auto";
   return rainAudio;
 }
@@ -1137,24 +1139,30 @@ function ensureThunder(){
   const url=soundAssets["thunder-deep-rumble"];
   if(!url)return null;
   thunderAudio=new Audio(url);
+  thunderAudio.volume=soundVolume;
   thunderAudio.preload="auto";
   return thunderAudio;
 }
 function playThunder(){
   const track=ensureThunder();
-  if(!track)return;
+  if(!track){scheduleThunder();return;}
   try { track.currentTime=0; } catch (_) {}
+  // Space gusts 3-5 minutes after the previous clip actually finishes.
+  track.onended=function(){
+    track.onended=null;
+    if(soundEnabled)scheduleThunder();
+  };
   const played=track.play();
-  if(played&&played.catch)played.catch(function(){});
+  if(played&&played.catch)played.catch(function(){ if(track.onended)track.onended(); });
 }
 function scheduleThunder(){
   if(thunderTimer)return;
+  const gap=180000+Math.random()*120000;
   thunderTimer=setTimeout(function(){
     thunderTimer=null;
     if(!soundEnabled)return;
     playThunder();
-    scheduleThunder();
-  },7000+Math.random()*16000);
+  },gap);
 }
 function armSoundUnlock(){
   if(soundUnlockArmed)return;
