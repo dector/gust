@@ -37,6 +37,7 @@ type Server struct {
 	statusProvider  func(context.Context) (coordinator.Status, error)
 	comments        *comments.Store
 	commentsEnabled bool
+	selfDev         bool
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -206,7 +207,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, selfDev: cfg.SelfDev}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -287,7 +288,7 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		interval: config.ProxyRetryInterval,
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled)
+		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled, s.selfDev)
 	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -461,11 +462,12 @@ func prepareBodyForRetry(r *http.Request) error {
 
 const flushNoLengthHeader = "X-Gust-Flush-No-Length"
 
-func reloadScript(version, appPort int, commentsEnabled ...bool) string {
+func reloadScript(version, appPort int, options ...bool) string {
 	commentsOn := true
-	if len(commentsEnabled) > 0 {
-		commentsOn = commentsEnabled[0]
+	if len(options) > 0 {
+		commentsOn = options[0]
 	}
+	selfDev := len(options) > 1 && options[1]
 	return fmt.Sprintf(`<script id="__gust_reload">(function(){
 let lastVersion = %d;
 let retry = 250;
@@ -484,6 +486,8 @@ function showError(message){ banner().textContent = message || "Gust error"; }
 function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
 let connected = false;
 let connectionAttempted = false;
+let reconnectAfterDisconnect = false;
+let disconnected = false;
 let failing = false;
 let gustIcon;
 let gustWidget;
@@ -514,6 +518,7 @@ const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height=
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
 const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))+"') 2 21, pointer";
 const gustAppPort = %d;
+const selfDev = %t;
 function ago(ms){
   if (!ms) return "unknown";
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -604,15 +609,18 @@ function syncPanel(){
   stopInfo();
 }
 function isGustNode(el){ return !!(el && el.closest && el.closest("#__gust_widget,#__gust_error,[data-gust-overlay]")); }
+function isSelfDevPanel(el){ return !!(selfDev && el && el.closest && el.closest("#__gust_panel")); }
+function blockedCommentTarget(el){ return isGustNode(el) && !isSelfDevPanel(el); }
 function meaningfulPath(el){
-  if (!el || el.nodeType !== 1 || isGustNode(el)) return {path:[], guessedIndex:0};
+  if (!el || el.nodeType !== 1 || blockedCommentTarget(el)) return {path:[], guessedIndex:0};
   let guess = el;
   const interactive = el.closest("button,a,input,textarea,select,[role=button],[role=link]");
-  if (interactive && !isGustNode(interactive)) guess = interactive;
+  if (interactive && !blockedCommentTarget(interactive)) guess = interactive;
   else {
     let n = el;
     while (n.parentElement && n.parentElement !== document.body && n.parentElement !== document.documentElement) {
       const p = n.parentElement;
+      if (isSelfDevPanel(el) && p.id === "__gust_widget") break;
       if (p.children.length > 1 || (p.textContent || "").trim().length > 180) break;
       n = p;
     }
@@ -620,8 +628,9 @@ function meaningfulPath(el){
   }
   const path = [];
   for (let n = el; n && path.length < 12; n = n.parentElement) {
-    if (isGustNode(n)) break;
+    if (blockedCommentTarget(n)) break;
     path.push(n);
+    if (isSelfDevPanel(el) && n.id === "__gust_panel") break;
   }
   return {path:path, guessedIndex:Math.max(0,path.indexOf(guess))};
 }
@@ -674,7 +683,7 @@ function matchingElement(c){
   const l=parseLocator(c); if(!l||!l.selector||l.confidence!=="high"||l.matches!==1)return null;
   let matches; try{matches=document.querySelectorAll(l.selector);}catch(_){return null;}
   if(matches.length!==1)return null;
-  const el=matches[0]; if(isGustNode(el)||el.tagName.toLowerCase()!==l.tag)return null;
+  const el=matches[0]; if(blockedCommentTarget(el)||el.tagName.toLowerCase()!==l.tag)return null;
   if(l.text){const actual=(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ");if(!actual.includes(l.text))return null;}
   return el;
 }
@@ -782,7 +791,7 @@ function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPa
 function updateCommentUI(){
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
-  if(commentToolbar){const toggle=commentToolbar.querySelector("button"),active=selecting||editorOpen;toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?"Exit comment mode":"Add comment";const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;}
+  if(commentToolbar){const toggle=commentToolbar.querySelector("button"),active=selecting||editorOpen;toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?(selfDev?"Exit comment mode (Alt+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Alt+click to select Gust panel elements)":"Add comment");const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;}
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
@@ -813,7 +822,7 @@ function safeOuterHTML(el){
   if(el.matches("input[type=password],input[type=hidden]"))return "";
   const clone=el.cloneNode(true);
   if(clone.matches("textarea"))clone.textContent="";
-  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],#__gust_widget,#__gust_error,[data-gust-overlay]").forEach(n=>n.remove());
+  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],#__gust_widget,#__gust_error,[data-gust-overlay],details[data-name],#__gust_comments").forEach(n=>n.remove());
   clone.querySelectorAll("textarea").forEach(n=>{n.textContent="";});
   [clone].concat(Array.from(clone.querySelectorAll("*"))).forEach(function(n){
     if(n.matches&&n.matches("input[type=password],input[type=hidden]"))return;
@@ -905,7 +914,7 @@ function updateHoverPath(target){
 }
 document.addEventListener("mousemove",function(e){
   if(!selecting)return;
-  if(isGustNode(e.target)){hoverPath=[];setHighlight(null);updateCommentUI();return;}
+  if(blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}
   updateHoverPath(e.target);
 },true);
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
@@ -913,7 +922,7 @@ window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition()
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
 document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(editorOpen){const box=document.querySelector("[data-editor] textarea");if(box)box.value="";resumeSelection();}else if(selecting)closeCommentMode();}},true);
 document.addEventListener("click",function(e){
-  if(!selecting||isGustNode(e.target))return;
+  if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey))return;
   if(!updateHoverPath(e.target))return;
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
   chooseSelection(e);
@@ -937,7 +946,7 @@ function mountIcon(){
     style = document.createElement("style");
     style.id = "__gust_icon_style";
     style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647}#__gust_icon{width:24px;height:24px;color:#a3a3a3;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_icon.__gust_icon_failing{color:#f59e0b;opacity:1}#__gust_panel{display:none;position:absolute;right:0;top:32px;background:#171717;color:#fafafa;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:normal;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 52px);overflow:auto;overflow-wrap:anywhere}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_widget.__gust_wide #__gust_panel{width:min(520px,calc(100vw - 32px));white-space:normal}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#a3a3a3}#__gust_panel .__gust_group{margin-top:8px;padding:6px 8px;border:1px solid rgba(245,158,11,.4);border-radius:6px;background:rgba(245,158,11,.08);white-space:normal}#__gust_panel .__gust_group_title{color:#f59e0b;font-weight:600;margin-bottom:2px}#__gust_panel .__gust_notice{display:block;color:#f59e0b;margin-top:2px;white-space:normal;max-width:100%%}#__gust_panel .__gust_log{margin-top:4px;white-space:normal}#__gust_panel .__gust_log summary{cursor:pointer;color:#a3a3a3}#__gust_panel .__gust_log pre{max-height:200px;max-width:100%%;overflow:auto;margin:4px 0 0;padding:6px 8px;background:#262626;border:1px solid rgba(255,255,255,.1);border-radius:4px;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}#__gust_panel .__gust_log code{font:inherit;background:transparent;padding:0;border:0;color:inherit}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}#__gust_comment_toolbar{display:flex;align-items:center;gap:4px;border-bottom:1px solid #404040;padding-bottom:6px;margin-bottom:6px}#__gust_comment_toolbar button{display:grid;place-items:center;width:34px;height:34px;padding:4px;border:1px solid transparent;border-radius:4px;background:transparent;color:#e5e5e5;cursor:pointer}#__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#404040;color:#fafafa}#__gust_comment_toolbar button:focus-visible{outline:2px solid #f59e0b;outline-offset:2px}#__gust_comment_toolbar svg{display:block}#__gust_comment_toolbar [data-mode-title]{font-weight:600;color:#fafafa;padding-left:8px;border-left:1px solid #525252}#__gust_comments{margin-top:8px;border-top:1px solid #404040;padding-top:8px;white-space:normal}#__gust_comments button{font:inherit;cursor:pointer;margin:2px;padding:3px 7px}#__gust_comments textarea,[data-editor] textarea{box-sizing:border-box;width:100%%;min-height:70px;background:#262626;color:#fafafa;border:1px solid #525252;padding:6px}#__gust_comments .__gust_comment_row{display:block;box-sizing:border-box;width:100%%;text-align:left;padding:5px 6px;color:#e5e5e5;font-size:12px;white-space:normal;overflow-wrap:anywhere;background:#262626;border:1px solid #404040;border-radius:4px}#__gust_comments .__gust_comment_meta{display:block;color:#a3a3a3;font-size:11px}#__gust_comments .__gust_comment_item{display:flex;align-items:stretch;gap:4px;margin:4px 0}#__gust_comments .__gust_comment_row{flex:1;min-width:0;margin:0}#__gust_comments .__gust_remove_draft{align-self:start;flex:none;color:#fca5a5;background:#262626;border:1px solid #525252;border-radius:4px;line-height:1;padding:4px 7px}#__gust_comments .__gust_remove_draft:hover{background:#7f1d1d}#__gust_comments .__gust_comment_row_created{border-left:3px solid #f59e0b}#__gust_comments .__gust_comment_row_submitted{border-left:3px solid #60a5fa}#__gust_comments .__gust_comment_row_seen{border-left:3px solid #a78bfa}#__gust_comments .__gust_comment_badge{display:inline-block;font-size:11px;font-weight:700}#__gust_comments .__gust_comment_badge_created{color:#fbbf24}#__gust_comments .__gust_comment_badge_submitted{color:#93c5fd}#__gust_comments .__gust_comment_badge_seen{color:#c4b5fd}#__gust_comments .__gust_comment_spinner{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid #525252;border-top-color:#c4b5fd;border-radius:50%%;vertical-align:-2px;animation:__gust_comment_spin .9s linear infinite}@keyframes __gust_comment_spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#__gust_comments .__gust_comment_spinner{animation:none;border-color:#c4b5fd}}#__gust_comments .__gust_done_summary{text-align:center;color:#a3a3a3;font-size:12px;padding:8px}#__gust_comments .__gust_autosubmit{display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:#d4d4d4}#__gust_comments .__gust_autosubmit[hidden]{display:none}#__gust_comments [data-poll-error]{color:#fca5a5;font-size:12px}.__gust_pin{border:0;background:transparent;padding:0;cursor:pointer;width:20px;height:20px;line-height:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}.__gust_pin svg{display:block;width:20px;height:20px}.__gust_pin_created{color:#f59e0b}.__gust_pin_submitted{color:#60a5fa}.__gust_pin_seen{color:#a78bfa}.__gust_highlight{outline:3px solid #f59e0b!important;outline-offset:2px!important}html.__gust_selecting,html.__gust_selecting *{cursor:"+commentCursor+"!important}html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting [data-gust-overlay],html.__gust_selecting [data-gust-overlay] *{cursor:auto!important}html.__gust_selecting #__gust_widget button,html.__gust_selecting [data-gust-overlay] button{cursor:pointer!important}html.__gust_selecting #__gust_widget textarea,html.__gust_selecting [data-gust-overlay] textarea{cursor:text!important}";
-    style.textContent += ` + "`" + `
+    style.textContent += `+"`"+`
 #__gust_comments{margin-top:12px;padding-top:12px;border-color:#353535}
 #__gust_comments .__gust_comments_header{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#f5f5f5;font-size:12px;font-weight:650;letter-spacing:.01em}
 #__gust_comments .__gust_comments_count{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;box-sizing:border-box;border-radius:9px;background:#343434;color:#bcbcbc;font-size:10px;font-weight:600}
@@ -1006,7 +1015,7 @@ function mountIcon(){
 #__gust_comments .__gust_comment_row{color:#fff7e9}
 #__gust_comments .__gust_comment_row:focus-visible,#__gust_comments .__gust_remove_draft:focus-visible{outline-color:#f9bb71}
 #__gust_comments .__gust_comment_meta,#__gust_comments .__gust_remove_draft,#__gust_comments .__gust_comments_empty,#__gust_comments .__gust_done_summary{color:#e0cfba}
-` + "`" + `;
+`+"`"+`;
     document.head.appendChild(style);
   }
   const widget = document.createElement("div");
@@ -1047,15 +1056,16 @@ function connect(){
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const url = proto + "//" + location.host + "/__gust/ws";
   socket = new WebSocket(url);
-  socket.onopen = function(){ retry = 250; connected = true; applyIconState(); };
+  socket.onopen = function(){ retry = 250; connected = true; if(disconnected)reconnectAfterDisconnect=true; applyIconState(); };
   socket.onmessage = function(event){
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
     if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
     if (msg.type === "notice") { failing = true; applyIconState(); refreshInfo(); return; }
     if (msg.type === "error") { failing = true; applyIconState(); refreshInfo(); showError(msg.message); return; }
-    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; return; }
+    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; if(selfDev&&reconnectAfterDisconnect){reconnectAfterDisconnect=false;location.reload();} return; }
     if (msg.type === "reload") {
+      if(selfDev&&reconnectAfterDisconnect){reconnectAfterDisconnect=false;location.reload();return;}
       failing = false; applyIconState();
       hideError();
       if (typeof msg.at === "number") reloadedAt = msg.at;
@@ -1065,11 +1075,11 @@ function connect(){
       }
     }
   };
-  socket.onclose = function(){ connected = false; connectionAttempted = true; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  socket.onclose = function(){ connected = false; connectionAttempted = true; disconnected = true; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();
-})();</script>`, version, appPort, commentsOn)
+})();</script>`, version, appPort, selfDev, commentsOn)
 }
 
 func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.Logger, commentsEnabled ...bool) error {

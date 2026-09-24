@@ -49,12 +49,27 @@ Flags:
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
 - `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments` (disabled by default).
+- `--self-dev`: with `--optin comments` and a proxy, let Alt+click select Gust panel elements in comment mode; reload the page after the proxy process reconnects. Works with `-T`. Default behavior still excludes Gust's UI.
 - `-v`: verbose Gust logs.
 - `GUST_INFO=1`: enable info logs initially. Press `i` to toggle them.
 
 `--exclude` values are relative path prefixes. Use them for directories or whole subtrees, for example `--exclude frontend/node_modules`.
 
 `--exclude.glob` values use Go filepath glob syntax and are matched against both the project-relative path and the file basename. The pattern must match the whole value. `*` does not cross `/`, so `assets/*.tmp` matches `assets/cache.tmp` but not `assets/nested/cache.tmp`. A basename glob like `*_templ.go` matches files with that name pattern in any directory.
+
+## Developing Gust's own panel
+
+Run `ror dev:self` from the repository root. The external supervisor in
+`tools/dev-self.sh` builds Gust before restarting it on source changes; if a
+build fails, the running instance stays up. It serves `docs/demo` at port 8000
+through the proxy at port 8001 and enables Tailscale Serve (`-T`). To disable
+Tailscale locally, use `DEV_SELF_TAILSCALE=0 ror dev:self`.
+
+In comment mode, Alt+click a **panel** element to select it; normal clicks
+still operate the panel. Gust's icon and floating editor remain unselectable.
+After the supervisor restarts Gust, the browser reloads on reconnection.
+Comments are still in memory: have the agent read or record submitted comments
+*before* editing Gust source, because a successful rebuild restarts Gust.
 
 ## Tailscale exposure
 

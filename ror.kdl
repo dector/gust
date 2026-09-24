@@ -1,3 +1,9 @@
 task build {
     cmd "go build -o out/gust ./cmd/gust"
 }
+
+task dev:self {
+    description "Watch Gust source, rebuild, and restart the docs/demo app"
+
+    cmd "tools/dev-self.sh"
+}

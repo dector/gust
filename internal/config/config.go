@@ -23,6 +23,7 @@ type Config struct {
 	ProxyPort       int
 	ProxyEnabled    bool
 	CommentsEnabled bool
+	SelfDev         bool
 	HealthPath      string
 	Tailscale       bool
 	Excludes        []string

@@ -3,7 +3,7 @@ gust run - run and watch a command
 Usage:
   gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]...
        [-p <port>|<app:proxy>] [-h <path>] [-T]
-       [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [-v]
+       [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
@@ -15,6 +15,7 @@ Flags:
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   --optin <feature>     opt-in feature, repeatable (comments; default off)
+  --self-dev            allow Alt+click selection of Gust panel and reload after proxy restart; requires comments and proxy
   -v                    enable verbose Gust logs
 
 Samples:
@@ -43,5 +44,7 @@ closed on shutdown. Failures are warnings; the app continues locally.
 
 Comments are disabled by default. Use --optin comments to enable the browser
 comments UI/API and `gust ctl comments` commands; unknown opt-in values are errors.
+In --self-dev mode, Alt+click selects Gust panel elements without changing
+normal panel clicks; it works with -T. Gust restarts still discard comments.
 
 Details: see README.md and docs/before-after.md.

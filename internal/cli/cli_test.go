@@ -74,6 +74,21 @@ func TestParseCommentsOptIn(t *testing.T) {
 	}
 }
 
+func TestParseSelfDev(t *testing.T) {
+	for _, args := range [][]string{
+		{"-e", "run", "--self-dev", "-p", "8000:8001"},
+		{"-e", "run", "--self-dev", "--optin", "comments"},
+	} {
+		if _, err := ParseWithOutput(args, nil); err == nil {
+			t.Fatalf("expected invalid self-dev combination: %v", args)
+		}
+	}
+	cfg, err := ParseWithOutput([]string{"-e", "run", "--self-dev", "--optin", "comments", "-p", "8000:8001", "-T"}, nil)
+	if err != nil || !cfg.SelfDev || !cfg.Tailscale {
+		t.Fatalf("self-dev with Tailscale: cfg=%+v err=%v", cfg, err)
+	}
+}
+
 func TestParseAppPort(t *testing.T) {
 	cfg, err := ParseWithOutput([]string{"-e", "run", "-p", "8080"}, nil)
 	if err != nil {

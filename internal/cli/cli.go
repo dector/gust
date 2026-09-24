@@ -46,6 +46,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments)")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
+	fs.BoolVar(&cfg.SelfDev, "self-dev", false, "enable selecting Gust panel elements and reload after proxy restart")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usageText)
 	}
@@ -84,6 +85,10 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		cfg.HasAppPort = true
 		cfg.ProxyPort = proxyPort
 		cfg.ProxyEnabled = proxyEnabled
+	}
+
+	if cfg.SelfDev && (!cfg.CommentsEnabled || !cfg.ProxyEnabled) {
+		return config.Config{}, errors.New("--self-dev requires --optin comments and a proxy port (-p app:proxy)")
 	}
 
 	if cfg.Tailscale && !cfg.HasAppPort {
@@ -139,7 +144,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	return cfg, nil
 }
 
-const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [-v]
+const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
@@ -151,6 +156,7 @@ Flags:
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   --optin <feature>     opt-in feature, repeatable (comments)
+  --self-dev            allow Alt+click selection of Gust panel and reload after proxy restart
   -v                    enable verbose Gust logs
 
 Run "gust man" for a brief manual and samples.

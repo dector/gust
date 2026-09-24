@@ -486,18 +486,37 @@ func TestProxyInjectedScriptSyntaxWhenNodeAvailable(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed")
 	}
-	script := reloadScript(12, 8765)
-	start := strings.Index(script, ">") + 1
-	end := strings.LastIndex(script, "</script>")
-	if start <= 0 || end < start {
-		t.Fatal("could not extract injected JavaScript")
+	for _, script := range []string{reloadScript(12, 8765), reloadScript(12, 8765, true, true)} {
+		start := strings.Index(script, ">") + 1
+		end := strings.LastIndex(script, "</script>")
+		if start <= 0 || end < start {
+			t.Fatal("could not extract injected JavaScript")
+		}
+		file := t.TempDir() + "/reload.js"
+		if err := os.WriteFile(file, []byte(script[start:end]), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command(node, "--check", file).CombinedOutput(); err != nil {
+			t.Fatalf("generated JavaScript syntax: %v\n%s", err, output)
+		}
 	}
-	file := t.TempDir() + "/reload.js"
-	if err := os.WriteFile(file, []byte(script[start:end]), 0600); err != nil {
-		t.Fatal(err)
+}
+
+func TestProxySelfDevScript(t *testing.T) {
+	defaultScript := reloadScript(1, 8080, true)
+	selfScript := reloadScript(1, 8080, true, true)
+	if !strings.Contains(defaultScript, "const selfDev = false;") || !strings.Contains(selfScript, "const selfDev = true;") {
+		t.Fatal("self-dev must be opt-in")
 	}
-	if output, err := exec.Command(node, "--check", file).CombinedOutput(); err != nil {
-		t.Fatalf("generated JavaScript syntax: %v\n%s", err, output)
+	for _, expected := range []string{
+		`function isSelfDevPanel(el)`,
+		`isSelfDevPanel(e.target)&&!e.altKey`,
+		`if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey))return;`,
+		`if(selfDev&&reconnectAfterDisconnect){reconnectAfterDisconnect=false;location.reload();}`,
+	} {
+		if !strings.Contains(selfScript, expected) {
+			t.Errorf("self-dev script missing %q", expected)
+		}
 	}
 }
 
@@ -521,7 +540,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`__gust_icon_failing`,
 		`let connectionAttempted = false;`,
 		`gustIcon.classList.toggle("__gust_icon_offline", !connected && connectionAttempted)`,
-		`connected = false; connectionAttempted = true; applyIconState()`,
+		`connected = false; connectionAttempted = true; disconnected = true; applyIconState()`,
 		`#__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1}`,
 		`viewBox="0 0 256 256"`,
 		`#__gust_icon::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border:2px solid #f9bb71;border-radius:50%;background:#24180f;`,
@@ -589,7 +608,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`position:fixed;display:none;z-index:2147483647`,
 		`font:13px/1.5 ui-monospace`,
 		`max-height:calc(100vh - 24px)`,
-		`if(isGustNode(e.target)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
+		`if(blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
 		`window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true)`,
 		`function closeCommentMode()`,
 		`function meaningfulPath(`,
