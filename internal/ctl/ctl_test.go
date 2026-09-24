@@ -3,6 +3,7 @@ package ctl
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,88 @@ func TestCommentsWaitCancellationDoesNotClaim(t *testing.T) {
 	list, err := store.List(ctx, comments.StateSubmitted)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("submitted comments=%d err=%v", len(list), err)
+	}
+}
+
+func TestCommentsWaitReconnectsAfterRestart(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store1, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv1Ctx, stop1 := context.WithCancel(ctx)
+	srv1, err := socket.Start(srv1Ctx, config.Config{Root: root}, nil, &fakeControl{}, store1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, []string{"-S", srv1.Path(), "comments", "--wait"}, &out, &errOut)
+	}()
+
+	// Let the wait connect and block, then restart Gust on the same socket.
+	time.Sleep(200 * time.Millisecond)
+	stop1()
+	_ = srv1.Close()
+	_ = store1.Close()
+
+	store2, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	if _, err := store2.Create(ctx, comments.Input{Path: "/", Text: "after restart"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store2.SubmitCreated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2Ctx, stop2 := context.WithCancel(ctx)
+	defer stop2()
+	srv2, err := socket.Start(srv2Ctx, config.Config{Root: root}, nil, &fakeControl{}, store2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv2.Close()
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("wait code=%d stderr=%q", code, errOut.String())
+		}
+		if !strings.Contains(out.String(), batch.ID) {
+			t.Fatalf("wait output after restart: %s", out.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("wait did not reconnect after restart")
+	}
+}
+
+func TestCommentsWaitTimesOutWhenGustUnreachable(t *testing.T) {
+	prev := waitReconnectWindow
+	waitReconnectWindow = 200 * time.Millisecond
+	defer func() { waitReconnectWindow = prev }()
+
+	path := filepath.Join(t.TempDir(), "missing.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var out, errOut bytes.Buffer
+	start := time.Now()
+	code := Run(ctx, []string{"-S", path, "comments", "--wait"}, &out, &errOut)
+	if code == 0 {
+		t.Fatalf("wait unexpectedly succeeded: %q", out.String())
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("wait took %s, want bounded by the reconnect window", elapsed)
+	}
+	if !strings.Contains(errOut.String(), "cannot reach gust") {
+		t.Fatalf("stderr=%q", errOut.String())
 	}
 }
 

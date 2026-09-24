@@ -14,7 +14,15 @@ import (
 	"github.com/dector/gust/internal/socket"
 )
 
-const dialTimeout = 5 * time.Second
+const (
+	dialTimeout = 5 * time.Second
+	// waitReconnectWindow bounds how long a blocked --wait keeps retrying
+	// after losing its connection. Time spent connected is not counted.
+	waitReconnectBackoff = 250 * time.Millisecond
+)
+
+// waitReconnectWindow is a var so tests can shorten it.
+var waitReconnectWindow = 30 * time.Second
 
 var actions = map[string]protocol.Action{
 	"status": protocol.ActionStatus,
@@ -99,14 +107,62 @@ func parseArgs(args []string) (socketPath, verb string, err error) {
 }
 
 func call(ctx context.Context, path string, req protocol.Request, timeout time.Duration) (protocol.Response, error) {
-	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
-	defer cancelDial()
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(dialCtx, "unix", path)
+	conn, err := dial(ctx, path)
 	if err != nil {
 		return protocol.Response{}, fmt.Errorf("cannot reach gust at %s: %w", path, err)
 	}
 	defer conn.Close()
+	return exchange(ctx, conn, req, timeout)
+}
+
+// callWait issues a blocking wait request and reconnects when Gust restarts.
+// A dropped connection does not end the wait; it retries for up to
+// waitReconnectWindow since the outage began. Time spent connected to Gust is
+// not counted against that window, so waiting for a batch stays open-ended.
+func callWait(ctx context.Context, path string, req protocol.Request) (protocol.Response, error) {
+	var lastErr error
+	var deadline time.Time
+	for {
+		if err := ctx.Err(); err != nil {
+			return protocol.Response{}, err
+		}
+		conn, err := dial(ctx, path)
+		if err == nil {
+			// Reconnected: forget the previous outage and block on the batch.
+			deadline = time.Time{}
+			resp, exchangeErr := exchange(ctx, conn, req, 0)
+			conn.Close()
+			if exchangeErr == nil {
+				return resp, nil
+			}
+			lastErr = exchangeErr
+		} else {
+			lastErr = err
+		}
+		if deadline.IsZero() {
+			deadline = time.Now().Add(waitReconnectWindow)
+		}
+		if !time.Now().Before(deadline) {
+			return protocol.Response{}, fmt.Errorf("cannot reach gust at %s: %w", path, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return protocol.Response{}, ctx.Err()
+		case <-time.After(waitReconnectBackoff):
+		}
+	}
+}
+
+func dial(ctx context.Context, path string) (net.Conn, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	var dialer net.Dialer
+	return dialer.DialContext(dialCtx, "unix", path)
+}
+
+// exchange sends one request and reads its response. With timeout zero it has
+// no deadline and unblocks as soon as ctx is done, closing the connection.
+func exchange(ctx context.Context, conn net.Conn, req protocol.Request, timeout time.Duration) (protocol.Response, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -232,11 +288,13 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 			return 1, true
 		}
 	}
-	timeout := dialTimeout
+	var resp protocol.Response
+	var err error
 	if req.Action == protocol.ActionCommentsWait {
-		timeout = 0
+		resp, err = callWait(ctx, socketPath, req)
+	} else {
+		resp, err = call(ctx, socketPath, req, dialTimeout)
 	}
-	resp, err := call(ctx, socketPath, req, timeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "gust ctl: %v\n", err)
 		return 1, true
