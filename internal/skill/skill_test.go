@@ -85,10 +85,6 @@ func TestRunCommentsWatch(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
-	var oldOutput bytes.Buffer
-	if code := Run([]string{"comment", "watch"}, &oldOutput, &stderr); code != 0 || oldOutput.String() != stdout.String() {
-		t.Fatalf("singular compatibility alias differs: code %d, output %q", code, oldOutput.String())
-	}
 }
 
 func TestRunCommentsRun(t *testing.T) {
@@ -129,7 +125,7 @@ func TestRunCommentsRun(t *testing.T) {
 }
 
 func TestRunHelpAndInvalidArgs(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comments", "run", "--help"}, {"comments", "watch", "--help"}, {"comment", "watch", "--help"}, {"help"}} {
+	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comments", "run", "--help"}, {"comments", "watch", "--help"}, {"help"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 0 {
 			t.Errorf("Run(%q) = %d, want 0", args, code)
@@ -142,7 +138,7 @@ func TestRunHelpAndInvalidArgs(t *testing.T) {
 		}
 	}
 
-	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comments", "run", "extra"}, {"comment"}, {"comments", "watch", "extra"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
+	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comments", "run", "extra"}, {"comment"}, {"comment", "watch"}, {"comment", "watch", "--help"}, {"comments", "watch", "extra"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("Run(%q) = %d, want 2", args, code)

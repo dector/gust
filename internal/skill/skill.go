@@ -83,7 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if (len(args) == 2 && args[0] == "comments" && isHelp(args[1])) ||
 		(len(args) == 3 && args[0] == "comments" && args[1] == "run" && isHelp(args[2])) ||
-		(len(args) == 3 && (args[0] == "comments" || args[0] == "comment") && args[1] == "watch" && isHelp(args[2])) {
+		(len(args) == 3 && args[0] == "comments" && args[1] == "watch" && isHelp(args[2])) {
 		_, _ = io.WriteString(stdout, usage)
 		return 0
 	}
@@ -91,8 +91,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		_, _ = io.WriteString(stdout, commentsRunPrompt)
 		return 0
 	}
-	// Keep the singular form as a compatibility alias.
-	if len(args) == 2 && (args[0] == "comments" || args[0] == "comment") && args[1] == "watch" {
+	if len(args) == 2 && args[0] == "comments" && args[1] == "watch" {
 		_, _ = io.WriteString(stdout, commentWatchSkill+"\n")
 		return 0
 	}
