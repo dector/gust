@@ -592,15 +592,20 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`pin.innerHTML=commentIconSvg;`,
 		`function elementSnippet(`,
 		`function fullAncestry(`,
-		`function measurePathLines(`,
-		`function buildPathText(`,
 		`function renderPath(`,
 		`function scheduleRenderPath(`,
-		`crumbs.textContent=buildPathText(target,crumbs)`,
-		`"… > "`,
-		`withLabel(n<label.length?label.slice(0,n)+"…":label)`,
-		`#__gust_comments [data-crumbs]{`,
-		`max-height:2.8em`,
+		`target.matches("html,head,body")?"":elementSnippet(target)`,
+		`ancestors.forEach(function(name){addPart(name,"__gust_path_ancestor");})`,
+		`#__gust_selected_path .__gust_path_trail{display:flex;flex-wrap:wrap`,
+		`max-width:calc(100vw - 24px)`,
+		`crumbs.replaceChildren(trail)`,
+		`text-shadow:0 1px 3px #000`,
+		`crumbs.id="__gust_selected_path"`,
+		`document.documentElement.appendChild(crumbs)`,
+		`document.getElementById("__gust_selected_path")`,
+		`#__gust_selected_path{position:fixed;bottom:16px`,
+		`#__gust_selected_path[hidden]{display:none}`,
+		`#__gust_selected_path .__gust_path_current{`,
 		`document.documentElement.classList.toggle("__gust_selecting",selecting)`,
 		`const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))`,
 		`html.__gust_selecting,html.__gust_selecting *{cursor:"+commentCursor+"!important}`,
@@ -634,7 +639,11 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`location.pathname`,
 		`JSON.stringify({selector:selector,tag:tag,text:text,confidence:`,
 		`__gust_pin`,
-		`commentUI.append(autoLabel,status,crumbs,submit,submitResult,pollError,list)`,
+		`commentUI.append(autoLabel,status,listHeader,submitResult,pollError,list)`,
+		`listHeader.append(listTitle,count,submit)`,
+		`empty.textContent="No open comments yet."`,
+		`__gust_comment_text{display:-webkit-box`,
+		`__gust_comments_header{display:flex`,
 		`auto.checked=true`,
 		`e.key==="Enter"&&e.ctrlKey`,
 		`sessionStorage.getItem("__gust_comment_mode")`,
@@ -642,8 +651,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`selecting=loadCommentMode(); createCommentUI()`,
 		`setHighlight(null);saveCommentMode();updateCommentUI();`,
 		`/__gust/comments/submit?id=`,
-		`commentState.slice().reverse().filter(c=>c.state!=="done"&&c.state!=="abandoned")`,
-		`summary.textContent="… and "+finished+" done or abandoned"`,
+		`active.slice().reverse().forEach(function(c)`,
+		`summary.textContent=finished+" finished"`,
 		`remove.setAttribute("aria-label","Remove draft")`,
 		`method:"DELETE"`,
 		`close.addEventListener("click",function(){textarea.value="";result.textContent="";resumeSelection();})`,
@@ -656,8 +665,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}`,
 		`replace(/\s+/g," ")`,
 		`Comment sync failed: `,
-		`pending on another page`,
-		`Submit "+created+" created`,
+		`open.title=onPage?`,
+		`submit.textContent="Submit "+created`,
 		`data-comment-id`,
 		`pointer-events:auto`,
 		`fetch("/__gust/comments/submit"`,
@@ -667,14 +676,14 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`replace(/\s+/g," ");if(!actual.includes(l.text))return null;`,
 		`c.state==="created"||c.state==="submitted"||c.state==="seen"`,
 		`submitResult.dataset.submitResult`,
-		`location not found`,
+		`missing.textContent="Not found"`,
 	}
 	for _, check := range checks {
 		if !strings.Contains(script, check) {
 			t.Fatalf("script missing %q in %s", check, script)
 		}
 	}
-	for _, removed := range []string{"Shrink", "Expand", "Choose this element", "Cancel", "Change selection"} {
+	for _, removed := range []string{"Shrink", "Expand", "Choose this element", "Cancel", "Change selection", "Selected element"} {
 		if strings.Contains(script, removed) {
 			t.Errorf("script still contains removed comment-mode UI %q", removed)
 		}
