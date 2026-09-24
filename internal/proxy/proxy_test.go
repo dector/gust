@@ -623,6 +623,10 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`commentUI.append(autoLabel,status,crumbs,submit,submitResult,pollError,list)`,
 		`auto.checked=true`,
 		`e.key==="Enter"&&e.ctrlKey`,
+		`sessionStorage.getItem("__gust_comment_mode")`,
+		`sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0")`,
+		`selecting=loadCommentMode(); createCommentUI()`,
+		`setHighlight(null);saveCommentMode();updateCommentUI();`,
 		`/__gust/comments/submit?id=`,
 		`commentState.slice().reverse().filter(c=>c.state!=="done")`,
 		`summary.textContent="… and "+done+" done"`,
@@ -754,7 +758,7 @@ func TestBrowserCommentsDisabledByDefaultWhenConfigured(t *testing.T) {
 		}
 	}
 	injected := reloadScript(1, 8080, false)
-	if !strings.Contains(injected, "if (false) { createCommentUI(); startCommentRefresh(); }") {
+	if !strings.Contains(injected, "if (false) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }") {
 		t.Fatal("disabled reload widget includes comment UI")
 	}
 }

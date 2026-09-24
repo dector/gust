@@ -746,8 +746,8 @@ function updateCommentUI(){
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
-function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;hoverPath=[];setHighlight(null);updateCommentUI();}
-function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;hoverPath=[];setHighlight(null);pinned=true;savePinned();syncPanel();updateCommentUI();}
+function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;hoverPath=[];setHighlight(null);saveCommentMode();pinned=true;savePinned();syncPanel();updateCommentUI();}
 function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;hoverPath=[];setHighlight(null);updateCommentUI();}
 function chooseSelection(){if(!hoverPath.length)return;selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];selecting=false;editorOpen=true;hoverPath=[];setHighlight(null);updateCommentUI();const box=document.querySelector("[data-editor] textarea");if(box)box.focus();}
 function cssEscape(v){ return window.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/[^a-zA-Z0-9_-]/g,"\\$&"); }
@@ -842,6 +842,12 @@ document.addEventListener("click",function(e){
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
   chooseSelection();
 },true);
+function loadCommentMode(){
+  try { return sessionStorage.getItem("__gust_comment_mode") === "1"; } catch (_) { return false; }
+}
+function saveCommentMode(){
+  try { sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0"); } catch (_) {}
+}
 function loadPinned(){
   try { return localStorage.getItem("__gust_pinned") === "1"; } catch (_) { return false; }
 }
@@ -866,7 +872,7 @@ function mountIcon(){
   gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z"/></svg>';
   gustPanel = document.createElement("div");
   gustPanel.id = "__gust_panel";
-  if (%t) { createCommentUI(); startCommentRefresh(); }
+  if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
   widget.appendChild(gustIcon);
   widget.appendChild(gustPanel);
   widget.addEventListener("mouseenter", function(){ hovering = true; syncPanel(); });
