@@ -951,6 +951,11 @@ function clearWind(){
   clearTimeout(windTimer);windTimer=null;
   if(windOverlay){windOverlay.remove();windOverlay=null;}
 }
+function windTraceCount(){
+  const roll=Math.random();
+  // Usually one trace; four or five are occasional accents.
+  return roll<.70?1:roll<.85?2:roll<.94?3:roll<.98?4:5;
+}
 function scheduleWind(immediate){
   if(!windEnabled||windMotion.matches||document.hidden)return;
   // Start on activation, then leave a quiet gap between five-to-seven-second gusts.
@@ -959,12 +964,15 @@ function scheduleWind(immediate){
     if(!windEnabled||windMotion.matches||document.hidden)return;
     windOverlay=document.createElement("div");windOverlay.id="__gust_wind";
     windOverlay.setAttribute("aria-hidden","true");windOverlay.dataset.gustOverlay="";
-    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"><path/></svg><i></i><i></i><i></i>';
-    // A single stream at a new height and phase each time avoids parallel, repeating lines.
-    const y=160+Math.random()*480;
-    const path=windOverlay.querySelector("path");
-    path.setAttribute("d","M-100 "+y+" C180 "+(y-140)+" 340 "+(y+100)+" 620 "+(y-50)+" S960 "+(y-140)+" 1300 "+(y-20));
-    path.style.animationDelay="-"+(Math.random()*9)+"s";
+    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"></svg><i></i><i></i><i></i>';
+    const svg=windOverlay.querySelector("svg");
+    for(let n=0;n<windTraceCount();n++){
+      const y=130+Math.random()*540, rise=80+Math.random()*100, dip=50+Math.random()*110;
+      const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.setAttribute("d","M-100 "+y+" C180 "+(y-rise)+" 340 "+(y+dip)+" 620 "+(y-50)+" S960 "+(y-rise)+" 1300 "+(y-20));
+      path.style.animationDelay="-"+(Math.random()*9)+"s";
+      svg.appendChild(path);
+    }
     windOverlay.querySelectorAll("i").forEach(function(spark){
       spark.style.top=(10+Math.random()*80)+"%%";
       spark.style.left=(5+Math.random()*30)+"%%";
