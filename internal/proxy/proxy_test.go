@@ -620,7 +620,13 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`location.pathname`,
 		`JSON.stringify({selector:selector,tag:tag,text:text,confidence:`,
 		`__gust_pin`,
-		`commentUI.append(status,crumbs,submit,submitResult,pollError,list)`,
+		`commentUI.append(autoLabel,status,crumbs,submit,submitResult,pollError,list)`,
+		`auto.checked=true`,
+		`e.key==="Enter"&&e.ctrlKey`,
+		`/__gust/comments/submit?id=`,
+		`commentState.slice().reverse().filter(c=>c.state!=="done")`,
+		`summary.textContent="… and "+done+" done"`,
+		`seen:"In progress"`,
 		`editor.append(close,textarea,save,result)`,
 		`function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}`,
 		`replace(/\s+/g," ")`,
@@ -829,6 +835,48 @@ func TestBrowserCommentsAPI(t *testing.T) {
 	current, err := store.Get(context.Background(), created.ID)
 	if err != nil || current.State != comments.StateSeen {
 		t.Fatalf("stored state=%s err=%v", current.State, err)
+	}
+}
+
+func TestBrowserAutosubmitOnlyTargetsSavedComment(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server.SetCommentStore(store)
+	other, err := store.Create(context.Background(), comments.Input{Path: "/", Text: "draft", Locator: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Create(context.Background(), comments.Input{Path: "/", Text: "auto", Locator: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, proxyURL+"/__gust/comments/submit?id="+current.ID, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", proxyURL)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var batch comments.Batch
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || len(batch.Comments) != 1 || batch.Comments[0].ID != current.ID {
+		t.Fatalf("autosubmit: status %d, batch %+v", resp.StatusCode, batch)
+	}
+	draft, err := store.Get(context.Background(), other.ID)
+	if err != nil || draft.State != comments.StateCreated {
+		t.Fatalf("unrelated draft: %+v, %v", draft, err)
 	}
 }
 

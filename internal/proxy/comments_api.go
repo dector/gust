@@ -121,7 +121,13 @@ func (s *Server) serveCommentSubmit(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 503, "comments_unavailable", "comments are unavailable")
 		return
 	}
-	batch, err := s.comments.SubmitCreated(r.Context())
+	var batch comments.Batch
+	var err error
+	if r.URL.Query().Has("id") {
+		batch, err = s.comments.SubmitOne(r.Context(), r.URL.Query().Get("id"))
+	} else {
+		batch, err = s.comments.SubmitCreated(r.Context())
+	}
 	if errors.Is(err, comments.ErrNoCreated) {
 		writeAPIError(w, 409, "no_created_comments", "there are no created comments to submit")
 		return

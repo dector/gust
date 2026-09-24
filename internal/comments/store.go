@@ -167,6 +167,18 @@ func (s *Store) List(ctx context.Context, state State) ([]Comment, error) {
 
 // SubmitCreated atomically groups all created comments into a newly submitted batch.
 func (s *Store) SubmitCreated(ctx context.Context) (Batch, error) {
+	return s.submit(ctx, "")
+}
+
+// SubmitOne submits only the specified draft, leaving other drafts untouched.
+func (s *Store) SubmitOne(ctx context.Context, id string) (Batch, error) {
+	if id == "" {
+		return Batch{}, ErrNoCreated
+	}
+	return s.submit(ctx, id)
+}
+
+func (s *Store) submit(ctx context.Context, id string) (Batch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkOpen(); err != nil {
@@ -177,8 +189,14 @@ func (s *Store) SubmitCreated(ctx context.Context) (Batch, error) {
 		return Batch{}, err
 	}
 	defer tx.Rollback()
+	where := "state='created'"
+	args := []any{}
+	if id != "" {
+		where += " AND id=?"
+		args = append(args, id)
+	}
 	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM comments WHERE state='created'`).Scan(&count); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM comments WHERE `+where, args...).Scan(&count); err != nil {
 		return Batch{}, err
 	}
 	if count == 0 {
@@ -188,7 +206,8 @@ func (s *Store) SubmitCreated(ctx context.Context) (Batch, error) {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO batches(id,submitted_at) VALUES(?,?)`, batch.ID, stamp(batch.SubmittedAt)); err != nil {
 		return Batch{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='submitted',batch_id=?,submitted_at=?,updated_at=? WHERE state='created'`, batch.ID, stamp(batch.SubmittedAt), stamp(batch.SubmittedAt)); err != nil {
+	updateArgs := append([]any{batch.ID, stamp(batch.SubmittedAt), stamp(batch.SubmittedAt)}, args...)
+	if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='submitted',batch_id=?,submitted_at=?,updated_at=? WHERE `+where, updateArgs...); err != nil {
 		return Batch{}, err
 	}
 	if err = tx.Commit(); err != nil {

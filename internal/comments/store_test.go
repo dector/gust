@@ -68,6 +68,31 @@ func TestCreateSubmitAndTransitions(t *testing.T) {
 	}
 }
 
+func TestSubmitOneLeavesOtherDrafts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "draft")
+	create(t, s, "auto")
+	if _, err := s.SubmitOne(ctx, "missing"); !errors.Is(err, ErrNoCreated) {
+		t.Fatalf("missing id: %v", err)
+	}
+	b, err := s.SubmitOne(ctx, "auto")
+	if err != nil || len(b.Comments) != 1 || b.Comments[0].ID != "auto" {
+		t.Fatalf("submit one: %+v, %v", b, err)
+	}
+	if _, err := s.SubmitOne(ctx, "auto"); !errors.Is(err, ErrNoCreated) {
+		t.Fatalf("repeat submit: %v", err)
+	}
+	draft, err := s.Get(ctx, "draft")
+	if err != nil || draft.State != StateCreated {
+		t.Fatalf("other draft: %+v, %v", draft, err)
+	}
+	other, err := s.SubmitCreated(ctx)
+	if err != nil || len(other.Comments) != 1 || other.Comments[0].ID != "draft" {
+		t.Fatalf("submit drafts: %+v, %v", other, err)
+	}
+}
+
 func TestSubmitGroupsOnlyCreatedAndAbandonReason(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
