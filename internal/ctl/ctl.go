@@ -206,10 +206,12 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--wait|--pending|done <id>|abandon <id> <reason>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--pending|--wait|done <id>|abandon <id> <reason>]")
 	}
 	var req protocol.Request
-	if len(positional) == 1 || (len(positional) == 2 && positional[1] == "--pending") {
+	if len(positional) == 1 {
+		req.Action = protocol.ActionCommentsList
+	} else if len(positional) == 2 && positional[1] == "--pending" {
 		req.Action = protocol.ActionCommentsPending
 	} else if len(positional) == 2 && positional[1] == "--wait" {
 		req.Action = protocol.ActionCommentsWait
@@ -247,7 +249,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 	switch req.Action {
 	case protocol.ActionCommentsWait:
 		value = resp.Batch
-	case protocol.ActionCommentsPending:
+	case protocol.ActionCommentsPending, protocol.ActionCommentsList:
 		value = resp.Comments
 	default:
 		value = resp.Comment
@@ -277,8 +279,9 @@ Commands:
   help      show this help
 
 Comments:
+  comments                    list all unfinished comments as JSON
+  comments --pending          list seen unfinished comments as JSON
   comments --wait             wait for oldest batch; marks comments seen
-  comments [--pending]        list seen unfinished comments as JSON
   comments done <id>          mark a seen comment done
   comments abandon <id> <reason>
 

@@ -164,6 +164,79 @@ func TestNextBatchWaitsUntilSubmit(t *testing.T) {
 	}
 }
 
+func TestListUnfinishedIncludesOpenStatesOnly(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// seen: submit and claim immediately.
+	create(t, s, "seen")
+	if _, err := s.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// done: submit, claim, then finish.
+	create(t, s, "done")
+	if _, err := s.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkDone(ctx, "done"); err != nil {
+		t.Fatal(err)
+	}
+
+	// abandoned: submit, claim, then finish with a reason.
+	create(t, s, "abandoned")
+	if _, err := s.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Abandon(ctx, "abandoned", "not actionable"); err != nil {
+		t.Fatal(err)
+	}
+
+	// submitted: submit and leave unclaimed.
+	create(t, s, "submitted")
+	if _, err := s.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// created: never submitted.
+	create(t, s, "created")
+
+	open, err := s.ListUnfinished(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]State{}
+	for _, c := range open {
+		got[c.ID] = c.State
+	}
+	want := map[string]State{"created": StateCreated, "submitted": StateSubmitted, "seen": StateSeen}
+	if len(got) != len(want) {
+		t.Fatalf("ListUnfinished returned %v, want %v", got, want)
+	}
+	for id, state := range want {
+		if got[id] != state {
+			t.Fatalf("ListUnfinished[%s] = %q, want %q (all: %v)", id, got[id], state, got)
+		}
+	}
+
+	seen, err := s.ListSeenUnfinished(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0].ID != "seen" {
+		t.Fatalf("ListSeenUnfinished = %v, want only seen", seen)
+	}
+}
+
 func TestListAndMissing(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

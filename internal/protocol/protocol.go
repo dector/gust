@@ -13,6 +13,7 @@ const (
 	ActionResume          Action = "resume"
 	ActionLogs            Action = "logs"
 	ActionCommentsWait    Action = "comments_wait"
+	ActionCommentsList    Action = "comments_list"
 	ActionCommentsPending Action = "comments_pending"
 	ActionCommentsDone    Action = "comments_done"
 	ActionCommentsAbandon Action = "comments_abandon"

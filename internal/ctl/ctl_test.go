@@ -113,6 +113,102 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	}
 }
 
+func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	// seen: submit and claim immediately.
+	seen, err := store.Create(ctx, comments.Input{Path: "/seen", Text: "seen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// done: submit, claim, then finish.
+	done, err := store.Create(ctx, comments.Input{Path: "/done", Text: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkDone(ctx, done.ID); err != nil {
+		t.Fatal(err)
+	}
+	// abandoned: submit, claim, then finish with a reason.
+	abandoned, err := store.Create(ctx, comments.Input{Path: "/abandoned", Text: "abandoned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Abandon(ctx, abandoned.ID, "not actionable"); err != nil {
+		t.Fatal(err)
+	}
+	// submitted: submit and leave unclaimed.
+	submitted, err := store.Create(ctx, comments.Input{Path: "/submitted", Text: "submitted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// created: never submitted.
+	created, err := store.Create(ctx, comments.Input{Path: "/created", Text: "created"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := socket.Start(ctx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments")
+	if code != 0 {
+		t.Fatalf("default: code=%d stderr=%q", code, stderr)
+	}
+	for _, want := range []string{created.ID, submitted.ID, seen.ID} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("default output %q missing %s", out, want)
+		}
+	}
+	for _, unwanted := range []string{done.ID, abandoned.ID} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("default output %q includes %s", out, unwanted)
+		}
+	}
+
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--pending")
+	if code != 0 {
+		t.Fatalf("pending: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(out, seen.ID) {
+		t.Fatalf("pending output %q missing %s", out, seen.ID)
+	}
+	for _, unwanted := range []string{created.ID, submitted.ID, done.ID, abandoned.ID} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("pending output %q includes %s", out, unwanted)
+		}
+	}
+}
+
 func TestCommentsWaitCancellationDoesNotClaim(t *testing.T) {
 	store, err := comments.Open()
 	if err != nil {

@@ -21,6 +21,7 @@ Samples:
   gust ctl rerun
   gust ctl resume
   gust ctl logs
+  gust ctl comments
   gust ctl comments --wait
   gust ctl comments --pending
   gust ctl comments done <id>
@@ -29,10 +30,11 @@ Samples:
 
 Comment handoff:
   comments --wait blocks for the oldest submitted batch and marks its
-  comments seen. Output is JSON. comments (or --pending) lists seen,
-  unfinished comments as JSON for recovery. Finish individual seen comments
-  with done or abandon; abandon requires a reason. Comments exist only while
-  the Gust process runs.
+  comments seen. Output is JSON. comments lists all unfinished comments
+  (created, submitted, and seen). comments --pending lists only seen,
+  unfinished comments for recovery after an interrupted agent. Finish
+  individual seen comments with done or abandon; abandon requires a reason.
+  Comments exist only while the Gust process runs.
 
 Typical agent flow:
   gust ctl pause        # stop filesystem-triggered reloads

@@ -228,6 +228,16 @@ func (s *Store) NextBatch(ctx context.Context) (Batch, error) {
 	}
 }
 
+// ListUnfinished returns all non-closed comments (created, submitted, and seen).
+func (s *Store) ListUnfinished(ctx context.Context) ([]Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	return s.queryComments(ctx, `SELECT `+columns+` FROM comments WHERE state IN ('created','submitted','seen') ORDER BY created_at,id`)
+}
+
 // ListSeenUnfinished returns seen comments for recovery after interrupted work.
 func (s *Store) ListSeenUnfinished(ctx context.Context) ([]Comment, error) {
 	s.mu.Lock()

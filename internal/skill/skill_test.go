@@ -23,7 +23,8 @@ Use this workflow when asked to handle comments submitted through Gust's browser
 
 Use the actual control CLI:
 
-- ` + "`gust ctl comments [--pending]`" + ` lists seen, unfinished comments for recovery. ` + "`--pending`" + ` is optional; both forms list the same recoverable work.
+- ` + "`gust ctl comments`" + ` lists all unfinished comments (created, submitted, and seen) as JSON.
+- ` + "`gust ctl comments --pending`" + ` lists only seen, unfinished comments for recovery after an interrupted agent.
 - ` + "`gust ctl comments --wait`" + ` waits for the oldest submitted batch. It returns that batch and atomically marks its comments seen. It does not merge batches.
 - ` + "`gust ctl comments done <id>`" + ` marks one comment done.
 - ` + "`gust ctl comments abandon <id> <reason>`" + ` abandons one comment with a required explanation.

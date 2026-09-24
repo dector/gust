@@ -25,6 +25,7 @@ const socketDirMode = 0o700
 
 type commentStore interface {
 	NextBatch(context.Context) (comments.Batch, error)
+	ListUnfinished(context.Context) ([]comments.Comment, error)
 	ListSeenUnfinished(context.Context) ([]comments.Comment, error)
 	MarkDone(context.Context, string) (comments.Comment, error)
 	Abandon(context.Context, string, string) (comments.Comment, error)
@@ -200,7 +201,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store c
 		s.log.Verbosef("socket request: %s", req.Action)
 	}
 	switch req.Action {
-	case protocol.ActionCommentsWait, protocol.ActionCommentsPending, protocol.ActionCommentsDone, protocol.ActionCommentsAbandon:
+	case protocol.ActionCommentsWait, protocol.ActionCommentsList, protocol.ActionCommentsPending, protocol.ActionCommentsDone, protocol.ActionCommentsAbandon:
 		if store == nil {
 			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrCommentsDisabled})
 			return
@@ -289,6 +290,13 @@ func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol
 			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
 		} else {
 			resp = protocol.Response{OK: true, Batch: batch}
+		}
+	case protocol.ActionCommentsList:
+		cs, err := store.ListUnfinished(ctx)
+		if err != nil {
+			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
+		} else {
+			resp = protocol.Response{OK: true, Comments: cs}
 		}
 	case protocol.ActionCommentsPending:
 		cs, err := store.ListSeenUnfinished(ctx)
