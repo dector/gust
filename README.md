@@ -88,9 +88,10 @@ the HTTPS URL when Serve reports it and warns if exposure fails or exits. An
 exposure failure does not stop the local app; a later successful app restart
 retries it.
 
-The HTTPS port is deterministic for the project directory and exposed port, in the
-high range 49152–65535. If it is already configured in Tailscale, Gust probes
-up to 64 successive ports without overwriting existing Serve settings. The
+The HTTPS port is deterministic for the project directory (independent of the
+local app or proxy port), in the high range 49152–65535. If it is already
+configured in Tailscale, Gust probes up to 64 successive ports without
+overwriting existing Serve settings. The
 same foreground session stays open through app restarts, and Gust closes it on
 shutdown. Occupancy can change the selected port between Gust invocations.
 Tailscale Serve's status check is not atomic with startup: another process

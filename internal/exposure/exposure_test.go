@@ -55,12 +55,32 @@ func await(t *testing.T, cond func() bool) {
 }
 
 func TestCandidateIsStableAndHigh(t *testing.T) {
-	p := candidate("/work/app", 8080, 0)
-	if p < firstPort || p >= 65536 || p != candidate("/work/app", 8080, 0) {
+	p := candidate("/work/app", 0)
+	if p < firstPort || p >= 65536 || p != candidate("/work/app", 0) {
 		t.Fatalf("unstable or invalid candidate: %d", p)
 	}
-	if p == candidate("/work/app", 8080, 1) {
+	if p == candidate("/work/app", 1) {
 		t.Fatal("collision probe reused candidate")
+	}
+}
+
+func TestHTTPSPortIndependentOfLocalPort(t *testing.T) {
+	var selected []tailscale.Config
+	for _, localPort := range []int{8080, 9090} {
+		s := newFakeSession()
+		m := newManager("/work/app", localPort, nil, func(_ context.Context, cfg tailscale.Config) (session, error) {
+			selected = append(selected, cfg)
+			s.url <- "https://example.ts.net"
+			return s, nil
+		})
+		if got := <-m.StartReady(); got != "https://example.ts.net" {
+			t.Fatalf("exposure URL = %q", got)
+		}
+		m.Close()
+	}
+	if len(selected) != 2 || selected[0].HTTPSPort != selected[1].HTTPSPort ||
+		selected[0].LocalAddr != "127.0.0.1:8080" || selected[1].LocalAddr != "127.0.0.1:9090" {
+		t.Fatalf("exposure configs = %+v", selected)
 	}
 }
 
@@ -73,7 +93,7 @@ func TestManagerReuseCollisionAndShutdown(t *testing.T) {
 		mu.Lock()
 		ports = append(ports, cfg.HTTPSPort)
 		mu.Unlock()
-		if cfg.HTTPSPort == candidate("/work/app", 8080, 0) {
+		if cfg.HTTPSPort == candidate("/work/app", 0) {
 			return nil, fmt.Errorf("Tailscale HTTPS port %d is already configured", cfg.HTTPSPort)
 		}
 		if cfg.LocalAddr != "127.0.0.1:8080" || cfg.Action != tailscale.Default || cfg.AllowReplaceExisting {
@@ -88,7 +108,7 @@ func TestManagerReuseCollisionAndShutdown(t *testing.T) {
 	}
 	m.StartReady() // next app readiness must reuse the same foreground session
 	mu.Lock()
-	if len(ports) != 2 || ports[0] != candidate("/work/app", 8080, 0) || ports[1] != candidate("/work/app", 8080, 1) {
+	if len(ports) != 2 || ports[0] != candidate("/work/app", 0) || ports[1] != candidate("/work/app", 1) {
 		t.Errorf("candidate ports: %v", ports)
 	}
 	mu.Unlock()

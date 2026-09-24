@@ -138,7 +138,7 @@ func (m *Manager) open() (session, int, error) {
 		if err := m.ctx.Err(); err != nil {
 			return nil, 0, err
 		}
-		port := candidate(m.root, m.appPort, i)
+		port := candidate(m.root, i)
 		cfg := tailscale.Config{LocalAddr: addr, HTTPSPort: port}
 		s, err := m.start(m.ctx, cfg) // CheckAndStart checks existing Serve config before --yes.
 		if err == nil {
@@ -151,7 +151,7 @@ func (m *Manager) open() (session, int, error) {
 	return nil, 0, errors.New("no free Tailscale HTTPS port among 64 deterministic candidates")
 }
 
-func candidate(root string, appPort, offset int) int {
-	sum := sha256.Sum256([]byte(root + "\x00" + strconv.Itoa(appPort)))
+func candidate(root string, offset int) int {
+	sum := sha256.Sum256([]byte(root))
 	return firstPort + (int(binary.BigEndian.Uint32(sum[:4])%uint32(portCount))+offset)%portCount
 }

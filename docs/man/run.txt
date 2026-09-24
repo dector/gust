@@ -53,7 +53,7 @@ Port selection and app binding are not atomic; another process can take the port
 Tailscale: -T starts Serve after proxy setup, before app readiness checks.
 The proxy port is exposed when enabled;
 otherwise the app port is exposed. The HTTPS port is stable for the
-directory and exposed port unless occupied;
+directory regardless of the local port, unless occupied;
 existing Serve ports are skipped. Exposure stays up across reruns and is
 closed on shutdown. Failures are warnings; the app continues locally.
 
