@@ -25,8 +25,15 @@ The instance socket is derived from the working directory Gust was launched in (
 (cd docs/demo && ../../out/gust ctl comments --wait)
 ```
 
+`comments --wait` listens (blocks) until the oldest submitted batch arrives. It has no built-in duration flag, so the listening duration is whatever timeout your command runner applies. Always listen for up to 30 minutes (1800 seconds); never use a short timeout. Set that timeout on the invocation:
+
+- If your runner or tool has a timeout parameter, pass `1800` seconds for the `comments --wait` call.
+- In a shell, cap the call with `timeout`: `(cd docs/demo && timeout 1800 ../../out/gust ctl comments --wait)`.
+
+The 1800 seconds is how long the command listens, not a deadline for a comment to exist. When the timeout fires, the listening window simply ends; run `comments --wait` again to keep listening.
+
 1. Start by reading `--pending` to recover seen-but-unfinished comments from interrupted work. Also list all unfinished comments with `comments`; include created comments, which have not been submitted yet, in your awareness.
-2. Call `comments --wait` to receive the oldest submitted batch. It returns JSON and marks that batch seen. Read every comment's ID, text, page path, and captured element HTML. Save the complete batch in your working context before changing any watched files. If the command fails, check whether Gust is running and whether you are in `docs/demo`; do not silently discard the comments.
+2. Call `comments --wait` with an 1800-second (30-minute) listening window to receive the oldest submitted batch. It returns JSON and marks that batch seen. Read every comment's ID, text, page path, and captured element HTML. Save the complete batch in your working context before changing any watched files. If the command fails, check whether Gust is running and whether you are in `docs/demo`; do not silently discard the comments.
 3. If there are multiple submitted batches, receive each one before dispatching changes to Gust source. Comment data is in memory and will be lost on a Gust restart.
 4. If `out/gust` does not exist yet, wait for the `ror dev:self` supervisor to perform its initial build. Do not launch a second Gust instance or replace the binary manually while a session is active.
 
@@ -61,4 +68,4 @@ If a comment cannot or should not be implemented, explain why to the user and re
 (cd docs/demo && ../../out/gust ctl comments abandon <id> "<reason>")
 ```
 
-Never mark a comment done just because it was read. If the user is still actively using the comment panel, keep receiving submitted batches with `comments --wait` until they ask you to stop; before every new wait, ensure the previous batch is implemented or explicitly left pending with the user informed.
+Never mark a comment done just because it was read. If the user is still actively using the comment panel, keep receiving submitted batches with `comments --wait`, listening up to 30 minutes (1800 seconds) per call, until they ask you to stop; before every new wait, ensure the previous batch is implemented or explicitly left pending with the user informed.
