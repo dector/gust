@@ -1067,6 +1067,7 @@ func TestBrowserCommentsAPIRejectsInvalidRequests(t *testing.T) {
 		{"invalid json", "/__gust/comments", `{`, "", 400},
 		{"invalid path", "/__gust/comments", `{"path":"https://bad","text":"x","locator":"x"}`, "", 400},
 		{"empty text", "/__gust/comments", `{"path":"/","text":" ","locator":"x"}`, "", 400},
+		{"control char text", "/__gust/comments", `{"path":"/","text":"x\u0007y","locator":"x"}`, "", 400},
 		{"text limit", "/__gust/comments", `{"path":"/","text":"` + strings.Repeat("x", 8193) + `","locator":"x"}`, "", 400},
 		{"html limit", "/__gust/comments", `{"path":"/","text":"x","html":"` + strings.Repeat("x", 32769) + `","locator":"x"}`, "", 400},
 		{"locator limit", "/__gust/comments", `{"path":"/","text":"x","locator":"` + strings.Repeat("x", 8193) + `"}`, "", 400},
@@ -1118,6 +1119,47 @@ func TestBrowserCommentsAPIRejectsInvalidRequests(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("unknown reserved path status=%d", resp.StatusCode)
+	}
+}
+
+func TestBrowserCommentsAPIAcceptsMultilineText(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server.SetCommentStore(store)
+
+	text := "First line.\nSecond line.\n\tIndented bullet."
+	body, err := json.Marshal(map[string]string{"path": "/", "text": text, "html": "<p>x</p>", "locator": "#x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, proxyURL+"/__gust/comments", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", proxyURL)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create status=%d: %s", resp.StatusCode, b)
+	}
+	var created comments.Comment
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Text != text {
+		t.Fatalf("text = %q, want %q", created.Text, text)
 	}
 }
 

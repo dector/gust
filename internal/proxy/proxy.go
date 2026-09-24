@@ -877,7 +877,7 @@ function createCommentUI(){
     if(!el||!text){result.textContent="Choose an element and enter a comment.";return;}
     save.disabled=true;result.textContent="Saving…";
     fetch("/__gust/comments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:location.pathname, text:text, locator:locatorFor(el,selectedPoint), html:safeOuterHTML(el)})})
-      .then(function(r){if(!r.ok)throw new Error("Request failed ("+r.status+")");return r.json();})
+      .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
       .then(function(comment){textarea.value="";result.textContent="Draft saved.";refreshComments();resumeSelection();
         if(!auto.checked)return;
         submitResult.textContent="Submitting…";

@@ -93,7 +93,7 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(in.Text) == "" || len(in.Text) > 8192 || hasControl(in.Text) {
-		writeAPIError(w, 400, "invalid_text", "text must be non-empty and at most 8192 bytes")
+		writeAPIError(w, 400, "invalid_text", "text must be non-empty, at most 8192 bytes, and free of control characters")
 		return
 	}
 	if len(in.HTML) > 32768 || len(in.Locator) == 0 || len(in.Locator) > 8192 {
@@ -220,8 +220,14 @@ func validPath(path string) bool {
 	}
 	return true
 }
+
+// hasControl reports whether s contains a control character other than the
+// newlines and tabs that are valid inside a multi-line comment.
 func hasControl(s string) bool {
 	for _, r := range s {
+		if r == '\n' || r == '\r' || r == '\t' {
+			continue
+		}
 		if unicode.IsControl(r) {
 			return true
 		}
