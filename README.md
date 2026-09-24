@@ -106,6 +106,16 @@ Comment commands emit stable JSON. `comments --wait` blocks until the oldest sub
 
 A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
 
+## Agent skill
+
+Print the Gust comments agent skill, including its YAML frontmatter, with
+`gust skill comments`. Redirect it to the skill location used by your agent, for
+example:
+
+```sh
+gust skill comments > ~/.pi/agent/skills/gust-comments/SKILL.md
+```
+
 ## Manual
 
 Run `gust man` for a brief manual with samples. `gust man run` covers the
