@@ -26,6 +26,9 @@ var actions = map[string]protocol.Action{
 
 // Run executes a `gust ctl` invocation and returns a process exit code.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if code, handled := runComments(ctx, args, stdout, stderr); handled {
+		return code
+	}
 	socketPath, verb, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "gust ctl: %v\n\n", err)
@@ -49,7 +52,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	resp, err := call(ctx, socketPath, action)
+	resp, err := call(ctx, socketPath, protocol.Request{Action: action}, dialTimeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "gust ctl: %v\n", err)
 		return 1
@@ -95,20 +98,35 @@ func parseArgs(args []string) (socketPath, verb string, err error) {
 	return socketPath, verb, nil
 }
 
-func call(ctx context.Context, path string, action protocol.Action) (protocol.Response, error) {
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	defer cancel()
-
+func call(ctx context.Context, path string, req protocol.Request, timeout time.Duration) (protocol.Response, error) {
+	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
+	defer cancelDial()
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", path)
+	conn, err := dialer.DialContext(dialCtx, "unix", path)
 	if err != nil {
 		return protocol.Response{}, fmt.Errorf("cannot reach gust at %s: %w", path, err)
 	}
 	defer conn.Close()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	if timeout == 0 {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = conn.Close()
+			case <-done:
+			}
+		}()
+	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	if err := json.NewEncoder(conn).Encode(protocol.Request{Action: action}); err != nil {
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return protocol.Response{}, err
 	}
 	var resp protocol.Response
@@ -161,6 +179,88 @@ func printResponse(w io.Writer, verb string, resp protocol.Response) {
 	}
 }
 
+func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (int, bool) {
+	var positional []string
+	socketPath := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-S" || a == "--socket":
+			if i+1 >= len(args) || args[i+1] == "" {
+				fmt.Fprintf(stderr, "gust ctl: %s requires a path\n", a)
+				return 2, true
+			}
+			socketPath = args[i+1]
+			i++
+		case strings.HasPrefix(a, "-S=") || strings.HasPrefix(a, "--socket="):
+			socketPath = a[strings.Index(a, "=")+1:]
+			if socketPath == "" {
+				fmt.Fprintf(stderr, "gust ctl: %s requires a path\n", a)
+				return 2, true
+			}
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) == 0 || positional[0] != "comments" {
+		return 0, false
+	}
+	usage := func() {
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--wait|--pending|done <id>|abandon <id> <reason>]")
+	}
+	var req protocol.Request
+	if len(positional) == 1 || (len(positional) == 2 && positional[1] == "--pending") {
+		req.Action = protocol.ActionCommentsPending
+	} else if len(positional) == 2 && positional[1] == "--wait" {
+		req.Action = protocol.ActionCommentsWait
+	} else if len(positional) == 3 && positional[1] == "done" && positional[2] != "" {
+		req.Action, req.ID = protocol.ActionCommentsDone, positional[2]
+	} else if len(positional) == 4 && positional[1] == "abandon" && positional[2] != "" && positional[3] != "" {
+		req.Action, req.ID, req.Reason = protocol.ActionCommentsAbandon, positional[2], positional[3]
+	} else {
+		fmt.Fprintln(stderr, "gust ctl: invalid comments command")
+		usage()
+		return 2, true
+	}
+	if socketPath == "" {
+		var err error
+		socketPath, err = socket.Path("")
+		if err != nil {
+			fmt.Fprintf(stderr, "gust ctl: %v\n", err)
+			return 1, true
+		}
+	}
+	timeout := dialTimeout
+	if req.Action == protocol.ActionCommentsWait {
+		timeout = 0
+	}
+	resp, err := call(ctx, socketPath, req, timeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "gust ctl: %v\n", err)
+		return 1, true
+	}
+	if !resp.OK {
+		fmt.Fprintf(stderr, "gust ctl: %s\n", resp.Error)
+		return 1, true
+	}
+	var value any
+	switch req.Action {
+	case protocol.ActionCommentsWait:
+		value = resp.Batch
+	case protocol.ActionCommentsPending:
+		value = resp.Comments
+	default:
+		value = resp.Comment
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(value); err != nil {
+		fmt.Fprintf(stderr, "gust ctl: %v\n", err)
+		return 1, true
+	}
+	return 0, true
+}
+
 func printHelp(w io.Writer) {
 	fmt.Fprint(w, `gust ctl - control a running Gust instance
 
@@ -173,7 +273,14 @@ Commands:
   resume    resume filesystem auto-reload
   rerun     reload now (works while paused)
   logs      show output captured from the last failed exit
+  comments  wait for, recover, or finish submitted comments
   help      show this help
+
+Comments:
+  comments --wait             wait for oldest batch; marks comments seen
+  comments [--pending]        list seen unfinished comments as JSON
+  comments done <id>          mark a seen comment done
+  comments abandon <id> <reason>
 
 Discovery:
   Without -S, the socket path is derived from the current directory.

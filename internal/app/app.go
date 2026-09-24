@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/dector/gust/internal/cli"
+	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/ctl"
 	"github.com/dector/gust/internal/exposure"
@@ -77,7 +78,12 @@ func Run(ctx context.Context, args []string) error {
 		tailscaleURLReady = expose.StartReady()
 	}
 
-	socketServer, err := socket.Start(serviceCtx, cfg, log, coord)
+	commentStore, err := comments.Open()
+	if err != nil {
+		return err
+	}
+	defer commentStore.Close()
+	socketServer, err := socket.Start(serviceCtx, cfg, log, coord, commentStore)
 	if err != nil {
 		return err
 	}

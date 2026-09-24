@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
@@ -21,6 +22,13 @@ import (
 )
 
 const socketDirMode = 0o700
+
+type commentStore interface {
+	NextBatch(context.Context) (comments.Batch, error)
+	ListSeenUnfinished(context.Context) ([]comments.Comment, error)
+	MarkDone(context.Context, string) (comments.Comment, error)
+	Abandon(context.Context, string, string) (comments.Comment, error)
+}
 
 type control interface {
 	Trigger(coordinator.TriggerSource, string) bool
@@ -40,7 +48,7 @@ type Server struct {
 }
 
 // Start creates and serves Gust's local control socket.
-func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl control) (*Server, error) {
+func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl control, stores ...commentStore) (*Server, error) {
 	path, err := Path(cfg.Root)
 	if err != nil {
 		return nil, err
@@ -57,7 +65,11 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl contr
 		<-ctx.Done()
 		s.Close()
 	}()
-	go s.serve(ctx, ctl)
+	var store commentStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	go s.serve(ctx, ctl, store)
 	return s, nil
 }
 
@@ -155,7 +167,7 @@ func prepareSocket(path string) error {
 	return nil
 }
 
-func (s *Server) serve(ctx context.Context, ctl control) {
+func (s *Server) serve(ctx context.Context, ctl control, store commentStore) {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
@@ -167,11 +179,11 @@ func (s *Server) serve(ctx context.Context, ctl control) {
 			}
 			continue
 		}
-		go s.handle(ctx, conn, ctl)
+		go s.handle(ctx, conn, ctl, store)
 	}
 }
 
-func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
+func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store commentStore) {
 	defer conn.Close()
 	enc := json.NewEncoder(conn)
 	if ctx.Err() != nil {
@@ -188,6 +200,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
 		s.log.Verbosef("socket request: %s", req.Action)
 	}
 	switch req.Action {
+	case protocol.ActionCommentsWait, protocol.ActionCommentsPending, protocol.ActionCommentsDone, protocol.ActionCommentsAbandon:
+		s.handleComments(ctx, conn, req, store)
 	case protocol.ActionRerun:
 		if !ctl.Trigger(coordinator.TriggerAgent, "socket") {
 			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
@@ -246,6 +260,66 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control) {
 		})
 	default:
 		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
+	}
+}
+
+func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol.Request, store commentStore) {
+	enc := json.NewEncoder(conn)
+	if store == nil {
+		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
+		return
+	}
+	var resp protocol.Response
+	switch req.Action {
+	case protocol.ActionCommentsWait:
+		waitCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// Detect a disconnected client while NextBatch is blocked. Closing the
+		// connection on return also releases this reader goroutine.
+		go func() {
+			var b [1]byte
+			_, _ = conn.Read(b[:])
+			cancel()
+		}()
+		batch, err := store.NextBatch(waitCtx)
+		if err != nil {
+			if waitCtx.Err() != nil {
+				return
+			}
+			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
+		} else {
+			resp = protocol.Response{OK: true, Batch: batch}
+		}
+	case protocol.ActionCommentsPending:
+		cs, err := store.ListSeenUnfinished(ctx)
+		if err != nil {
+			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
+		} else {
+			resp = protocol.Response{OK: true, Comments: cs}
+		}
+	case protocol.ActionCommentsDone:
+		c, err := store.MarkDone(ctx, req.ID)
+		resp = commentMutationResponse(c, err)
+	case protocol.ActionCommentsAbandon:
+		c, err := store.Abandon(ctx, req.ID, req.Reason)
+		resp = commentMutationResponse(c, err)
+	}
+	_ = enc.Encode(resp)
+}
+
+func commentMutationResponse(c comments.Comment, err error) protocol.Response {
+	switch {
+	case err == nil:
+		return protocol.Response{OK: true, Comment: c}
+	case errors.Is(err, comments.ErrNotFound):
+		return protocol.Response{OK: false, Error: protocol.ErrCommentNotFound}
+	case errors.Is(err, comments.ErrInvalidState):
+		return protocol.Response{OK: false, Error: protocol.ErrCommentInvalidState}
+	default:
+		if err.Error() == "abandon reason is required" {
+			return protocol.Response{OK: false, Error: protocol.ErrCommentReasonRequired}
+		}
+		return protocol.Response{OK: false, Error: protocol.ErrCommentStore}
 	}
 }
 

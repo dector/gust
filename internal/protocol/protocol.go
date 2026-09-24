@@ -7,11 +7,15 @@ package protocol
 type Action string
 
 const (
-	ActionRerun  Action = "rerun"
-	ActionStatus Action = "status"
-	ActionPause  Action = "pause"
-	ActionResume Action = "resume"
-	ActionLogs   Action = "logs"
+	ActionRerun           Action = "rerun"
+	ActionStatus          Action = "status"
+	ActionPause           Action = "pause"
+	ActionResume          Action = "resume"
+	ActionLogs            Action = "logs"
+	ActionCommentsWait    Action = "comments_wait"
+	ActionCommentsPending Action = "comments_pending"
+	ActionCommentsDone    Action = "comments_done"
+	ActionCommentsAbandon Action = "comments_abandon"
 )
 
 // Auto-reload states returned in Response.AutoReload.
@@ -22,14 +26,20 @@ const (
 
 // Error codes returned in Response.Error.
 const (
-	ErrInvalidRequest = "invalid_request"
-	ErrShuttingDown   = "shutting_down"
-	ErrNoFailureLogs  = "no_failure_logs"
+	ErrInvalidRequest        = "invalid_request"
+	ErrShuttingDown          = "shutting_down"
+	ErrNoFailureLogs         = "no_failure_logs"
+	ErrCommentStore          = "comment_store_error"
+	ErrCommentNotFound       = "comment_not_found"
+	ErrCommentInvalidState   = "invalid_comment_state"
+	ErrCommentReasonRequired = "reason_required"
 )
 
 // Request is a single control request sent over the socket.
 type Request struct {
 	Action Action `json:"action"`
+	ID     string `json:"id,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // ExitSummary describes the most recent application process exit.
@@ -60,4 +70,9 @@ type Response struct {
 	Command string `json:"command,omitempty"`
 	Stdout  string `json:"stdout,omitempty"`
 	Stderr  string `json:"stderr,omitempty"`
+
+	// Fields for comment handoff actions.
+	Batch    any `json:"batch,omitempty"`
+	Comments any `json:"comments,omitempty"`
+	Comment  any `json:"comment,omitempty"`
 }

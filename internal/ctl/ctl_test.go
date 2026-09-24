@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/socket"
@@ -58,6 +59,92 @@ func runCtl(t *testing.T, args ...string) (int, string, string) {
 	var out, errOut bytes.Buffer
 	code := Run(context.Background(), args, &out, &errOut)
 	return code, out.String(), errOut.String()
+}
+
+func TestCommentsCommandsAndRecovery(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	c1, err := store.Create(ctx, comments.Input{Path: "/", Text: "fix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := store.Create(ctx, comments.Input{Path: "/two", Text: "also"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store.SubmitCreated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeControl{}
+	serverCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	server, err := socket.Start(serverCtx, config.Config{Root: t.TempDir()}, nil, fake, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait")
+	if code != 0 {
+		t.Fatalf("wait: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(out, `"id":"`+batch.ID+`"`) || !strings.Contains(out, `"state":"seen"`) {
+		t.Fatalf("batch JSON: %s", out)
+	}
+	code, out, stderr = runCtl(t, "comments", "-S", server.Path(), "--pending")
+	if code != 0 {
+		t.Fatalf("pending: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(out, c1.ID) || !strings.Contains(out, c2.ID) {
+		t.Fatalf("pending output: %s", out)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "done", c1.ID)
+	if code != 0 || !strings.Contains(out, `"state":"done"`) {
+		t.Fatalf("done: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "abandon", c2.ID, "not actionable")
+	if code != 0 || !strings.Contains(out, `"reason":"not actionable"`) {
+		t.Fatalf("abandon: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+}
+
+func TestCommentsWaitCancellationDoesNotClaim(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	_, _ = store.Create(ctx, comments.Input{Path: "/", Text: "pending"})
+	_, _ = store.SubmitCreated(ctx)
+	serverCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	server, err := socket.Start(serverCtx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	waitCtx, cancel := context.WithCancel(ctx)
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(waitCtx, []string{"-S", server.Path(), "comments", "--wait"}, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("wait did not cancel")
+	}
+	list, err := store.List(ctx, comments.StateSubmitted)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("submitted comments=%d err=%v", len(list), err)
+	}
 }
 
 func TestHelp(t *testing.T) {

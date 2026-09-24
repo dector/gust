@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 )
@@ -64,6 +65,35 @@ func (f *fakeControl) Logs(context.Context) (coordinator.Logs, error) {
 		return coordinator.Logs{}, coordinator.ErrNoLogs
 	}
 	return f.logs, nil
+}
+
+func TestCommentsProtocolAndStateErrors(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.Create(ctx, comments.Input{Path: "/", Text: "comment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := Start(ctx, config.Config{Root: root}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	response := requestJSON(t, server.path, map[string]string{"action": "comments_done", "id": created.ID})
+	if response["ok"] != false || response["error"] != "invalid_comment_state" {
+		t.Fatalf("done-before-seen response: %v", response)
+	}
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_abandon", "id": "missing", "reason": "x"})
+	if response["ok"] != false || response["error"] != "comment_not_found" {
+		t.Fatalf("missing comment response: %v", response)
+	}
 }
 
 func TestStatusRequest(t *testing.T) {

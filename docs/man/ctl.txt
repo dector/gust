@@ -9,6 +9,7 @@ Commands:
   resume    resume filesystem auto-reload
   rerun     reload now (works while paused)
   logs      show output captured from the last failed exit
+  comments  wait for, recover, or finish submitted comments
   help      show the ctl help
 
 Discovery:
@@ -20,7 +21,18 @@ Samples:
   gust ctl rerun
   gust ctl resume
   gust ctl logs
+  gust ctl comments --wait
+  gust ctl comments --pending
+  gust ctl comments done <id>
+  gust ctl comments abandon <id> <reason>
   gust ctl -S /tmp/gust-1000/abc.sock status
+
+Comment handoff:
+  comments --wait blocks for the oldest submitted batch and marks its
+  comments seen. Output is JSON. comments (or --pending) lists seen,
+  unfinished comments as JSON for recovery. Finish individual seen comments
+  with done or abandon; abandon requires a reason. Comments exist only while
+  the Gust process runs.
 
 Typical agent flow:
   gust ctl pause        # stop filesystem-triggered reloads

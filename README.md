@@ -93,10 +93,16 @@ gust ctl pause    # pause filesystem auto-reload
 gust ctl rerun    # reload now (works while paused)
 gust ctl resume   # resume auto-reload
 gust ctl logs     # output captured from the last failed exit
+gust ctl comments --wait           # wait for oldest submitted comment batch
+gust ctl comments --pending        # recover seen unfinished comments
+gust ctl comments done <id>
+gust ctl comments abandon <id> <reason>
 gust ctl help
 ```
 
 `gust ctl` finds the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
+
+Comment commands emit stable JSON. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` or `comments --pending` lists seen-but-unfinished comments for recovery. Mark each comment `done` or `abandon` it with a reason. Comment data is in-memory and is lost when Gust exits.
 
 A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
 
