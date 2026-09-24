@@ -108,6 +108,40 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
+func (s *Server) serveCommentDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use DELETE")
+		return
+	}
+	if !sameOrigin(w, r) {
+		return
+	}
+	if s.comments == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "comments_unavailable", "comments are unavailable")
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/__gust/comments/")
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		writeAPIError(w, http.StatusNotFound, "comment_not_found", "comment not found")
+		return
+	}
+	err := s.comments.DeleteDraft(r.Context(), id)
+	if errors.Is(err, comments.ErrNotFound) {
+		writeAPIError(w, http.StatusNotFound, "comment_not_found", "comment not found")
+		return
+	}
+	if errors.Is(err, comments.ErrInvalidState) {
+		writeAPIError(w, http.StatusConflict, "not_a_draft", "only drafts can be removed")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not remove draft")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) serveCommentSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")

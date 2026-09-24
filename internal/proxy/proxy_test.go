@@ -578,6 +578,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true)`,
 		`function closeCommentMode()`,
 		`function meaningfulPath(`,
+		`for (let n = el; n && path.length < 12; n = n.parentElement)`,
+		`if(el===document.body||el===document.documentElement)selector=tag`,
 		`return {path:path, guessedIndex:Math.max(0,path.indexOf(guess))}`,
 		`function updateHoverPath(target){`,
 		`const commentIconSvg='<svg`,
@@ -595,7 +597,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`#__gust_comments [data-crumbs]{`,
 		`max-height:2.8em`,
 		`document.documentElement.classList.toggle("__gust_selecting",selecting)`,
-		`html.__gust_selecting,html.__gust_selecting *{cursor:pointer!important}`,
+		`const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))`,
+		`html.__gust_selecting,html.__gust_selecting *{cursor:"+commentCursor+"!important}`,
 		`html.__gust_selecting [data-gust-overlay]`,
 		`function currentTargetEl()`,
 		`function resumeSelection(){`,
@@ -604,7 +607,13 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		"renderCommentState();\n  updateCommentUI();",
 		`document.addEventListener("click"`,
 		`e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();`,
-		`chooseSelection();`,
+		`chooseSelection(e);`,
+		`selectedPoint=r.width>0&&r.height>0?`,
+		`locator:locatorFor(el,selectedPoint)`,
+		`const x=p&&Number.isFinite(p.x)`,
+		`const y=p&&Number.isFinite(p.y)`,
+		`new ResizeObserver(schedulePinReposition)`,
+		`if(pinSizeObserver)pinSizeObserver.observe(el)`,
 		`window.addEventListener("scroll",schedulePinReposition,true)`,
 		`window.addEventListener("resize",schedulePinReposition)`,
 		`requestAnimationFrame(function(){pinPositionFrame=0;repositionPins();})`,
@@ -628,9 +637,16 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`selecting=loadCommentMode(); createCommentUI()`,
 		`setHighlight(null);saveCommentMode();updateCommentUI();`,
 		`/__gust/comments/submit?id=`,
-		`commentState.slice().reverse().filter(c=>c.state!=="done")`,
-		`summary.textContent="… and "+done+" done"`,
+		`commentState.slice().reverse().filter(c=>c.state!=="done"&&c.state!=="abandoned")`,
+		`summary.textContent="… and "+finished+" done or abandoned"`,
+		`remove.setAttribute("aria-label","Remove draft")`,
+		`method:"DELETE"`,
+		`close.addEventListener("click",function(){textarea.value="";result.textContent="";resumeSelection();})`,
 		`seen:"In progress"`,
+		`if(c.state==="seen"){const spinner=document.createElement("span")`,
+		`spinner.setAttribute("aria-hidden","true")`,
+		`animation:__gust_comment_spin .9s linear infinite`,
+		`prefers-reduced-motion:reduce`,
 		`editor.append(close,textarea,save,result)`,
 		`function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}`,
 		`replace(/\s+/g," ")`,
@@ -881,6 +897,56 @@ func TestBrowserAutosubmitOnlyTargetsSavedComment(t *testing.T) {
 	draft, err := store.Get(context.Background(), other.ID)
 	if err != nil || draft.State != comments.StateCreated {
 		t.Fatalf("unrelated draft: %+v, %v", draft, err)
+	}
+}
+
+func TestBrowserDeleteDraft(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server.SetCommentStore(store)
+	draft, err := store.Create(context.Background(), comments.Input{Path: "/", Text: "draft", Locator: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := store.Create(context.Background(), comments.Input{Path: "/", Text: "sent", Locator: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitOne(context.Background(), submitted.ID); err != nil {
+		t.Fatal(err)
+	}
+	remove := func(id, origin string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodDelete, proxyURL+"/__gust/comments/"+id, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", origin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := remove(draft.ID, "http://attacker.invalid"); got != 403 {
+		t.Fatalf("cross-origin delete: %d", got)
+	}
+	if got := remove(submitted.ID, proxyURL); got != 409 {
+		t.Fatalf("submitted delete: %d", got)
+	}
+	if got := remove(draft.ID, proxyURL); got != 204 {
+		t.Fatalf("draft delete: %d", got)
+	}
+	if got := remove(draft.ID, proxyURL); got != 404 {
+		t.Fatalf("repeated delete: %d", got)
 	}
 }
 

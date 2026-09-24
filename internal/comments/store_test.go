@@ -68,6 +68,31 @@ func TestCreateSubmitAndTransitions(t *testing.T) {
 	}
 }
 
+func TestDeleteDraft(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "draft")
+	create(t, s, "submitted")
+	if _, err := s.SubmitOne(ctx, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDraft(ctx, "submitted"); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("delete submitted: %v", err)
+	}
+	if err := s.DeleteDraft(ctx, "draft"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(ctx, "draft"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("draft still present: %v", err)
+	}
+	if err := s.DeleteDraft(ctx, "draft"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete missing: %v", err)
+	}
+	if _, err := s.Get(ctx, "submitted"); err != nil {
+		t.Fatalf("submitted comment removed: %v", err)
+	}
+}
+
 func TestSubmitOneLeavesOtherDrafts(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

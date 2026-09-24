@@ -165,6 +165,30 @@ func (s *Store) List(ctx context.Context, state State) ([]Comment, error) {
 	return s.queryComments(ctx, query, args...)
 }
 
+// DeleteDraft removes only a created comment. Submitted work cannot be deleted here.
+func (s *Store) DeleteDraft(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM comments WHERE id=? AND state='created'`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := s.getLocked(ctx, id); err != nil {
+			return err
+		}
+		return ErrInvalidState
+	}
+	return nil
+}
+
 // SubmitCreated atomically groups all created comments into a newly submitted batch.
 func (s *Store) SubmitCreated(ctx context.Context) (Batch, error) {
 	return s.submit(ctx, "")
