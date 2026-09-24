@@ -959,12 +959,22 @@ function scheduleWind(immediate){
     if(!windEnabled||windMotion.matches||document.hidden)return;
     windOverlay=document.createElement("div");windOverlay.id="__gust_wind";
     windOverlay.setAttribute("aria-hidden","true");windOverlay.dataset.gustOverlay="";
-    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"><path d="M-100 190 C180 60 300 320 580 170 S950 90 1300 130"/><path d="M-100 440 C180 300 340 540 620 390 S960 300 1300 420"/><path d="M-100 680 C180 560 380 730 680 580 S990 510 1300 610"/></svg><i></i><i></i><i></i>';
+    windOverlay.innerHTML='<svg viewBox="0 0 1200 800" preserveAspectRatio="none" aria-hidden="true"><path/></svg><i></i><i></i><i></i>';
+    // A single stream at a new height and phase each time avoids parallel, repeating lines.
+    const y=160+Math.random()*480;
+    const path=windOverlay.querySelector("path");
+    path.setAttribute("d","M-100 "+y+" C180 "+(y-140)+" 340 "+(y+100)+" 620 "+(y-50)+" S960 "+(y-140)+" 1300 "+(y-20));
+    path.style.animationDelay="-"+(Math.random()*9)+"s";
+    windOverlay.querySelectorAll("i").forEach(function(spark){
+      spark.style.top=(10+Math.random()*80)+"%%";
+      spark.style.left=(5+Math.random()*30)+"%%";
+      spark.style.animationDelay="-"+(Math.random()*12)+"s";
+    });
     const duration=5000+Math.random()*2000;
     windOverlay.style.setProperty("--gust-wind-duration",duration+"ms");
     document.documentElement.appendChild(windOverlay);
     windTimer=setTimeout(function(){clearWind();scheduleWind();},duration);
-  },immediate?0:12000+Math.random()*18000);
+  },immediate?0:3000+Math.random()*4000);
 }
 function setWind(enabled){
   windEnabled=enabled;
@@ -1043,7 +1053,7 @@ function mountIcon(){
 #__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}
 #__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
 #__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}
-#__gust_panel{top:36px;color-scheme:dark;background:linear-gradient(135deg,#352416,#24180f);color:#fff7e9;border-color:#f9bb7155;box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
+#__gust_panel{top:36px;color-scheme:dark;background:#ffffff0d;color:#fff7e9;border:1px solid #ffffff24;border-radius:1.2rem;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
 #__gust_panel .__gust_label,#__gust_panel .__gust_log summary{color:#e0cfba}
 #__gust_panel .__gust_group{border-color:#f9bb7155;background:#49301cbb}
 #__gust_panel .__gust_group_title,#__gust_panel .__gust_notice{color:#ffca81}
@@ -1054,13 +1064,8 @@ function mountIcon(){
 #__gust_wind{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;z-index:2147483645;opacity:.65;animation:__gust_wind_fade var(--gust-wind-duration) ease-in-out both}
 #__gust_wind *{pointer-events:none!important}
 #__gust_wind svg{position:absolute;width:100%%;height:100%%;opacity:.65}
-#__gust_wind path{fill:none;stroke:#f9bb71;stroke-width:2;stroke-linecap:round;stroke-dasharray:180 1100;animation:__gust_wind_stream var(--gust-wind-duration) linear both}
-#__gust_wind path:nth-child(2){animation-delay:.25s}
-#__gust_wind path:nth-child(3){animation-delay:.5s}
-#__gust_wind i{position:absolute;width:5px;height:5px;border-radius:50%%;background:#fbd18e;box-shadow:0 0 20px #ed9a50;animation:__gust_wind_drift var(--gust-wind-duration) linear both}
-#__gust_wind i:nth-of-type(1){top:23%%;left:12%%}
-#__gust_wind i:nth-of-type(2){top:65%%;left:25%%;animation-delay:.3s}
-#__gust_wind i:nth-of-type(3){top:42%%;left:8%%;animation-delay:.6s}
+#__gust_wind path{fill:none;stroke:#f9bb71;stroke-width:2;stroke-linecap:round;stroke-dasharray:180 1100;animation:__gust_wind_stream 9s linear infinite}
+#__gust_wind i{position:absolute;width:5px;height:5px;border-radius:50%%;background:#fbd18e;box-shadow:0 0 20px #ed9a50;animation:__gust_wind_drift 12s linear infinite}
 @keyframes __gust_wind_fade{0%%,100%%{opacity:0}15%%,80%%{opacity:.65}}
 @keyframes __gust_wind_stream{from{stroke-dashoffset:1280}to{stroke-dashoffset:0}}
 @keyframes __gust_wind_drift{from{transform:translate(-15vw,6vh);opacity:0}15%%,85%%{opacity:1}to{transform:translate(95vw,-8vh);opacity:0}}
