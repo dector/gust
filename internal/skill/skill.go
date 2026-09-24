@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const usage = "Usage: gust skill comments\n       gust skill comments run\n       gust skill comment watch\n       gust skill --help\n"
+const usage = "Usage: gust skill comments\n       gust skill comments run\n       gust skill comments watch\n       gust skill --help\n"
 
 var commentsSkill = strings.ReplaceAll(`---
 name: gust-comments
@@ -20,6 +20,8 @@ Use this workflow when asked to handle comments submitted through Gust's browser
 
 ## CLI and recovery
 
+In a Go project using Gust as a Go tool, use go tool gust instead of gust for every command below (for example, go tool gust ctl comments --pending). Otherwise use gust on PATH. Run control commands from the directory where Gust was launched; its socket is derived from that directory. Use the same invocation consistently.
+
 Use the actual control CLI:
 
 - gust ctl comments lists all unfinished comments (created, submitted, and seen) as JSON.
@@ -30,7 +32,7 @@ Use the actual control CLI:
 
 If the instance is not discoverable from the current directory, add -S <socket> after ctl, for example gust ctl -S /path/to/gust.sock comments --pending.
 
-Always check for seen unfinished comments with gust ctl comments --pending before waiting for new work. This recovers comments already marked seen by an interrupted agent. Work through recovered comments, then handle submitted batches with gust ctl comments --wait when there is new work. For continuous monitoring, use gust skill comment watch.
+Always check for seen unfinished comments with gust ctl comments --pending before waiting for new work. This recovers comments already marked seen by an interrupted agent. Work through recovered comments, then handle submitted batches with gust ctl comments --wait when there is new work. For continuous monitoring, use gust skill comments watch.
 
 ## Processing each comment
 
@@ -54,6 +56,8 @@ description: Continuously receive and handle submitted Gust element comments unt
 ---
 
 # Watch Gust comments
+
+In a Go project using Gust as a Go tool, use go tool gust instead of gust for every command below (for example, go tool gust ctl comments --wait). Otherwise use gust on PATH. Run control commands from the directory where Gust was launched; its socket is derived from that directory. Use the same invocation consistently.
 
 Use this when asked to watch or monitor comments. Start immediately; do not ask for setup instructions if the Gust instance is reachable. Only submitted comments reach the wait command. Browser autosubmit is on by default; drafts saved with it off need a manual **Submit**. Comments are lost when Gust exits.
 
@@ -79,7 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if (len(args) == 2 && args[0] == "comments" && isHelp(args[1])) ||
 		(len(args) == 3 && args[0] == "comments" && args[1] == "run" && isHelp(args[2])) ||
-		(len(args) == 3 && args[0] == "comment" && args[1] == "watch" && isHelp(args[2])) {
+		(len(args) == 3 && (args[0] == "comments" || args[0] == "comment") && args[1] == "watch" && isHelp(args[2])) {
 		_, _ = io.WriteString(stdout, usage)
 		return 0
 	}
@@ -87,7 +91,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		_, _ = io.WriteString(stdout, commentsRunPrompt)
 		return 0
 	}
-	if len(args) == 2 && args[0] == "comment" && args[1] == "watch" {
+	// Keep the singular form as a compatibility alias.
+	if len(args) == 2 && (args[0] == "comments" || args[0] == "comment") && args[1] == "watch" {
 		_, _ = io.WriteString(stdout, commentWatchSkill+"\n")
 		return 0
 	}

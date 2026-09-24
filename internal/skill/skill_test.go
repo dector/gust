@@ -21,6 +21,8 @@ Use this workflow when asked to handle comments submitted through Gust's browser
 
 ## CLI and recovery
 
+In a Go project using Gust as a Go tool, use ` + "`go tool gust`" + ` instead of ` + "`gust`" + ` for every command below (for example, ` + "`go tool gust ctl comments --pending`" + `). Otherwise use ` + "`gust`" + ` on PATH. Run control commands from the directory where Gust was launched; its socket is derived from that directory. Use the same invocation consistently.
+
 Use the actual control CLI:
 
 - ` + "`gust ctl comments`" + ` lists all unfinished comments (created, submitted, and seen) as JSON.
@@ -31,7 +33,7 @@ Use the actual control CLI:
 
 If the instance is not discoverable from the current directory, add ` + "`-S <socket>`" + ` after ` + "`ctl`" + `, for example ` + "`gust ctl -S /path/to/gust.sock comments --pending`" + `.
 
-Always check for seen unfinished comments with ` + "`gust ctl comments --pending`" + ` before waiting for new work. This recovers comments already marked seen by an interrupted agent. Work through recovered comments, then handle submitted batches with ` + "`gust ctl comments --wait`" + ` when there is new work. For continuous monitoring, use ` + "`gust skill comment watch`" + `.
+Always check for seen unfinished comments with ` + "`gust ctl comments --pending`" + ` before waiting for new work. This recovers comments already marked seen by an interrupted agent. Work through recovered comments, then handle submitted batches with ` + "`gust ctl comments --wait`" + ` when there is new work. For continuous monitoring, use ` + "`gust skill comments watch`" + `.
 
 ## Processing each comment
 
@@ -57,13 +59,15 @@ The CLI behavior is documented in ` + "`docs/man/ctl.txt`" + ` and the README's 
 	}
 }
 
-func TestRunCommentWatch(t *testing.T) {
+func TestRunCommentsWatch(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"comment", "watch"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"comments", "watch"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() = %d, want 0; stderr: %q", code, stderr.String())
 	}
 	for _, text := range []string{
 		"name: gust-comment-watch",
+		"go tool gust ctl comments --wait",
+		"Otherwise use `gust` on PATH",
 		"gust ctl comments --pending",
 		"gust ctl comments --wait",
 		"immediately run",
@@ -81,6 +85,10 @@ func TestRunCommentWatch(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
+	var oldOutput bytes.Buffer
+	if code := Run([]string{"comment", "watch"}, &oldOutput, &stderr); code != 0 || oldOutput.String() != stdout.String() {
+		t.Fatalf("singular compatibility alias differs: code %d, output %q", code, oldOutput.String())
+	}
 }
 
 func TestRunCommentsRun(t *testing.T) {
@@ -92,6 +100,11 @@ func TestRunCommentsRun(t *testing.T) {
 		"Launch one worker subagent in **blocking** mode",
 		"Once a child finishes its cycle, launch the next blocking worker",
 		"The parent does no receiving, implementation, verification, or closing",
+		"go tool gust ctl comments --wait",
+		"otherwise use gust if installed on PATH",
+		"use it consistently",
+		"timeout 1800 go tool gust ctl comments --wait",
+		"timeout 1800 gust ctl comments --wait",
 		"gust ctl comments --pending",
 		"gust ctl comments --wait",
 		"1800-second (30-minute) tool timeout",
@@ -116,7 +129,7 @@ func TestRunCommentsRun(t *testing.T) {
 }
 
 func TestRunHelpAndInvalidArgs(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comments", "run", "--help"}, {"comment", "watch", "--help"}, {"help"}} {
+	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comments", "run", "--help"}, {"comments", "watch", "--help"}, {"comment", "watch", "--help"}, {"help"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 0 {
 			t.Errorf("Run(%q) = %d, want 0", args, code)
@@ -129,7 +142,7 @@ func TestRunHelpAndInvalidArgs(t *testing.T) {
 		}
 	}
 
-	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comments", "run", "extra"}, {"comment"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
+	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comments", "run", "extra"}, {"comment"}, {"comments", "watch", "extra"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("Run(%q) = %d, want 2", args, code)

@@ -108,7 +108,8 @@ When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload fr
 
 ## Control
 
-Agents and scripts control a running Gust instance with `gust ctl`:
+Agents and scripts control a running Gust instance with `gust ctl` (or
+`go tool gust ctl` when installed as a Go tool):
 
 ```sh
 gust ctl status   # state, ports, version, auto-reload, last exit
@@ -124,7 +125,7 @@ gust ctl comments abandon <id> <reason>
 gust ctl help
 ```
 
-`gust ctl` finds the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
+Both invocations find the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
 
 Comment commands emit stable JSON when Gust is launched with `--optin comments`. Without that opt-in, comment socket commands return `comments_disabled`, browser comment API paths return 404, and the injected widget contains only reload/status controls. Opt-in works without proxy mode too, allowing ctl comment workflows without browser submission. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` lists all unfinished comments (created, submitted, and seen). `comments --pending` lists only seen-but-unfinished comments for recovery after an interrupted agent. Mark each comment `done` or `abandon` it with a reason. Comment data is in-memory and is lost when Gust exits. In proxy mode, the injected browser panel lets viewers select page elements, add comments, and inspect comment history. Ctrl+Enter saves a comment. Comment mode stays active after a reload in the same tab (an open editor returns to selection mode; unsaved text is not retained). Autosubmit is on by default in comment mode and submits each saved comment individually; turn it off to keep drafts, then use Submit to send all drafts as a batch. The newest comments appear first, with drafts, submitted comments, and in-progress comments clearly labeled. Drafts can be removed with the × beside each one. Done and abandoned comments are counted at the bottom instead of shown individually. Pins distinguish created, submitted, and seen comments; done comments have no pins. New pins track the clicked point relative to the selected element, including when it moves or resizes. Pin placement requires a confident element match, otherwise the panel reports that the location was not found. The panel displays comments from other paths as pending. Page backgrounds (body/html) can also be selected; closing the floating editor returns to selection mode. The browser does not start an agent; use the CLI commands above to receive and finish submitted comments.
 
@@ -135,14 +136,19 @@ A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `g
 Start Gust in your project with a proxy and browser comments enabled, for example:
 
 ```sh
-gust -e 'your app command' -p '?:?' --optin comments
+go tool gust -e 'your app command' -p '?:?' --optin comments
 ```
 
 In a separate terminal, open Pi **in the same project directory** and enter:
 
 ```text
-!gust skill comments run
+!go tool gust skill comments run
 ```
+
+If you installed Gust on `PATH` instead of as a Go tool, use `gust` in both
+commands (`gust -e ...` and `!gust skill comments run`). The instructions
+printed for Pi also tell each worker to use the matching invocation for all
+`ctl` commands.
 
 This prints instructions into the Pi conversation. Pi's top-level agent only
 launches one blocking worker at a time; that worker receives comments, changes
@@ -150,22 +156,26 @@ the project, verifies the result, and closes the comments. When it finishes, Pi
 launches the next worker. Submit comments from the Gust proxy's browser panel;
 leave Pi running to keep listening. Stop the Pi turn to stop the workflow. No
 skill installation or `--optin dev` is needed. If Gust runs from another
-directory, the worker needs its socket path with `gust ctl -S <socket>`.
+directory, the worker needs its socket path with `go tool gust ctl -S <socket>`
+(or `gust ctl -S <socket>` when using `gust` on `PATH`).
 Comments are lost if the Gust process exits; restarting the app under Gust is
 not the same thing. Pi must support blocking subagents for this workflow.
 
 ## Other agent skills
 
-Print the general Gust comments skill with `gust skill comments`. For an agent
-asked to monitor continuously without the Pi orchestrator, use
-`gust skill comment watch`. Redirect either output, including its YAML
+Print the general Gust comments skill with `go tool gust skill comments`. For
+an agent asked to monitor continuously without the Pi orchestrator, use
+`go tool gust skill comments watch`. Redirect either output, including its YAML
 frontmatter, to your agent's skill directory:
 
 ```sh
 mkdir -p ~/.pi/agent/skills/gust-comments ~/.pi/agent/skills/gust-comment-watch
-gust skill comments > ~/.pi/agent/skills/gust-comments/SKILL.md
-gust skill comment watch > ~/.pi/agent/skills/gust-comment-watch/SKILL.md
+go tool gust skill comments > ~/.pi/agent/skills/gust-comments/SKILL.md
+go tool gust skill comments watch > ~/.pi/agent/skills/gust-comment-watch/SKILL.md
 ```
+
+Replace `go tool gust` with `gust` if using a binary on `PATH`. Both printed
+skills also describe which invocation to use for control commands.
 
 ## Manual
 
