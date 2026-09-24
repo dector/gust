@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -479,6 +481,26 @@ func TestProxyBrowserWebSocketSendsLatestNoticeOnConnect(t *testing.T) {
 	}
 }
 
+func TestProxyInjectedScriptSyntaxWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	start := strings.Index(script, ">") + 1
+	end := strings.LastIndex(script, "</script>")
+	if start <= 0 || end < start {
+		t.Fatal("could not extract injected JavaScript")
+	}
+	file := t.TempDir() + "/reload.js"
+	if err := os.WriteFile(file, []byte(script[start:end]), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, "--check", file).CombinedOutput(); err != nil {
+		t.Fatalf("generated JavaScript syntax: %v\n%s", err, output)
+	}
+}
+
 func TestProxyInjectedScriptContent(t *testing.T) {
 	script := reloadScript(12, 8765)
 	checks := []string{
@@ -546,6 +568,12 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`function updateHoverPath(target){`,
 		`document.addEventListener("click"`,
 		`e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();`,
+		`chooseSelection();`,
+		`window.addEventListener("scroll",schedulePinReposition,true)`,
+		`window.addEventListener("resize",schedulePinReposition)`,
+		`requestAnimationFrame(function(){pinPositionFrame=0;repositionPins();})`,
+		`function repositionPins(){`,
+		`const el=c&&c.path===location.pathname&&matchingElement(c);`,
 		`replace(/\s+/g," ")`,
 		`function locatorFor(`,
 		`function safeOuterHTML(`,
@@ -557,11 +585,19 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`location.pathname`,
 		`JSON.stringify({selector:selector,tag:tag,text:text,confidence:`,
 		`__gust_pin`,
-		`commentUI.append(add,status,crumbs,controls,submit,submitResult,list,editor)`,
+		`commentUI.append(add,status,crumbs,controls,submit,submitResult,pollError,caveat,list,editor)`,
+		`replace(/\s+/g," ")`,
+		`Comment sync failed: `,
+		`pending on another page`,
+		`Submit "+created+" created`,
+		`data-comment-id`,
+		`pointer-events:auto`,
+		`lost when Gust exits`,
 		`fetch("/__gust/comments/submit"`,
 		`function refreshComments()`,
 		`setInterval(refreshComments,3000)`,
 		`l.confidence!=="high"||l.matches!==1`,
+		`replace(/\s+/g," ");if(!actual.includes(l.text))return null;`,
 		`c.state==="created"||c.state==="submitted"||c.state==="seen"`,
 		`submitResult.dataset.submitResult`,
 		`location not found`,

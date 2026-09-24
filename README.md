@@ -102,7 +102,7 @@ gust ctl help
 
 `gust ctl` finds the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
 
-Comment commands emit stable JSON. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` or `comments --pending` lists seen-but-unfinished comments for recovery. Mark each comment `done` or `abandon` it with a reason. Comment data is in-memory and is lost when Gust exits.
+Comment commands emit stable JSON. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` or `comments --pending` lists seen-but-unfinished comments for recovery. Mark each comment `done` or `abandon` it with a reason. Comment data is in-memory and is lost when Gust exits. In proxy mode, the injected browser panel lets viewers select page elements, add comments, inspect comment history, and submit created comments as a batch. Pins distinguish created, submitted, and seen comments; done comments remain in history without pins. Pin placement requires a confident element match, otherwise the panel reports that the location was not found. The panel displays comments from other paths as pending, and abandoned comments include their reason. The browser does not start an agent; use the CLI commands above to receive and finish submitted comments.
 
 A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
 
@@ -137,4 +137,4 @@ binary with `go:embed`.
 - Flags only. No config file.
 - No polling watcher.
 - No TLS proxy, auth, CORS controls, or multi-app support.
-- Browser support is limited to full-page reload and a simple error banner.
+- Browser tooling is available only through the local proxy: full-page reload, a status panel, and in-memory element comments. The panel is not an authentication boundary; anyone who can access the proxy can submit comments.
