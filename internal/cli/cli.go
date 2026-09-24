@@ -34,6 +34,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	var cfg config.Config
 	cfg.Info = os.Getenv("GUST_INFO") == "1"
 	var portSpec string
+	var tailscaleWithProxy bool
 
 	fs := flag.NewFlagSet("gust", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -43,6 +44,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports (? selects a free port)")
 	fs.StringVar(&cfg.HealthPath, "h", "", "health endpoint path")
 	fs.BoolVar(&cfg.Tailscale, "T", false, "expose app port via Tailscale Serve")
+	fs.BoolVar(&tailscaleWithProxy, "TT", false, "expose proxy port via Tailscale Serve (implies -p ?:?)")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments, sounds)")
@@ -77,6 +79,13 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		default:
 			fs.Usage()
 			return config.Config{}, fmt.Errorf("unknown --optin value %q", value)
+		}
+	}
+
+	if tailscaleWithProxy {
+		cfg.Tailscale = true
+		if portSpec == "" {
+			portSpec = "?:?"
 		}
 	}
 
@@ -150,7 +159,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	return cfg, nil
 }
 
-const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
+const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T|-TT] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
@@ -159,6 +168,7 @@ Flags:
   -p <port>             app port, or app:proxy ports; ? selects a free port
   -h <path>             health endpoint path, requires app port
   -T                    expose app port via Tailscale Serve, requires -p
+  -TT                   expose proxy port via Tailscale Serve; defaults to -p ?:?, -p takes precedence
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   --optin <feature>     opt-in feature, repeatable (comments, sounds)

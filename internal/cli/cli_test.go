@@ -133,6 +133,16 @@ func TestParseProxyPorts(t *testing.T) {
 }
 
 func TestParseTailscale(t *testing.T) {
+	cfg, err := ParseWithOutput([]string{"-e", "run", "-TT"}, nil)
+	if err != nil || !cfg.Tailscale || !cfg.HasAppPort || !cfg.ProxyEnabled || cfg.AppPort == 0 || cfg.ProxyPort == 0 {
+		t.Fatalf("-TT config = %+v, err %v", cfg, err)
+	}
+
+	cfg, err = ParseWithOutput([]string{"-e", "run", "-TT", "-p", "8080"}, nil)
+	if err != nil || !cfg.Tailscale || cfg.AppPort != 8080 || cfg.ProxyEnabled {
+		t.Fatalf("-TT with -p config = %+v, err %v", cfg, err)
+	}
+
 	for _, args := range [][]string{
 		{"-e", "run", "-p", "8080", "-T"},
 		{"-e", "run", "-p", "8080:5000", "-h", "/health", "-T"},
@@ -143,7 +153,7 @@ func TestParseTailscale(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	_, err := ParseWithOutput([]string{"-e", "run", "-T"}, &out)
+	_, err = ParseWithOutput([]string{"-e", "run", "-T"}, &out)
 	if err == nil || !strings.Contains(err.Error(), "-T requires -p") {
 		t.Fatalf("missing port error = %v", err)
 	}

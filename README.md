@@ -33,6 +33,7 @@ gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
 gust -e 'go run ./cmd/server' -p 8080 -h /health -T
 gust -e 'go run ./cmd/server' -p 8080:5000 -h /health -T
 gust -e 'go run ./cmd/server' -p '?:?' -h /health -T
+gust -e 'go run ./cmd/server' -TT
 gust -e 'go run ./cmd/server' -p 8080 --exclude frontend/node_modules -v
 gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
 gust -e 'go run ./cmd/server' -p 8080:5000 --optin comments
@@ -47,6 +48,7 @@ Flags:
 - `-p <port>`: optional app port, or `app:proxy` ports. `?` asks the OS for a free port (for example `-p '?'`, `-p '?:?'`, `-p '8080:?'`). `?` starts at a path-derived port and probes for a free one, so ports stay the same across launches when available. An empty proxy slot (`-p '?:'`) disables the proxy; an empty app slot cannot be proxied because Gust cannot discover the server's default port. Without `-p`, the app chooses its own port. Random ports are passed to the app as `GUST_APP_PORT` / `GUST_PROXY_PORT`; the app must listen on `GUST_APP_PORT`. There is a small race between choosing ports and the app/proxy binding them.
 - `-h <path>`: optional health endpoint. Requires an app port.
 - `-T`: expose the reload-proxy port through Tailscale Serve when enabled; otherwise expose the app port. Requires `-p`; no argument.
+- `-TT`: shorthand for `-T -p '?:?'`, selecting stable app and proxy ports automatically. If `-p` is also provided, its port selection wins and `-TT` acts as `-T`.
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
 - `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments`; `sounds` enables ambient rain/thunder toggles in the panel. Both are disabled by default.

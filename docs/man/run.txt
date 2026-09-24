@@ -2,7 +2,7 @@ gust run - run and watch a command
 
 Usage:
   gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]...
-       [-p <port>|<app:proxy>] [-h <path>] [-T]
+       [-p <port>|<app:proxy>] [-h <path>] [-T|-TT]
        [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
 
 Flags:
@@ -12,6 +12,7 @@ Flags:
   -p <port>             app port, or app:proxy ports; ? selects a free port
   -h <path>             health endpoint path, requires app port
   -T                    expose proxy port if enabled, else app port via Tailscale Serve; requires -p
+  -TT                   same as -T -p '?:?'; explicit -p takes precedence
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
   --optin <feature>     opt-in feature, repeatable (comments, sounds; default off)
@@ -24,6 +25,7 @@ Samples:
   gust -e 'go run ./cmd/server' --e.after 'notify-send reloaded'
   gust -e 'go run ./cmd/server' -p 8080:5000 -h /health
   gust -e 'go run ./cmd/server' -p '?:?' -h /health -T
+  gust -e 'go run ./cmd/server' -TT
   gust -e 'go run ./cmd/server' -p 8080 -h /health -T
   gust -e 'go run ./cmd/server' --exclude frontend/node_modules -v
   gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
