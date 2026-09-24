@@ -1,5 +1,7 @@
 github.com/coder/websocket v1.8.13 h1:f3QZdXy7uGVz+4uCJy2nTZyM0yTBj8yANEHhqlXZ9FE=
 github.com/coder/websocket v1.8.13/go.mod h1:LNVeNrXQZfe5qhS9ALED3uA+l5pPqvwXg3CKoDBB2gs=
+github.com/dector/nettw v0.1.1 h1:1MytuOXz+4tEh66/X7UcQpLzc0ARYw15IRDcheEUsUQ=
+github.com/dector/nettw v0.1.1/go.mod h1:sHdOmodQnFnaXnqc83tgiGGvwKGijFOg0Q3xqX1Hqmw=
 github.com/dector/serv v0.8.4-0.20260923002515-7a5ec94db582 h1:6fJUGa8cbwlCqbo3xQjwg5hrMLMUWAP9zJCoBmxNJF4=
 github.com/dector/serv v0.8.4-0.20260923002515-7a5ec94db582/go.mod h1:ocUqlzEjBBtqS2bInekbeQ9nmWVqNOHrJnce0XxvIV8=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=

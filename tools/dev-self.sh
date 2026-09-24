@@ -14,7 +14,7 @@
 # Usage: tools/dev-self.sh [extra gust flags...]
 #
 # Environment overrides (defaults match the shared VPS dev setup):
-#   DEV_SELF_PORTS      port spec, default ?:? (new free ports on each restart)
+#   DEV_SELF_PORTS      port spec, default ?:? (path-stable ports when available)
 #   DEV_SELF_TAILSCALE  1 to pass -T, default 1
 #   DEV_SELF_POLL       poll interval in seconds, default 1
 #   DEV_SELF_DEBOUNCE   settle delay after a change, default 0.4

@@ -44,7 +44,7 @@ Flags:
 - `--e.before <cmd>`: repeatable command to run before each rerun. Fail-fast; a
   failure aborts the rerun and leaves the running app untouched.
 - `--e.after <cmd>`: repeatable command to run after each start.
-- `-p <port>`: optional app port, or `app:proxy` ports. `?` asks the OS for a free port (for example `-p '?'`, `-p '?:?'`, `-p '8080:?'`). An empty proxy slot (`-p '?:'`) disables the proxy; an empty app slot cannot be proxied because Gust cannot discover the server's default port. Without `-p`, the app chooses its own port. Random ports are passed to the app as `GUST_APP_PORT` / `GUST_PROXY_PORT`; the app must listen on `GUST_APP_PORT`. There is a small race between choosing ports and the app/proxy binding them.
+- `-p <port>`: optional app port, or `app:proxy` ports. `?` asks the OS for a free port (for example `-p '?'`, `-p '?:?'`, `-p '8080:?'`). `?` starts at a path-derived port and probes for a free one, so ports stay the same across launches when available. An empty proxy slot (`-p '?:'`) disables the proxy; an empty app slot cannot be proxied because Gust cannot discover the server's default port. Without `-p`, the app chooses its own port. Random ports are passed to the app as `GUST_APP_PORT` / `GUST_PROXY_PORT`; the app must listen on `GUST_APP_PORT`. There is a small race between choosing ports and the app/proxy binding them.
 - `-h <path>`: optional health endpoint. Requires an app port.
 - `-T`: expose the reload-proxy port through Tailscale Serve when enabled; otherwise expose the app port. Requires `-p`; no argument.
 - `--exclude <path>`: repeatable watched-path exclude.
@@ -63,7 +63,7 @@ Flags:
 Run `ror dev:self` from the repository root. The external supervisor in
 `tools/dev-self.sh` builds Gust before restarting it on source changes; if a
 build fails, the running instance stays up. It serves `docs/demo` on
-OS-selected app and proxy ports and enables Tailscale Serve (`-T`). Gust's
+path-stable app and proxy ports (when available) and enables Tailscale Serve (`-T`). Gust's
 keyboard controls (`r`, `s`, `i`, `D`) work through the wrapper. Press `q` or
 Ctrl+C to restart Gust; press Ctrl+C again to stop the wrapper. To disable
 Tailscale locally, use `DEV_SELF_TAILSCALE=0 ror dev:self`.

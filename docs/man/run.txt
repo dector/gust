@@ -37,6 +37,8 @@ Keys (when stdin is a terminal):
   q  quit
 
 Use -p '?' for a free app port, or -p '?:?' for free app and proxy ports.
+The first candidate is path-derived, so ports stay stable when available;
+occupied ports cause Gust to try the next candidate.
 An empty proxy slot disables the proxy; an empty app slot cannot be proxied.
 The app must listen on GUST_APP_PORT. Without -p, the app decides its own port.
 Port selection and app binding are not atomic; another process can take the port.

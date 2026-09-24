@@ -9,8 +9,8 @@ ror dev
 
 Open the `proxy: http://127.0.0.1:<port>` URL printed by Gust (or the HTTPS
 URL printed by Tailscale Serve). Edit the HTML in `server.py` and save; Gust
-restarts the server and reloads the page. Gust selects free app and proxy
-ports on startup. Press `q` or Ctrl-C to stop.
+restarts the server and reloads the page. Gust selects path-stable app and proxy
+ports when available. Press `q` or Ctrl-C to stop.
 
 ## Developing Gust itself
 
@@ -22,7 +22,7 @@ ror dev:self
 ```
 
 It builds the new binary before stopping the running Gust, so a failed build
-keeps the current session alive. It selects new free ports on each Gust restart
-and passes `-T` (Tailscale Serve), matching the shared VPS setup. Gust keyboard commands work
+keeps the current session alive. It reuses path-stable app and proxy ports when
+available, keeping the Tailscale URL stable, and passes `-T` (Tailscale Serve). Gust keyboard commands work
 normally; `q` or Ctrl+C restarts Gust, and a second Ctrl+C stops the wrapper. Extra Gust flags can be
 appended, for example `ror dev:self -v`.

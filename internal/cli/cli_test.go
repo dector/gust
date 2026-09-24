@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dector/nettw"
 )
 
 func TestParseRequiredExec(t *testing.T) {
@@ -268,6 +272,74 @@ func TestParseRejectsUnexpectedArg(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Usage: gust") {
 		t.Fatalf("expected usage output, got %q", out.String())
+	}
+}
+
+func TestStablePorts(t *testing.T) {
+	root := t.TempDir()
+	app, proxy, enabled, err := parsePortSpec(root, "?:?")
+	if err != nil || !enabled || app == proxy {
+		t.Fatalf("ports = %d:%d, enabled = %v, err = %v", app, proxy, enabled, err)
+	}
+	for range 3 {
+		nextApp, nextProxy, _, err := parsePortSpec(root, "?:?")
+		if err != nil || nextApp != app || nextProxy != proxy {
+			t.Fatalf("ports changed: %d:%d, err = %v; want %d:%d", nextApp, nextProxy, err, app, proxy)
+		}
+	}
+	first, err := nettw.ParsePortOrPickAnother("?", nettw.WithIgnoreInvalidPort(true),
+		nettw.WithSeed(root+"\x00app"), nettw.WithPortRange(firstLocalPort, firstLocalPort+localPortCount-1))
+	if err != nil || app != first.Int {
+		t.Fatalf("app port %d does not match nettw seed: %+v, %v", app, first, err)
+	}
+	other := t.TempDir()
+	otherApp, otherProxy, _, err := parsePortSpec(other, "?:?")
+	if err != nil || (app == otherApp && proxy == otherProxy) {
+		t.Fatalf("different paths have the same ports: %d:%d and %d:%d, err = %v", app, proxy, otherApp, otherProxy, err)
+	}
+}
+
+func TestStablePortsProbeConflicts(t *testing.T) {
+	root := t.TempDir()
+	first, err := stablePort(root, "app", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	app, _, _, err := parsePortSpec(root, "?")
+	if err != nil || app == first || app < firstLocalPort || app >= firstLocalPort+localPortCount {
+		t.Fatalf("occupied port probe = %d, err = %v", app, err)
+	}
+	again, _, _, err := parsePortSpec(root, "?")
+	if err != nil || again != app {
+		t.Fatalf("occupied port probe changed: %d -> %d, err = %v", app, again, err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	app, _, _, err = parsePortSpec(root, "?")
+	if err != nil || app != first {
+		t.Fatalf("recovered candidate = %d, err = %v", app, err)
+	}
+}
+
+func TestRandomAppAvoidsFixedProxy(t *testing.T) {
+	root := t.TempDir()
+	proxy, err := stablePort(root, "app", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, gotProxy, _, err := parsePortSpec(root, fmt.Sprintf("?:%d", proxy))
+	if err != nil || app == proxy || gotProxy != proxy {
+		t.Fatalf("ports = %d:%d, err = %v", app, gotProxy, err)
+	}
+	again, _, _, err := parsePortSpec(root, fmt.Sprintf("?:%d", proxy))
+	if err != nil || again != app {
+		t.Fatalf("ports changed: %d -> %d, err = %v", app, again, err)
 	}
 }
 

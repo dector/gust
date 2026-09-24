@@ -5,13 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/dector/gust/internal/config"
+	"github.com/dector/nettw"
 )
 
 // Parse converts command-line arguments into a Gust configuration.
@@ -76,8 +76,14 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 		cfg.CommentsEnabled = true
 	}
 
+	root, err := filepath.Abs(".")
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg.Root = root
+
 	if portSpec != "" {
-		appPort, proxyPort, proxyEnabled, err := parsePortSpec(portSpec)
+		appPort, proxyPort, proxyEnabled, err := parsePortSpec(root, portSpec)
 		if err != nil {
 			fs.Usage()
 			return config.Config{}, err
@@ -137,12 +143,6 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	}
 	cfg.ExcludeGlobs = cleanedExcludeGlobs
 
-	root, err := filepath.Abs(".")
-	if err != nil {
-		return config.Config{}, err
-	}
-	cfg.Root = root
-
 	return cfg, nil
 }
 
@@ -175,7 +175,7 @@ func cleanCommands(values []string, flagName string) ([]string, error) {
 	return cleaned, nil
 }
 
-func parsePortSpec(spec string) (appPort int, proxyPort int, proxyEnabled bool, err error) {
+func parsePortSpec(root, spec string) (appPort int, proxyPort int, proxyEnabled bool, err error) {
 	if strings.Count(spec, ":") > 1 {
 		return 0, 0, false, fmt.Errorf("invalid -p value %q", spec)
 	}
@@ -184,53 +184,63 @@ func parsePortSpec(spec string) (appPort int, proxyPort int, proxyEnabled bool, 
 	if parts[0] == "" {
 		return 0, 0, false, errors.New("invalid app port: proxy requires a known app port; use ? for a free port")
 	}
-	if parts[0] == "?" {
-		appPort, err = freePort(0)
-	} else {
+	proxyEnabled = len(parts) == 2 && parts[1] != ""
+	// Resolve fixed ports first so a random app port can avoid a fixed proxy.
+	if parts[0] != "?" {
 		appPort, err = parsePort(parts[0])
-	}
-	if err != nil {
-		return 0, 0, false, fmt.Errorf("invalid app port: %w", err)
-	}
-	if len(parts) == 1 || parts[1] == "" {
-		return appPort, 0, false, nil
-	}
-
-	if parts[1] == "?" {
-		proxyPort, err = freePort(appPort)
-	} else {
-		proxyPort, err = parsePort(parts[1])
-	}
-	if err != nil {
-		return 0, 0, false, fmt.Errorf("invalid proxy port: %w", err)
-	}
-	if proxyPort == appPort {
-		if parts[0] == "?" {
-			appPort, err = freePort(proxyPort)
-			if err != nil {
-				return 0, 0, false, fmt.Errorf("invalid app port: %w", err)
-			}
-		} else {
-			return 0, 0, false, errors.New("proxy port must differ from app port")
+		if err != nil {
+			return 0, 0, false, fmt.Errorf("invalid app port: %w", err)
 		}
 	}
-	return appPort, proxyPort, true, nil
+	if proxyEnabled && parts[1] != "?" {
+		proxyPort, err = parsePort(parts[1])
+		if err != nil {
+			return 0, 0, false, fmt.Errorf("invalid proxy port: %w", err)
+		}
+	}
+	if proxyEnabled && appPort != 0 && appPort == proxyPort {
+		return 0, 0, false, errors.New("proxy port must differ from app port")
+	}
+	if parts[0] == "?" {
+		appPort, err = stablePort(root, "app", proxyPort)
+		if err != nil {
+			return 0, 0, false, fmt.Errorf("select app port: %w", err)
+		}
+	}
+	if proxyEnabled && parts[1] == "?" {
+		proxyPort, err = stablePort(root, "proxy", appPort)
+		if err != nil {
+			return 0, 0, false, fmt.Errorf("select proxy port: %w", err)
+		}
+	}
+	return appPort, proxyPort, proxyEnabled, nil
 }
 
-// freePort asks the OS for an available loopback port. The app needs the number
-// in its environment, so the listener cannot remain held while the app starts.
-func freePort(exclude int) (int, error) {
-	for range 10 {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+const (
+	firstLocalPort = 10000
+	localPortCount = 20000 // below Tailscale's HTTPS port range and typical ephemeral ports
+)
+
+// stablePort lets nettw probe path-derived candidates. Port selection is not a
+// reservation: the app needs the port in its environment before it can bind.
+func stablePort(root, role string, exclude int) (int, error) {
+	seed := root + "\x00" + role
+	for i := range 10 {
+		candidateSeed := seed
+		if i > 0 {
+			candidateSeed += "\x00" + strconv.Itoa(i)
+		}
+		port, err := nettw.ParsePortOrPickAnother("?",
+			nettw.WithIgnoreInvalidPort(true),
+			nettw.WithSeed(candidateSeed),
+			nettw.WithPortRange(firstLocalPort, firstLocalPort+localPortCount-1),
+			nettw.WithMaxTries(localPortCount),
+		)
 		if err != nil {
 			return 0, err
 		}
-		port := ln.Addr().(*net.TCPAddr).Port
-		if err := ln.Close(); err != nil {
-			return 0, err
-		}
-		if port != exclude {
-			return port, nil
+		if port.Int != exclude {
+			return port.Int, nil
 		}
 	}
 	return 0, errors.New("could not find a distinct free port")
