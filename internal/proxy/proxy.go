@@ -307,7 +307,9 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		if s.log != nil {
 			s.log.Verbosef("proxy request failed: %v", err)
 		}
-		s.hub.BrowserError("proxy cannot reach app")
+		if r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
+			s.hub.BrowserError("proxy cannot reach app")
+		}
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
 

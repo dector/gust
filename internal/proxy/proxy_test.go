@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -347,6 +348,77 @@ func TestProxyRetriesUntilAppAvailable(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "ready" {
 		t.Fatalf("body = %q, want ready", body)
+	}
+}
+
+func TestProxyCanceledRequestDoesNotReportAppUnreachable(t *testing.T) {
+	started := make(chan struct{})
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			close(started)
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write([]byte("healthy"))
+	}))
+	defer app.Close()
+
+	_, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	server.BrowserHub().BrowserReady(1)
+	target, err := url.Parse(app.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.handler(target)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/slow", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("slow request did not reach app")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled proxy request did not finish")
+	}
+	if got := server.BrowserHub().latest; got.Type != "ready" || got.Version != 1 {
+		t.Fatalf("browser state after cancellation = %+v, want ready v1", got)
+	}
+
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if resp.Code != http.StatusOK || resp.Body.String() != "healthy" {
+		t.Fatalf("healthy app response = %d %q", resp.Code, resp.Body.String())
+	}
+}
+
+func TestProxyUnreachableAppReportsBrowserError(t *testing.T) {
+	port := freePort(t)
+	_, server := startProxyForTest(t, port)
+	defer server.Close()
+	server.BrowserHub().BrowserReady(1)
+
+	resp := httptest.NewRecorder()
+	target, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.handler(target).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/", nil))
+	if resp.Code != http.StatusBadGateway {
+		t.Fatalf("unreachable app response = %d, want 502", resp.Code)
+	}
+	if got := server.BrowserHub().latest; got.Type != "error" || got.Message != "proxy cannot reach app" {
+		t.Fatalf("browser state after upstream failure = %+v, want connectivity error", got)
 	}
 }
 
