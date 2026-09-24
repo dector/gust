@@ -1,0 +1,13 @@
+default task="dev"
+
+task dev {
+    cmd #"""
+      go run ../../cmd/gust \
+        -e 'uv run server.py' \
+        -p 8000:8001 \
+        -h /health \
+        -T \
+        --optin comments \
+        --exclude .venv
+    """#
+}
