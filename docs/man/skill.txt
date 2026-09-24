@@ -1,0 +1,23 @@
+gust skill - print agent instructions for handling browser comments
+
+Usage:
+  gust skill comments          print the general comments skill
+  gust skill comments run      print the blocking parent/child processing prompt
+  gust skill comments watch    print the continuous watcher skill
+  gust skill --help            show skill command usage
+
+The comments and watch outputs are Markdown with YAML frontmatter, suitable
+for installing as agent skills. The run output is a prompt for direct use in
+an agent conversation. These commands print instructions; they do not start
+a watcher or control a running Gust instance. To handle comments, start Gust with
+--optin comments and follow the printed skill. Use gust ctl comments to
+receive and finish comments.
+
+Samples:
+  gust skill comments
+  gust skill comments run
+  gust skill comments watch
+  go tool gust skill comments > ~/.pi/agent/skills/gust-comments/SKILL.md
+
+Only the plural "comments" form is accepted. "gust skill comment" and
+"gust skill comment watch" are invalid.

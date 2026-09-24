@@ -7,7 +7,8 @@ reload script, and it exposes a Unix socket for agent control. Linux only.
 Usage:
   gust -e <cmd> [flags]         run and watch a command
   gust ctl [-S <socket>] <cmd>  control a running instance
-  gust man [topic]              show this manual (topics: run, ctl)
+  gust skill comments [run|watch]  print agent skill instructions
+  gust man [topic]              show this manual (topics: run, ctl, skill)
 
 Samples:
   gust -e 'go run ./cmd/server'
@@ -15,5 +16,7 @@ Samples:
   gust -e 'go run ./cmd/server' --e.before 'templ generate'
   gust ctl status
   gust ctl pause; gust ctl rerun; gust ctl resume
+  gust skill comments watch
 
-Run "gust man run" for runner flags and "gust man ctl" for control commands.
+Run "gust man run" for runner flags, "gust man ctl" for control commands,
+and "gust man skill" for agent skills.

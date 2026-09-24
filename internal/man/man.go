@@ -13,6 +13,7 @@ var topics = map[string]string{
 	"overview": "man/overview.txt",
 	"run":      "man/run.txt",
 	"ctl":      "man/ctl.txt",
+	"skill":    "man/skill.txt",
 }
 
 // Run executes a `gust man` invocation and returns a process exit code.
@@ -28,7 +29,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		topic = args[0]
 	}
 	if _, ok := topics[topic]; !ok {
-		fmt.Fprintf(stderr, "gust man: unknown topic %q (topics: run, ctl)\n\n", topic)
+		fmt.Fprintf(stderr, "gust man: unknown topic %q (topics: run, ctl, skill)\n\n", topic)
 		printPage(stderr, "overview")
 		return 2
 	}

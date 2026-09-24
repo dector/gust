@@ -21,7 +21,7 @@ func TestOverview(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("args %v code = %d, want 0", args, code)
 		}
-		for _, want := range []string{"gust - local development runner", "Usage:", "gust ctl status", "gust man run"} {
+		for _, want := range []string{"gust - local development runner", "Usage:", "gust ctl status", "gust man run", "gust man skill", "gust skill comments"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("args %v output missing %q:\n%s", args, want, out)
 			}
@@ -36,6 +36,7 @@ func TestTopics(t *testing.T) {
 	}{
 		{topic: "run", want: []string{"gust run - run and watch a command", "-e <cmd>", "--e.before", "gust -e 'go run ./cmd/server'", "Keys"}},
 		{topic: "ctl", want: []string{"gust ctl - control a running instance", "status", "pause", "rerun", "resume", "Exit codes"}},
+		{topic: "skill", want: []string{"gust skill comments", "gust skill comments run", "gust skill comments watch", "gust skill --help", "Only the plural"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.topic, func(t *testing.T) {
@@ -65,7 +66,7 @@ func TestUnknownTopic(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("code = %d, want 2", code)
 	}
-	if !strings.Contains(errOut, "unknown topic") {
+	if !strings.Contains(errOut, "unknown topic") || !strings.Contains(errOut, "run, ctl, skill") {
 		t.Fatalf("stderr = %q, want unknown topic", errOut)
 	}
 }
