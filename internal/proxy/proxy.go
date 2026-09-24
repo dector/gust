@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,7 @@ type Server struct {
 	comments        *comments.Store
 	commentsEnabled bool
 	selfDev         bool
+	bootID          string
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -59,6 +61,7 @@ type browserMessage struct {
 	Message string `json:"message,omitempty"`
 	Enabled *bool  `json:"enabled,omitempty"`
 	At      int64  `json:"at,omitempty"`
+	BootID  string `json:"bootId,omitempty"`
 }
 
 // browserInfo is the JSON payload served by /__gust/info.
@@ -207,7 +210,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, selfDev: cfg.SelfDev}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, selfDev: cfg.SelfDev, bootID: rand.Text()}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -419,6 +422,8 @@ func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.hub.remove(client)
 		_ = conn.Close(websocket.StatusNormalClosure, "closed")
 	}()
+	boot, _ := json.Marshal(browserMessage{Type: "boot", BootID: s.bootID})
+	_ = client.write(boot)
 	if latest.Type != "" {
 		data, _ := json.Marshal(latest)
 		_ = client.write(data)
@@ -486,8 +491,8 @@ function showError(message){ banner().textContent = message || "Gust error"; }
 function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
 let connected = false;
 let connectionAttempted = false;
-let reconnectAfterDisconnect = false;
-let disconnected = false;
+let bootID = "";
+let restartPending = false;
 let failing = false;
 let gustIcon;
 let gustWidget;
@@ -609,7 +614,8 @@ function syncPanel(){
   stopInfo();
 }
 function isGustNode(el){ return !!(el && el.closest && el.closest("#__gust_widget,#__gust_error,[data-gust-overlay]")); }
-function isSelfDevPanel(el){ return !!(selfDev && el && el.closest && el.closest("#__gust_panel")); }
+function isPrivatePanelNode(el){ return !!(el && el.closest && el.closest("details.__gust_log,#__gust_comments [data-comments]")); }
+function isSelfDevPanel(el){ return !!(selfDev && el && el.closest && el.closest("#__gust_panel") && !isPrivatePanelNode(el)); }
 function blockedCommentTarget(el){ return isGustNode(el) && !isSelfDevPanel(el); }
 function meaningfulPath(el){
   if (!el || el.nodeType !== 1 || blockedCommentTarget(el)) return {path:[], guessedIndex:0};
@@ -814,15 +820,16 @@ function locatorFor(el,point){
     for(const a of attrs){ const v=el.getAttribute(a); if(v){ const candidate=tag+"["+a+"=\""+v.replace(/\\/g,"\\\\").replace(/"/g,"\\\"")+"\"]"; try{if(document.querySelectorAll(candidate).length===1){selector=candidate;break;}}catch(_){} } }
   }
   if(!selector){ let n=el, bits=[]; while(n&&n.nodeType===1&&n!==document.body&&bits.length<5){let bit=n.tagName.toLowerCase();if(n.parentElement){const same=Array.from(n.parentElement.children).filter(x=>x.tagName===n.tagName);if(same.length>1)bit+=":nth-of-type("+(same.indexOf(n)+1)+")";}bits.unshift(bit);const s=bits.join(" > ");try{if(document.querySelectorAll(s).length===1){selector=s;break;}}catch(_){} n=n.parentElement;} }
-  const text=(el===document.body||el===document.documentElement)?"":(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ").slice(0,160);
+  const hasPrivateChildren=isSelfDevPanel(el)&&!!el.querySelector("details.__gust_log,#__gust_comments [data-comments]");
+  const text=(el===document.body||el===document.documentElement||isPrivatePanelNode(el)||hasPrivateChildren)?"":(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ").slice(0,160);
   let count=0;try{count=selector?document.querySelectorAll(selector).length:0;}catch(_){}
   return JSON.stringify({selector:selector,tag:tag,text:text,confidence:selector&&count===1?"high":"low",matches:count,point:point});
 }
 function safeOuterHTML(el){
-  if(el.matches("input[type=password],input[type=hidden]"))return "";
+  if(isPrivatePanelNode(el)||el.matches("input[type=password],input[type=hidden]"))return "";
   const clone=el.cloneNode(true);
   if(clone.matches("textarea"))clone.textContent="";
-  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],#__gust_widget,#__gust_error,[data-gust-overlay],details[data-name],#__gust_comments").forEach(n=>n.remove());
+  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],#__gust_widget,#__gust_error,[data-gust-overlay],details.__gust_log,#__gust_comments [data-comments]").forEach(n=>n.remove());
   clone.querySelectorAll("textarea").forEach(n=>{n.textContent="";});
   [clone].concat(Array.from(clone.querySelectorAll("*"))).forEach(function(n){
     if(n.matches&&n.matches("input[type=password],input[type=hidden]"))return;
@@ -1056,16 +1063,17 @@ function connect(){
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const url = proto + "//" + location.host + "/__gust/ws";
   socket = new WebSocket(url);
-  socket.onopen = function(){ retry = 250; connected = true; if(disconnected)reconnectAfterDisconnect=true; applyIconState(); };
+  socket.onopen = function(){ retry = 250; connected = true; applyIconState(); };
   socket.onmessage = function(event){
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
+    if (msg.type === "boot") { if(bootID&&bootID!==msg.bootId)restartPending=true; bootID=msg.bootId; return; }
     if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
     if (msg.type === "notice") { failing = true; applyIconState(); refreshInfo(); return; }
     if (msg.type === "error") { failing = true; applyIconState(); refreshInfo(); showError(msg.message); return; }
-    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; if(selfDev&&reconnectAfterDisconnect){reconnectAfterDisconnect=false;location.reload();} return; }
+    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; if(selfDev&&restartPending){restartPending=false;location.reload();} return; }
     if (msg.type === "reload") {
-      if(selfDev&&reconnectAfterDisconnect){reconnectAfterDisconnect=false;location.reload();return;}
+      if(selfDev&&restartPending){restartPending=false;location.reload();return;}
       failing = false; applyIconState();
       hideError();
       if (typeof msg.at === "number") reloadedAt = msg.at;
@@ -1075,7 +1083,7 @@ function connect(){
       }
     }
   };
-  socket.onclose = function(){ connected = false; connectionAttempted = true; disconnected = true; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  socket.onclose = function(){ connected = false; connectionAttempted = true; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();

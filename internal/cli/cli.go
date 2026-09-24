@@ -88,6 +88,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	}
 
 	if cfg.SelfDev && (!cfg.CommentsEnabled || !cfg.ProxyEnabled) {
+		fs.Usage()
 		return config.Config{}, errors.New("--self-dev requires --optin comments and a proxy port (-p app:proxy)")
 	}
 

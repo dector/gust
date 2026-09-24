@@ -385,6 +385,7 @@ func TestProxyBrowserWebSocketSendsLatestAndReloads(t *testing.T) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
+	readBootMessage(t, ctx, conn)
 	msg := readBrowserMessage(t, ctx, conn)
 	if msg.Type != "ready" || msg.Version != 3 {
 		t.Fatalf("connect message = %+v, want ready v3", msg)
@@ -419,6 +420,7 @@ func TestProxyBrowserWebSocketTogglesDebug(t *testing.T) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
+	bootID := readBootMessage(t, ctx, conn)
 	msg := readBrowserMessage(t, ctx, conn)
 	if msg.Type != "debug" || msg.Enabled == nil || *msg.Enabled {
 		t.Fatalf("connect message = %+v, want debug disabled", msg)
@@ -437,6 +439,9 @@ func TestProxyBrowserWebSocketTogglesDebug(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn2.Close(websocket.StatusNormalClosure, "done")
+	if got := readBootMessage(t, ctx, conn2); got != bootID {
+		t.Fatalf("boot ID changed on reconnect: %q to %q", bootID, got)
+	}
 	msg = readBrowserMessage(t, ctx, conn2)
 	if msg.Type != "debug" || msg.Enabled == nil || !*msg.Enabled {
 		t.Fatalf("new client message = %+v, want debug enabled", msg)
@@ -456,6 +461,7 @@ func TestProxyBrowserWebSocketSendsLatestErrorOnConnect(t *testing.T) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
+	readBootMessage(t, ctx, conn)
 	msg := readBrowserMessage(t, ctx, conn)
 	if msg.Type != "error" || msg.Message != "process exited" {
 		t.Fatalf("connect message = %+v, want latest error", msg)
@@ -475,6 +481,7 @@ func TestProxyBrowserWebSocketSendsLatestNoticeOnConnect(t *testing.T) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
+	readBootMessage(t, ctx, conn)
 	msg := readBrowserMessage(t, ctx, conn)
 	if msg.Type != "notice" || msg.Message != "before failed: templ generate (exit 1)" {
 		t.Fatalf("connect message = %+v, want latest notice", msg)
@@ -510,9 +517,12 @@ func TestProxySelfDevScript(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`function isSelfDevPanel(el)`,
+		`function isPrivatePanelNode(el)`,
+		`if(isPrivatePanelNode(el)||el.matches("input[type=password],input[type=hidden]"))return "";`,
 		`isSelfDevPanel(e.target)&&!e.altKey`,
 		`if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.altKey))return;`,
-		`if(selfDev&&reconnectAfterDisconnect){reconnectAfterDisconnect=false;location.reload();}`,
+		`if(selfDev&&restartPending){restartPending=false;location.reload();}`,
+		`if(bootID&&bootID!==msg.bootId)restartPending=true;`,
 	} {
 		if !strings.Contains(selfScript, expected) {
 			t.Errorf("self-dev script missing %q", expected)
@@ -540,7 +550,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`__gust_icon_failing`,
 		`let connectionAttempted = false;`,
 		`gustIcon.classList.toggle("__gust_icon_offline", !connected && connectionAttempted)`,
-		`connected = false; connectionAttempted = true; disconnected = true; applyIconState()`,
+		`connected = false; connectionAttempted = true; applyIconState()`,
 		`#__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1}`,
 		`viewBox="0 0 256 256"`,
 		`#__gust_icon::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border:2px solid #f9bb71;border-radius:50%;background:#24180f;`,
@@ -756,6 +766,15 @@ func TestProxyForwardsWebSocketUpgrades(t *testing.T) {
 	if !strings.Contains(string(buf[:n]), "101 Switching Protocols") {
 		t.Fatalf("upgrade response = %q", buf[:n])
 	}
+}
+
+func readBootMessage(t *testing.T, ctx context.Context, conn *websocket.Conn) string {
+	t.Helper()
+	msg := readBrowserMessage(t, ctx, conn)
+	if msg.Type != "boot" || msg.BootID == "" {
+		t.Fatalf("connect message = %+v, want proxy boot id", msg)
+	}
+	return msg.BootID
 }
 
 func readBrowserMessage(t *testing.T, ctx context.Context, conn *websocket.Conn) browserMessage {

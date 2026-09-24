@@ -66,7 +66,9 @@ through the proxy at port 8001 and enables Tailscale Serve (`-T`). To disable
 Tailscale locally, use `DEV_SELF_TAILSCALE=0 ror dev:self`.
 
 In comment mode, Alt+click a **panel** element to select it; normal clicks
-still operate the panel. Gust's icon and floating editor remain unselectable.
+still operate the panel. Logs and existing comments are not selectable. Gust's
+icon and floating editor remain unselectable. `-T` exposes this dev mode to
+anyone allowed to access the Tailscale Serve URL; use it only with trusted viewers.
 After the supervisor restarts Gust, the browser reloads on reconnection.
 Comments are still in memory: have the agent read or record submitted comments
 *before* editing Gust source, because a successful rebuild restarts Gust.
