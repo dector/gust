@@ -557,7 +557,14 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`location.pathname`,
 		`JSON.stringify({selector:selector,tag:tag,text:text,confidence:`,
 		`__gust_pin`,
-		`commentUI.append(add,status,crumbs,controls,editor)`,
+		`commentUI.append(add,status,crumbs,controls,submit,submitResult,list,editor)`,
+		`fetch("/__gust/comments/submit"`,
+		`function refreshComments()`,
+		`setInterval(refreshComments,3000)`,
+		`l.confidence!=="high"||l.matches!==1`,
+		`c.state==="created"||c.state==="submitted"||c.state==="seen"`,
+		`submitResult.dataset.submitResult`,
+		`location not found`,
 	}
 	for _, check := range checks {
 		if !strings.Contains(script, check) {
