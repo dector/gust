@@ -1105,7 +1105,7 @@ function mountIcon(){
 #__gust_panel .__gust_log pre{background:#24180f;border-color:#f9bb7133}
 #__gust_comment_toolbar{border-color:#f9bb7133}
 #__gust_wind_button{margin-left:auto}
-#__gust_wind_button svg{width:24px;height:24px}
+#__gust_wind_button svg{width:20px;height:20px}
 #__gust_wind{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;z-index:2147483645;opacity:.65;animation:__gust_wind_fade 11s ease-in-out both}
 #__gust_wind *{pointer-events:none!important}
 #__gust_wind svg{position:absolute;width:100%%;height:100%%;opacity:.65}
@@ -1115,6 +1115,7 @@ function mountIcon(){
 @keyframes __gust_wind_fade{0%%{opacity:0}6%%,88%%{opacity:.65}100%%{opacity:0}}
 @keyframes __gust_wind_stream{to{stroke-dashoffset:var(--gust-wind-end)}}
 @keyframes __gust_wind_wander{0%%{transform:translate(-12vw,4vh) scale(.6);opacity:0}20%%,75%%{opacity:.9}100%%{transform:translate(40vw,-6vh) scale(1.1);opacity:0}}
+#__gust_comment_toolbar button svg{width:20px;height:20px}
 #__gust_comment_toolbar button{color:#e0cfba;border-radius:10px}
 #__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#49301c;color:#fff7e9}
 #__gust_comment_toolbar button:focus-visible{outline-color:#f9bb71}
