@@ -501,6 +501,7 @@ let selectedIndex = 0;
 let highlighted = null;
 let selectedElement = null;
 let selectedPoint = null;
+let editorAnchor = null;
 let editorOpen = false;
 let commentState = [];
 let commentRefreshTimer = null;
@@ -764,12 +765,16 @@ function refreshComments(){
 }
 function startCommentRefresh(){if(!commentUI||commentRefreshTimer)return;refreshComments();commentRefreshTimer=setInterval(refreshComments,3000);}
 function updateEditorPosition(){
-  if(!commentUI||!editorOpen||!selectedElement||!selectedElement.isConnected)return;
-  const editor=document.querySelector("[data-editor]"),rect=selectedElement.getBoundingClientRect();
-  const width=Math.min(320,innerWidth-24),height=editor.offsetHeight||160;
-  const left=Math.max(12,Math.min(innerWidth-width-12,rect.left));
-  let top=rect.bottom+8;if(top+height>innerHeight-12)top=rect.top-height-8;
-  editor.style.left=left+"px";editor.style.top=Math.max(12,Math.min(innerHeight-height-12,top))+"px";
+  if(!commentUI||!editorOpen||!editorAnchor)return;
+  const editor=document.querySelector("[data-editor]");
+  const width=editor.offsetWidth||Math.min(320,innerWidth-24),height=editor.offsetHeight||160;
+  const margin=12, gap=12;
+  let left=editorAnchor.x+gap;
+  if(left+width>innerWidth-margin)left=editorAnchor.x-width-gap;
+  let top=editorAnchor.y+gap;
+  if(top+height>innerHeight-margin)top=editorAnchor.y-height-gap;
+  editor.style.left=Math.max(margin,Math.min(innerWidth-width-margin,left))+"px";
+  editor.style.top=Math.max(margin,Math.min(innerHeight-height-margin,top))+"px";
 }
 function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPath.length?hoverPath[selectedIndex]:null);}
 function updateCommentUI(){
@@ -779,12 +784,13 @@ function updateCommentUI(){
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
-function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
-function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;hoverPath=[];setHighlight(null);saveCommentMode();pinned=true;savePinned();syncPanel();updateCommentUI();}
-function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;hoverPath=[];setHighlight(null);updateCommentUI();}
+function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();pinned=true;savePinned();syncPanel();updateCommentUI();}
+function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);updateCommentUI();}
 function chooseSelection(e){if(!hoverPath.length)return;selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
   const r=selectedElement.getBoundingClientRect();
   selectedPoint=r.width>0&&r.height>0?{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}:null;
+  editorAnchor={x:e.clientX,y:e.clientY};
   selecting=false;editorOpen=true;hoverPath=[];setHighlight(null);updateCommentUI();const box=document.querySelector("[data-editor] textarea");if(box)box.focus();}
 function cssEscape(v){ return window.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/[^a-zA-Z0-9_-]/g,"\\$&"); }
 function locatorFor(el,point){
@@ -831,7 +837,7 @@ function createCommentUI(){
   submit.addEventListener("click",function(){if(submittingComments)return;submittingComments=true;submit.disabled=true;submitResult.textContent="Submitting…";fetch("/__gust/comments/submit",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});}).then(function(){submitResult.textContent="Comments submitted.";refreshComments();}).catch(function(e){submitResult.textContent=e.message;}).finally(function(){submittingComments=false;renderCommentState();});});
   const pollError=document.createElement("div");pollError.dataset.pollError="";
   const list=document.createElement("div");list.dataset.comments="";
-  const editor=document.createElement("div");editor.dataset.editor="";editor.dataset.gustOverlay="";editor.hidden=true;
+  const editor=document.createElement("div");editor.id="__gust_comment_editor";editor.dataset.editor="";editor.dataset.gustOverlay="";editor.hidden=true;
   const textarea=document.createElement("textarea");textarea.placeholder="Describe this element";textarea.maxLength=8192;
   const close=document.createElement("button");close.type="button";close.textContent="×";close.setAttribute("aria-label","Close comment editor");close.addEventListener("click",function(){textarea.value="";result.textContent="";resumeSelection();});
   const save=document.createElement("button");save.type="button";save.textContent="Save comment";
@@ -854,9 +860,23 @@ function createCommentUI(){
       })
       .catch(function(e){result.textContent=e.message;}).finally(function(){save.disabled=false;});
   });
-  editor.append(close,textarea,save,result);
-  editor.style.cssText="position:fixed;display:none;z-index:2147483647;width:min(320px,calc(100vw - 24px));box-sizing:border-box;padding:10px;background:#171717;color:#fafafa;border:1px solid rgba(255,255,255,.2);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.45);";
-  document.documentElement.appendChild(editor);
+  const title=document.createElement("strong");title.textContent="Add a comment";
+  const hint=document.createElement("small");hint.textContent="Ctrl+Enter to save";
+  editor.append(close,title,textarea,save,hint,result);
+  const editorStyle=document.createElement("style");editorStyle.textContent=
+    '#__gust_comment_editor{position:fixed;display:none;z-index:2147483647;width:min(320px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:16px;background:#1c1c1c;color:#fafafa;border:1px solid #555;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:13px/1.5 system-ui,sans-serif}'+
+    '#__gust_comment_editor strong{display:block;margin:0 28px 12px 0;font-size:14px;font-weight:600}'+
+    '#__gust_comment_editor textarea{display:block;box-sizing:border-box;width:100%%;min-height:100px;resize:vertical;margin:0 0 12px;padding:10px 12px;background:#262626;color:#fafafa;border:1px solid #555;border-radius:8px;outline:none;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}'+
+    '#__gust_comment_editor textarea:focus{border-color:#f59e0b;box-shadow:0 0 0 2px #f59e0b33}'+
+    '#__gust_comment_editor button{cursor:pointer;font:inherit}'+
+    '#__gust_comment_editor button[aria-label="Close comment editor"]{position:absolute;right:12px;top:10px;padding:2px 8px;border:0;border-radius:6px;background:transparent;color:#aaa;font-size:20px}'+
+    '#__gust_comment_editor button[aria-label="Close comment editor"]:hover{color:white;background:#333}'+
+    '#__gust_comment_editor button:not([aria-label]){padding:7px 12px;border:1px solid #d97706;border-radius:7px;background:#a7550b;color:white;font-weight:600}'+
+    '#__gust_comment_editor button:not([aria-label]):hover{background:#b9630e}'+
+    '#__gust_comment_editor button:focus-visible{outline:2px solid #f59e0b;outline-offset:2px}'+
+    '#__gust_comment_editor small{margin-left:10px;color:#aaa;font:11px ui-monospace,SFMono-Regular,Menlo,monospace}'+
+    '#__gust_comment_editor [data-result]{display:block;margin-top:6px;color:#fbbf24;font-size:12px}';
+  document.documentElement.append(editorStyle,editor);
   commentUI.append(autoLabel,status,crumbs,submit,submitResult,pollError,list);updateCommentUI();
 }
 function updateHoverPath(target){
