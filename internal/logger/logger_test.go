@@ -2,6 +2,7 @@ package logger
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -94,8 +95,29 @@ func TestPrintStartupHighlightsKeysWhenColored(t *testing.T) {
 
 	log.PrintStartup(StartupConfig{Exec: "command"}, "", true)
 
-	if got, want := out.String(), "\x1b[36m[gust]\x1b[0m exec: command\n\x1b[36m[gust]\x1b[0m key: \x1b[33mr\x1b[0m — rerun\n\x1b[36m[gust]\x1b[0m key: \x1b[33ms\x1b[0m — pause/resume auto-reload\n\x1b[36m[gust]\x1b[0m key: \x1b[33mi\x1b[0m — toggle info logs\n\x1b[36m[gust]\x1b[0m key: \x1b[33mq\x1b[0m — quit\n"; got != want {
+	want := "\x1b[36m[gust]\x1b[0m \x1b[1m\x1b[36m-------------------- gust --------------------\x1b[0m\n" +
+		"\n\x1b[36m[gust]\x1b[0m exec: command\n" +
+		"\n\x1b[36m[gust]\x1b[0m \x1b[1mKeys\x1b[0m\n" +
+		"\x1b[36m[gust]\x1b[0m key: \x1b[33mr\x1b[0m — rerun\n" +
+		"\x1b[36m[gust]\x1b[0m key: \x1b[33ms\x1b[0m — pause/resume auto-reload\n" +
+		"\x1b[36m[gust]\x1b[0m key: \x1b[33mi\x1b[0m — toggle info logs\n" +
+		"\x1b[36m[gust]\x1b[0m key: \x1b[33mq\x1b[0m — quit\n" +
+		"\n\x1b[36m[gust]\x1b[0m \x1b[2m----------------------------------------------\x1b[0m\n"
+	if got := out.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestPrintStartupColorsURLs(t *testing.T) {
+	var out bytes.Buffer
+	log := NewWithOptions(&out, false, Options{Color: AlwaysColor})
+	log.PrintStartup(StartupConfig{Exec: "command", ProxyEnabled: true, ProxyPort: 5000}, "", false)
+
+	if !strings.Contains(out.String(), "\x1b[1mproxy (browser)\x1b[0m: \x1b[1m\x1b[32mhttp://127.0.0.1:5000\x1b[0m") {
+		t.Fatalf("URL not highlighted: %q", out.String())
+	}
+	if strings.Contains(out.String(), "Keys") {
+		t.Fatalf("keys shown when disabled: %q", out.String())
 	}
 }
 
@@ -113,17 +135,21 @@ func TestPrintStartupSelectedOutput(t *testing.T) {
 		TailscaleURL: "https://gust.example.ts.net",
 	}, "/tmp/gust-1000/hash.sock", true)
 
-	want := "[gust] exec: go run ./cmd/server\n" +
-		"[gust] app: http://127.0.0.1:8080\n" +
-		"[gust] proxy: http://127.0.0.1:5000\n" +
-		"[gust] health: http://127.0.0.1:8080/health\n" +
-		"[gust] tailscale: https://gust.example.ts.net\n" +
-		"[gust] socket: /tmp/gust-1000/hash.sock\n" +
+	want := "[gust] -------------------- gust --------------------\n" +
+		"\n[gust] exec: go run ./cmd/server\n" +
+		"\n[gust] URLs\n" +
+		"[gust] proxy (browser): http://127.0.0.1:5000\n" +
+		"[gust] tailscale (HTTPS): https://gust.example.ts.net\n" +
+		"[gust] app (direct): http://127.0.0.1:8080\n" +
+		"[gust] health check: http://127.0.0.1:8080/health\n" +
+		"\n[gust] socket (control): /tmp/gust-1000/hash.sock\n" +
+		"\n[gust] Keys\n" +
 		"[gust] key: r — rerun\n" +
 		"[gust] key: s — pause/resume auto-reload\n" +
 		"[gust] key: i — toggle info logs\n" +
 		"[gust] key: D — toggle debug lines\n" +
-		"[gust] key: q — quit\n"
+		"[gust] key: q — quit\n" +
+		"\n[gust] ----------------------------------------------\n"
 	if got := out.String(); got != want {
 		t.Fatalf("startup output = %q, want %q", got, want)
 	}

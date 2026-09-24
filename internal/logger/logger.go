@@ -34,6 +34,9 @@ type Options struct {
 
 const (
 	ansiReset  = "\x1b[0m"
+	ansiBold   = "\x1b[1m"
+	ansiDim    = "\x1b[2m"
+	ansiGreen  = "\x1b[32m"
 	ansiCyan   = "\x1b[36m"
 	ansiYellow = "\x1b[33m"
 	ansiRed    = "\x1b[31m"
@@ -128,6 +131,11 @@ type StartupConfig struct {
 
 // PrintStartup writes the user-facing startup summary.
 func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled bool) {
+	if l == nil || l.out == nil {
+		return
+	}
+	l.startupLine("-------------------- gust --------------------", ansiBold+ansiCyan)
+	l.startupBlank()
 	l.Printf("exec: %s", cfg.Exec)
 	for _, command := range cfg.Before {
 		l.Printf("before: %s", command)
@@ -135,22 +143,29 @@ func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled 
 	for _, command := range cfg.After {
 		l.Printf("after: %s", command)
 	}
-	if cfg.HasAppPort {
-		l.Printf("app: http://127.0.0.1:%d", cfg.AppPort)
-	}
-	if cfg.ProxyEnabled {
-		l.Printf("proxy: http://127.0.0.1:%d", cfg.ProxyPort)
-	}
-	if cfg.HealthPath != "" {
-		l.Printf("health: http://127.0.0.1:%d%s", cfg.AppPort, cfg.HealthPath)
-	}
-	if cfg.TailscaleURL != "" {
-		l.Printf("tailscale: %s", cfg.TailscaleURL)
+	if cfg.HasAppPort || cfg.ProxyEnabled || cfg.HealthPath != "" || cfg.TailscaleURL != "" {
+		l.startupBlank()
+		l.startupLine("URLs", ansiBold)
+		if cfg.ProxyEnabled {
+			l.startupURL("proxy (browser)", fmt.Sprintf("http://127.0.0.1:%d", cfg.ProxyPort))
+		}
+		if cfg.TailscaleURL != "" {
+			l.startupURL("tailscale (HTTPS)", cfg.TailscaleURL)
+		}
+		if cfg.HasAppPort {
+			l.startupURL("app (direct)", fmt.Sprintf("http://127.0.0.1:%d", cfg.AppPort))
+		}
+		if cfg.HealthPath != "" {
+			l.startupURL("health check", fmt.Sprintf("http://127.0.0.1:%d%s", cfg.AppPort, cfg.HealthPath))
+		}
 	}
 	if socketPath != "" {
-		l.Printf("socket: %s", socketPath)
+		l.startupBlank()
+		l.Printf("socket (control): %s", socketPath)
 	}
 	if keysEnabled {
+		l.startupBlank()
+		l.startupLine("Keys", ansiBold)
 		l.printKey("r", "rerun")
 		l.printKey("s", "pause/resume auto-reload")
 		l.printKey("i", "toggle info logs")
@@ -159,6 +174,27 @@ func (l *Logger) PrintStartup(cfg StartupConfig, socketPath string, keysEnabled 
 		}
 		l.printKey("q", "quit")
 	}
+	l.startupBlank()
+	l.startupLine("----------------------------------------------", ansiDim)
+}
+
+func (l *Logger) startupBlank() {
+	fmt.Fprintln(l.out)
+}
+
+func (l *Logger) startupLine(text, style string) {
+	if l.color {
+		text = style + text + ansiReset
+	}
+	l.Printf("%s", text)
+}
+
+func (l *Logger) startupURL(label, url string) {
+	if l.color {
+		l.Printf("%s%s%s: %s%s%s", ansiBold, label, ansiReset, ansiBold+ansiGreen, url, ansiReset)
+		return
+	}
+	l.Printf("%s: %s", label, url)
 }
 
 func (l *Logger) printKey(key, action string) {
