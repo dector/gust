@@ -1,5 +1,5 @@
 task build {
-    cmd "go build -o out/gust ./cmd/gust"
+    cmd "git lfs install --local && git lfs pull && go build -o out/gust ./cmd/gust"
 }
 
 task dev:self {

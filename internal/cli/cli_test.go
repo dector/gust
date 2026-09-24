@@ -78,6 +78,22 @@ func TestParseCommentsOptIn(t *testing.T) {
 	}
 }
 
+func TestParseSoundsOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"-e", "run"}},
+		{args: []string{"-e", "run", "--optin", "sounds"}, want: true},
+		{args: []string{"-e", "run", "--optin=comments", "--optin", "sounds"}, want: true},
+	} {
+		cfg, err := ParseWithOutput(tc.args, nil)
+		if err != nil || cfg.SoundsEnabled != tc.want {
+			t.Fatalf("ParseWithOutput(%v) = sounds %v, err %v; want %v", tc.args, cfg.SoundsEnabled, err, tc.want)
+		}
+	}
+}
+
 func TestParseSelfDev(t *testing.T) {
 	for _, args := range [][]string{
 		{"-e", "run", "--self-dev", "-p", "8000:8001"},

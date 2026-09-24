@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/dector/gust/internal/assets"
 	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
@@ -38,6 +39,7 @@ type Server struct {
 	statusProvider  func(context.Context) (coordinator.Status, error)
 	comments        *comments.Store
 	commentsEnabled bool
+	soundsEnabled   bool
 	selfDev         bool
 	bootID          string
 }
@@ -210,7 +212,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, selfDev: cfg.SelfDev, bootID: rand.Text()}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, soundsEnabled: cfg.SoundsEnabled, selfDev: cfg.SelfDev, bootID: rand.Text()}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -254,6 +256,13 @@ func (s *Server) SetCommentsEnabled(enabled bool) {
 	}
 }
 
+// SetSoundsEnabled controls the ambient sounds UI and asset endpoint.
+func (s *Server) SetSoundsEnabled(enabled bool) {
+	if s != nil {
+		s.soundsEnabled = enabled
+	}
+}
+
 func (s *Server) SetStatusProvider(provider func(context.Context) (coordinator.Status, error)) {
 	if s == nil {
 		return
@@ -291,7 +300,7 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		interval: config.ProxyRetryInterval,
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled, s.selfDev)
+		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled, s.selfDev, s.soundsEnabled)
 	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -313,6 +322,14 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		}
 		if r.URL.Path == "/__gust/info" {
 			s.serveInfo(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/__gust/sounds/") {
+			if !s.soundsEnabled {
+				http.NotFound(w, r)
+				return
+			}
+			s.serveSound(w, r)
 			return
 		}
 		if r.URL.Path == "/__gust/comments" {
@@ -409,6 +426,45 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(info)
 }
 
+// serveSound serves an embedded ambient sound with a hash-based ETag so
+// browsers can cache it indefinitely until the asset content changes.
+func (s *Server) serveSound(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/__gust/sounds/")
+	name = strings.TrimSuffix(name, ".ogg")
+	sound, data, ok := assets.Lookup(name)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/ogg")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("ETag", `"`+sound.Hash+`"`)
+	http.ServeContent(w, r, name+".ogg", time.Time{}, bytes.NewReader(data))
+}
+
+var (
+	soundMapOnce sync.Once
+	soundMapJS   string
+)
+
+// soundMap returns the JavaScript object mapping sound names to cache-busted URLs.
+func soundMap() string {
+	soundMapOnce.Do(func() {
+		urls := make(map[string]string, len(assets.Sounds()))
+		for _, sound := range assets.Sounds() {
+			urls[sound.Name] = "/__gust/sounds/" + sound.Name + ".ogg?v=" + sound.Hash
+		}
+		encoded, _ := json.Marshal(urls)
+		soundMapJS = string(encoded)
+	})
+	return soundMapJS
+}
+
 func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
@@ -473,6 +529,7 @@ func reloadScript(version, appPort int, options ...bool) string {
 		commentsOn = options[0]
 	}
 	selfDev := len(options) > 1 && options[1]
+	soundsOn := len(options) > 2 && options[2]
 	return fmt.Sprintf(`<script id="__gust_reload">(function(){
 let lastVersion = %d;
 let retry = 250;
@@ -510,6 +567,14 @@ let windEnabled = false;
 let windTimer = null;
 let windFrame = null;
 let windOverlay = null;
+let soundButton = null;
+let soundIcon = null;
+let soundEnabled = false;
+let soundRevealed = false;
+let rainAudio = null;
+let thunderAudio = null;
+let thunderTimer = null;
+let soundUnlockArmed = false;
 const windMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let selecting = false;
 let hoverPath = [];
@@ -530,6 +595,10 @@ const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height=
 const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))+"') 2 21, pointer";
 const gustAppPort = %d;
 const selfDev = %t;
+const soundsOn = %t;
+const soundAssets = %s;
+const soundOnSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" fill="none"/><path d="M80,168H32a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8H80l72-56V224Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="80" y1="88" x2="80" y2="168" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M192,106.85a32,32,0,0,1,0,42.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M221.67,80a72,72,0,0,1,0,96" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
+const soundOffSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" fill="none"/><line x1="200" y1="104" x2="200" y2="152" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="232" y1="88" x2="232" y2="168" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="56" y1="40" x2="216" y2="216" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><polyline points="120.15 62.99 160 32 160 106.83" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M160,154.4V224L88,168H40a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8H99.64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
 function ago(ms){
   if (!ms) return "unknown";
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -1028,6 +1097,98 @@ function setWind(enabled){
 }
 windMotion.addEventListener("change",function(){clearWind();scheduleWind();});
 document.addEventListener("visibilitychange",function(){clearWind();scheduleWind();});
+function loadSound(){
+  try { return localStorage.getItem("__gust_sound") === "1"; } catch (_) { return false; }
+}
+function loadSoundRevealed(){
+  try { return sessionStorage.getItem("__gust_sound_revealed") === "1"; } catch (_) { return false; }
+}
+// revealSound keeps the second icon visible until a hard restart (new tab).
+function revealSound(){
+  soundRevealed=true;
+  try { sessionStorage.setItem("__gust_sound_revealed","1"); } catch (_) {}
+}
+function applySoundIcon(){
+  if(soundIcon){
+    soundIcon.hidden=!(soundEnabled||soundRevealed);
+    soundIcon.setAttribute("aria-pressed",String(soundEnabled));
+    soundIcon.innerHTML=soundEnabled?soundOnSvg:soundOffSvg;
+    soundIcon.title=soundEnabled?"Sound on":"Sound paused";
+    soundIcon.setAttribute("aria-label",soundEnabled?"Pause sound":"Play sound");
+  }
+  if(soundButton){
+    soundButton.setAttribute("aria-pressed",String(soundEnabled));
+    soundButton.innerHTML=soundEnabled?soundOnSvg:soundOffSvg;
+    soundButton.title=soundEnabled?"Sound on":"Sound off";
+    soundButton.setAttribute("aria-label",soundEnabled?"Turn sound off":"Turn sound on");
+  }
+}
+function ensureRain(){
+  if(rainAudio)return rainAudio;
+  const url=soundAssets["rain-light-loop"];
+  if(!url)return null;
+  rainAudio=new Audio(url);
+  rainAudio.loop=true;
+  rainAudio.preload="auto";
+  return rainAudio;
+}
+function ensureThunder(){
+  if(thunderAudio)return thunderAudio;
+  const url=soundAssets["thunder-deep-rumble"];
+  if(!url)return null;
+  thunderAudio=new Audio(url);
+  thunderAudio.preload="auto";
+  return thunderAudio;
+}
+function playThunder(){
+  const track=ensureThunder();
+  if(!track)return;
+  try { track.currentTime=0; } catch (_) {}
+  const played=track.play();
+  if(played&&played.catch)played.catch(function(){});
+}
+function scheduleThunder(){
+  if(thunderTimer)return;
+  thunderTimer=setTimeout(function(){
+    thunderTimer=null;
+    if(!soundEnabled)return;
+    playThunder();
+    scheduleThunder();
+  },7000+Math.random()*16000);
+}
+function armSoundUnlock(){
+  if(soundUnlockArmed)return;
+  soundUnlockArmed=true;
+  const unlock=function(){
+    document.removeEventListener("pointerdown",unlock,true);
+    document.removeEventListener("keydown",unlock,true);
+    soundUnlockArmed=false;
+    if(soundEnabled)playSound();
+  };
+  document.addEventListener("pointerdown",unlock,true);
+  document.addEventListener("keydown",unlock,true);
+}
+function playSound(){
+  const rain=ensureRain();
+  if(rain){
+    const played=rain.play();
+    if(played&&played.catch)played.catch(function(){armSoundUnlock();});
+  }
+  scheduleThunder();
+}
+// Pause instead of muting so no sound plays while the icon shows sound-off.
+function pauseSound(){
+  if(rainAudio)rainAudio.pause();
+  if(thunderAudio)thunderAudio.pause();
+  if(thunderTimer){clearTimeout(thunderTimer);thunderTimer=null;}
+}
+function setSound(enabled){
+  soundEnabled=enabled;
+  if(enabled)revealSound();
+  try { localStorage.setItem("__gust_sound",enabled?"1":"0"); } catch (_) {}
+  applySoundIcon();
+  if(enabled)playSound();else pauseSound();
+}
 function createToolbar(){
   commentToolbar=document.createElement("div");commentToolbar.id="__gust_comment_toolbar";
   windButton=document.createElement("button");windButton.type="button";
@@ -1036,7 +1197,17 @@ function createToolbar(){
   windButton.innerHTML='<svg viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128 192c3 9 14 16 24 16a24 24 0 0 0 0-48H40M96 64c3-9 14-16 24-16a24 24 0 0 1 0 48H24M184 96c3-9 14-16 24-16a24 24 0 0 1 0 48H32" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   windButton.addEventListener("click",function(){setWind(!windEnabled);});
   commentToolbar.appendChild(windButton);
+  if(soundsOn){
+    soundButton=document.createElement("button");soundButton.type="button";
+    soundButton.setAttribute("aria-pressed","false");soundButton.id="__gust_sound_button";
+    soundButton.addEventListener("click",function(){setSound(!soundEnabled);});
+    commentToolbar.appendChild(soundButton);
+  }
   windEnabled=loadWind();windButton.setAttribute("aria-pressed",String(windEnabled));scheduleWind(true);
+  if(soundsOn){
+    soundEnabled=loadSound();soundRevealed=loadSoundRevealed();applySoundIcon();
+    if(soundEnabled){armSoundUnlock();playSound();}
+  }
 }
 function loadPinned(){
   try { return localStorage.getItem("__gust_pinned") === "1"; } catch (_) { return false; }
@@ -1090,6 +1261,14 @@ function mountIcon(){
 #__gust_selected_path .__gust_path_current{color:#ffdcac;font-weight:700}
 #__gust_selected_path .__gust_path_description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:3px;color:#eee;font-size:11px;overflow-wrap:anywhere}
 /* Warm demo palette; keep status and comment-state colors distinct. */
+#__gust_widget{right:16px;top:16px}
+#__gust_icons{display:flex;align-items:center;gap:4px}
+#__gust_sound_icon{position:relative;width:16px;height:16px;color:#f9bb71;opacity:1;cursor:pointer;display:grid;place-items:center}
+#__gust_sound_icon[hidden]{display:none}
+#__gust_sound_icon svg{display:block;width:16px;height:16px}
+#__gust_sound_icon:hover{color:#ffd9a8}
+#__gust_sound_icon:focus-visible{outline:2px solid #f9bb71;outline-offset:2px;border-radius:8px}
+#__gust_sound_button svg{width:20px;height:20px}
 #__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1}
 #__gust_icon svg{display:block;width:28px;height:28px}
 #__gust_icon:hover,#__gust_icon.__gust_pinned,#__gust_icon.__gust_icon_offline,#__gust_icon.__gust_icon_failing{color:#f9bb71;opacity:1}
@@ -1144,10 +1323,23 @@ function mountIcon(){
   gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,192c3.39,9.15,13.67,16,24,16a24,24,0,0,0,0-48H40" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M96,64c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M184,96c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
   gustPanel = document.createElement("div");
   gustPanel.id = "__gust_panel";
+  const iconRow = document.createElement("div");
+  iconRow.id = "__gust_icons";
+  if (soundsOn) {
+    soundIcon = document.createElement("div");
+    soundIcon.id = "__gust_sound_icon";
+    soundIcon.setAttribute("role", "button");
+    soundIcon.setAttribute("tabindex", "0");
+    soundIcon.addEventListener("click", function(e){ e.stopPropagation(); setSound(!soundEnabled); });
+    soundIcon.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setSound(!soundEnabled); } });
+  }
   createToolbar();
   if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
-  widget.appendChild(gustIcon);
+  iconRow.appendChild(gustIcon);
+  if (soundsOn) iconRow.appendChild(soundIcon);
+  widget.appendChild(iconRow);
   widget.appendChild(gustPanel);
+  applySoundIcon();
   gustPanel.appendChild(commentToolbar);
   if (commentUI) widget.appendChild(commentUI);
   widget.addEventListener("mouseenter", function(){ hovering = true; syncPanel(); });
@@ -1200,7 +1392,7 @@ function connect(){
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();
-})();</script>`, version, appPort, selfDev, commentsOn)
+})();</script>`, version, appPort, selfDev, soundsOn, soundMap(), commentsOn)
 }
 
 func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.Logger, commentsEnabled ...bool) error {

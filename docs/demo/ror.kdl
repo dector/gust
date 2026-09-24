@@ -8,6 +8,7 @@ task dev {
         -h /health \
         -T \
         --optin comments \
+        --optin sounds \
         --exclude .venv
     """#
 }

@@ -65,7 +65,7 @@ snapshot() {
 build() {
   mkdir -p "$OUT_DIR"
   TMP_BIN="$OUT_DIR/.gust.$$.$RANDOM"
-  if ( cd "$ROOT" && go build -o "$TMP_BIN" ./cmd/gust ); then
+  if ( cd "$ROOT" && git lfs install --local && git lfs pull && go build -o "$TMP_BIN" ./cmd/gust ); then
     mv -f "$TMP_BIN" "$BIN"
     TMP_BIN=""
     return 0
@@ -108,6 +108,7 @@ start_gust() {
     -h /health
     --exclude .venv
     --optin comments
+    --optin sounds
     --self-dev
   )
   [ "$WANT_TAILSCALE" = "1" ] && args+=(-T)

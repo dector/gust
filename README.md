@@ -49,7 +49,7 @@ Flags:
 - `-T`: expose the reload-proxy port through Tailscale Serve when enabled; otherwise expose the app port. Requires `-p`; no argument.
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
-- `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments` (disabled by default).
+- `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments`; `sounds` enables ambient rain/thunder toggles in the panel. Both are disabled by default.
 - `--self-dev`: with `--optin comments` and a proxy, let Ctrl+click select Gust panel elements in comment mode; reload the page after the proxy process reconnects. Works with `-T`. Default behavior still excludes Gust's UI.
 - `-v`: verbose Gust logs.
 - `GUST_INFO=1`: enable info logs initially. Press `i` to toggle them.

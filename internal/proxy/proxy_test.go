@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/dector/gust/internal/assets"
 	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
@@ -53,6 +54,123 @@ func TestWindOverlayInjectedWithoutComments(t *testing.T) {
 		if !strings.Contains(script, fragment) {
 			t.Errorf("wind injection missing %q", fragment)
 		}
+	}
+}
+
+func TestSoundInjectionWithOptIn(t *testing.T) {
+	script := reloadScript(1, 8765, true, false, true)
+	for _, fragment := range []string{
+		`const soundsOn = true;`,
+		`const soundAssets = {"rain-light-loop":"/__gust/sounds/rain-light-loop.ogg?v=`,
+		`const soundOnSvg=`,
+		`const soundOffSvg=`,
+		`soundButton=document.createElement("button")`,
+		`soundButton.id="__gust_sound_button";`,
+		`soundIcon.id = "__gust_sound_icon";`,
+		`commentToolbar.appendChild(soundButton);`,
+		`const iconRow = document.createElement("div");`,
+		`iconRow.id = "__gust_icons";`,
+		`iconRow.appendChild(soundIcon);`,
+		`iconRow.appendChild(gustIcon);`,
+		`widget.appendChild(iconRow);`,
+		`#__gust_icons{display:flex;align-items:center;gap:4px}`,
+		`function setSound(enabled){`,
+		`if(enabled)playSound();else pauseSound();`,
+		`function pauseSound(){`,
+		`rainAudio.loop=true;`,
+		`7000+Math.random()*16000`,
+		`localStorage.setItem("__gust_sound",enabled?"1":"0")`,
+		`sessionStorage.setItem("__gust_sound_revealed","1")`,
+		`#__gust_sound_icon{`,
+		`#__gust_sound_button svg{width:20px;height:20px}`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("sound injection missing %q", fragment)
+		}
+	}
+	// The icons live in their own row; the widget must stay a column so the
+	// panel stacks below the icon instead of pushing it to the panel center.
+	if strings.Contains(script, `#__gust_widget{display:flex`) {
+		t.Error("sound injection must not override the widget column layout")
+	}
+	// Sound controls sit to the right of the main Gust icon.
+	gustAt := strings.Index(script, `iconRow.appendChild(gustIcon);`)
+	soundAt := strings.Index(script, `if (soundsOn) iconRow.appendChild(soundIcon);`)
+	if gustAt < 0 || soundAt < 0 || gustAt > soundAt {
+		t.Errorf("sound icon should be appended after the Gust icon (gust=%d sound=%d)", gustAt, soundAt)
+	}
+}
+
+func TestSoundInjectionDisabledWithoutOptIn(t *testing.T) {
+	script := reloadScript(1, 8765, true)
+	if !strings.Contains(script, `const soundsOn = false;`) {
+		t.Fatal("sound injection should be disabled without opt-in")
+	}
+	if !strings.Contains(script, `if (soundsOn) {`) {
+		t.Fatal("sound UI should be guarded by the sounds opt-in")
+	}
+}
+
+func TestProxyServesSoundsWithHashCache(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	server.SetSoundsEnabled(true)
+
+	for _, sound := range assets.Sounds() {
+		resp, err := http.Get(proxyURL + "/__gust/sounds/" + sound.Name + ".ogg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		etag := resp.Header.Get("ETag")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d, want 200", sound.Name, resp.StatusCode)
+		}
+		if len(body) == 0 {
+			t.Fatalf("%s served empty body", sound.Name)
+		}
+		if got := resp.Header.Get("Content-Type"); got != "audio/ogg" {
+			t.Errorf("%s content-type=%q, want audio/ogg", sound.Name, got)
+		}
+		if !strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
+			t.Errorf("%s cache-control=%q, want immutable", sound.Name, resp.Header.Get("Cache-Control"))
+		}
+		if etag != `"`+sound.Hash+`"` {
+			t.Errorf("%s etag=%q, want hash %q", sound.Name, etag, sound.Hash)
+		}
+
+		req, err := http.NewRequest(http.MethodGet, proxyURL+"/__gust/sounds/"+sound.Name+".ogg", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("If-None-Match", etag)
+		cached, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cached.Body.Close()
+		if cached.StatusCode != http.StatusNotModified {
+			t.Errorf("%s conditional status=%d, want 304", sound.Name, cached.StatusCode)
+		}
+	}
+}
+
+func TestProxySoundsDisabledByDefault(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+
+	resp, err := http.Get(proxyURL + "/__gust/sounds/rain-light-loop.ogg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404", resp.StatusCode)
 	}
 }
 

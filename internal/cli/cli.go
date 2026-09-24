@@ -45,7 +45,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.BoolVar(&cfg.Tailscale, "T", false, "expose app port via Tailscale Serve")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
-	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments)")
+	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments, sounds)")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
 	fs.BoolVar(&cfg.SelfDev, "self-dev", false, "enable selecting Gust panel elements and reload after proxy restart")
 	fs.Usage = func() {
@@ -69,11 +69,15 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 			fs.Usage()
 			return config.Config{}, errors.New("--optin requires a non-empty value")
 		}
-		if value != "comments" {
+		switch value {
+		case "comments":
+			cfg.CommentsEnabled = true
+		case "sounds":
+			cfg.SoundsEnabled = true
+		default:
 			fs.Usage()
 			return config.Config{}, fmt.Errorf("unknown --optin value %q", value)
 		}
-		cfg.CommentsEnabled = true
 	}
 
 	root, err := filepath.Abs(".")
@@ -157,7 +161,7 @@ Flags:
   -T                    expose app port via Tailscale Serve, requires -p
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
-  --optin <feature>     opt-in feature, repeatable (comments)
+  --optin <feature>     opt-in feature, repeatable (comments, sounds)
   --self-dev            allow Ctrl+click selection of Gust panel and reload after proxy restart
   -v                    enable verbose Gust logs
 
