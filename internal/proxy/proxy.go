@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/logger"
@@ -34,6 +35,7 @@ type Server struct {
 
 	statusMu       sync.RWMutex
 	statusProvider func(context.Context) (coordinator.Status, error)
+	comments       *comments.Store
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -233,6 +235,13 @@ func (s *Server) BrowserHub() *BrowserHub {
 }
 
 // SetStatusProvider configures the source for /__gust/status responses.
+// SetCommentStore connects the shared in-memory comment store to browser endpoints.
+func (s *Server) SetCommentStore(store *comments.Store) {
+	if s != nil {
+		s.comments = store
+	}
+}
+
 func (s *Server) SetStatusProvider(provider func(context.Context) (coordinator.Status, error)) {
 	if s == nil {
 		return
@@ -292,6 +301,14 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		}
 		if r.URL.Path == "/__gust/info" {
 			s.serveInfo(w, r)
+			return
+		}
+		if r.URL.Path == "/__gust/comments" {
+			s.serveComments(w, r)
+			return
+		}
+		if r.URL.Path == "/__gust/comments/submit" {
+			s.serveCommentSubmit(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/__gust/") {

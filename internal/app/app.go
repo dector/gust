@@ -87,6 +87,9 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer commentStore.Close()
+	if proxyServer != nil {
+		proxyServer.SetCommentStore(commentStore)
+	}
 	socketServer, err := socket.Start(serviceCtx, cfg, log, coord, commentStore)
 	if err != nil {
 		return err

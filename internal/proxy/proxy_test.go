@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/dector/gust/internal/comments"
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 )
@@ -619,6 +620,176 @@ func startProxyForTest(t *testing.T, appPort int) (string, *proxyCloser) {
 func (c *proxyCloser) Close() {
 	c.cancel()
 	_ = c.Server.Close()
+}
+
+func TestBrowserCommentsAPI(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server.SetCommentStore(store)
+
+	post := func(path, body string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, proxyURL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", proxyURL)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := post("/__gust/comments", `{"path":"/one","text":"hello","html":"<div onclick=\"evil()\"><script>alert(1)</script><input value=\"secret\"><img src=\"data:image/png;base64,AAAA\"></div>","locator":"#target"}`)
+	var created comments.Comment
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create status=%d: %s", resp.StatusCode, b)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if created.State != comments.StateCreated || strings.Contains(created.HTML, "script") || strings.Contains(created.HTML, "onclick") || strings.Contains(created.HTML, "secret") || strings.Contains(created.HTML, "base64") {
+		t.Fatalf("unsafe or unexpected created comment: %+v", created)
+	}
+
+	resp, err = http.Get(proxyURL + "/__gust/comments?path=%2Fone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []comments.Comment
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("list = %+v", listed)
+	}
+
+	resp = post("/__gust/comments/submit", "{}")
+	var batch comments.Batch
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("submit status=%d: %s", resp.StatusCode, b)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(batch.Comments) != 1 || batch.Comments[0].State != comments.StateSubmitted {
+		t.Fatalf("batch = %+v", batch)
+	}
+	claimed, err := store.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Comments[0].State != comments.StateSeen {
+		t.Fatalf("NextBatch state = %s", claimed.Comments[0].State)
+	}
+	current, err := store.Get(context.Background(), created.ID)
+	if err != nil || current.State != comments.StateSeen {
+		t.Fatalf("stored state=%s err=%v", current.State, err)
+	}
+}
+
+func TestBrowserCommentsAPIRejectsInvalidRequests(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server.SetCommentStore(store)
+	cases := []struct {
+		name, path, body string
+		origin           string
+		want             int
+	}{
+		{"invalid json", "/__gust/comments", `{`, "", 400},
+		{"invalid path", "/__gust/comments", `{"path":"https://bad","text":"x","locator":"x"}`, "", 400},
+		{"empty text", "/__gust/comments", `{"path":"/","text":" ","locator":"x"}`, "", 400},
+		{"text limit", "/__gust/comments", `{"path":"/","text":"` + strings.Repeat("x", 8193) + `","locator":"x"}`, "", 400},
+		{"html limit", "/__gust/comments", `{"path":"/","text":"x","html":"` + strings.Repeat("x", 32769) + `","locator":"x"}`, "", 400},
+		{"locator limit", "/__gust/comments", `{"path":"/","text":"x","locator":"` + strings.Repeat("x", 8193) + `"}`, "", 400},
+		{"unknown field", "/__gust/comments", `{"path":"/","text":"x","locator":"x","state":"done"}`, "", 400},
+		{"origin mismatch", "/__gust/comments", `{"path":"/","text":"x","locator":"x"}`, "http://attacker.invalid", 403},
+		{"no created", "/__gust/comments/submit", `{}`, "", 409},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, proxyURL+tc.path, strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.want {
+				b, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status=%d body=%s", resp.StatusCode, b)
+			}
+			var payload map[string]map[string]string
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["error"]["code"] == "" {
+				t.Fatalf("missing error code: %+v", payload)
+			}
+		})
+	}
+	resp, err := postWithHeaders(proxyURL+"/__gust/comments", strings.Repeat(" ", maxCommentBody+1)+`{}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 413 {
+		t.Fatalf("oversized body status=%d", resp.StatusCode)
+	}
+
+	resp, err = http.Get(proxyURL + "/__gust/comments/extra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("unknown reserved path status=%d", resp.StatusCode)
+	}
+}
+
+func postWithHeaders(target, body string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return http.DefaultClient.Do(req)
+}
+
+func TestProxyDisabledHasNoServer(t *testing.T) {
+	server, err := Start(context.Background(), config.Config{ProxyEnabled: false}, nil)
+	if err != nil || server != nil {
+		t.Fatalf("Start disabled = (%v, %v)", server, err)
+	}
 }
 
 func appPort(t *testing.T, rawURL string) int {
