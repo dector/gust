@@ -3,20 +3,23 @@ gust run - run and watch a command
 Usage:
   gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]...
        [-p <port>|<app:proxy>] [-h <path>] [-T|-TT]
-       [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
+       [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
   --e.before <cmd>      command to run before each rerun, repeatable, fail-fast
   --e.after <cmd>       command to run after each start, repeatable
-  -p <port>             app port, or app:proxy ports; ? selects a free port
-  -h <path>             health endpoint path, requires app port
-  -T                    expose proxy port if enabled, else app port via Tailscale Serve; requires -p
-  -TT                   same as -T -p '?:?'; explicit -p takes precedence
-  --exclude <path>      path exclude, repeatable
-  --exclude.glob <glob> glob exclude, repeatable
-  --optin <feature>     opt-in feature, repeatable (comments, sounds; default off)
-  --self-dev            allow Ctrl+click selection of Gust panel and reload after proxy restart; requires comments and proxy
+  -p <port>             set app port, or app:proxy ports; ? selects a free port
+  -h <path>             check health endpoint at path; requires app port
+  -T                    expose proxy port, or app port without proxy, via Tailscale Serve
+  -TT                   enable Tailscale Serve and proxy; defaults to -p '?:?', explicit -p wins
+  --exclude <path>      exclude path prefix from file watching; repeatable
+  --exclude.glob <glob> exclude matching paths from file watching; repeatable
+  --optin <feature>     enable optional feature; repeatable: comments, sounds, dev
+                        comments: browser comments UI/API and gust ctl comments
+                        sounds: ambient rain/thunder controls in the Gust panel
+                        dev: work on Gust itself; enables Ctrl+click panel selection
+                             and page reload after proxy reconnect; requires comments and proxy
   -v                    enable verbose Gust logs
 
 Samples:
@@ -57,7 +60,7 @@ comments UI/API and `gust ctl comments` commands. Ambient sounds are also
 disabled by default; use --optin sounds to enable the toolbar and Gust-icon
 toggles. Sounds load lazily from the proxy and are cached by content hash.
 Unknown opt-in values are errors.
-In --self-dev mode, Ctrl+click selects Gust panel elements without changing
+With --optin dev, Ctrl+click selects Gust panel elements without changing
 normal panel clicks; it works with -T. Gust restarts still discard comments.
 
 Details: see README.md and docs/before-after.md.

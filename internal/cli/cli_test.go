@@ -94,18 +94,23 @@ func TestParseSoundsOptIn(t *testing.T) {
 	}
 }
 
-func TestParseSelfDev(t *testing.T) {
+func TestParseDevOptIn(t *testing.T) {
 	for _, args := range [][]string{
-		{"-e", "run", "--self-dev", "-p", "8000:8001"},
-		{"-e", "run", "--self-dev", "--optin", "comments"},
+		{"-e", "run", "--optin", "dev", "-p", "8000:8001"},
+		{"-e", "run", "--optin", "dev", "--optin", "comments"},
 	} {
 		if _, err := ParseWithOutput(args, nil); err == nil {
-			t.Fatalf("expected invalid self-dev combination: %v", args)
+			t.Fatalf("expected invalid dev opt-in combination: %v", args)
 		}
 	}
-	cfg, err := ParseWithOutput([]string{"-e", "run", "--self-dev", "--optin", "comments", "-p", "8000:8001", "-T"}, nil)
+	cfg, err := ParseWithOutput([]string{"-e", "run", "--optin", "dev", "--optin", "comments", "-p", "8000:8001", "-T"}, nil)
 	if err != nil || !cfg.SelfDev || !cfg.Tailscale {
-		t.Fatalf("self-dev with Tailscale: cfg=%+v err=%v", cfg, err)
+		t.Fatalf("dev opt-in with Tailscale: cfg=%+v err=%v", cfg, err)
+	}
+	var out bytes.Buffer
+	_, err = ParseWithOutput([]string{"-e", "run", "--self-dev"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("legacy --self-dev should be rejected, got %v", err)
 	}
 }
 
@@ -282,8 +287,16 @@ func TestParseUsageShowsTaskFlags(t *testing.T) {
 	var out bytes.Buffer
 	_, _ = ParseWithOutput(nil, &out)
 	usage := out.String()
-	if !strings.Contains(usage, "--e.before") || !strings.Contains(usage, "--e.after") {
-		t.Fatalf("usage does not document task flags: %q", usage)
+	for _, want := range []string{
+		"-e <cmd>", "--e.before", "--e.after", "-p <port>", "-h <path>", "-T", "-TT",
+		"--exclude <path>", "--exclude.glob <glob>", "--optin <feature>", "comments:", "sounds:", "dev:", "-v",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage does not document %q: %q", want, usage)
+		}
+	}
+	if strings.Contains(usage, "--self-dev") {
+		t.Errorf("usage still documents removed --self-dev flag: %q", usage)
 	}
 }
 

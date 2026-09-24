@@ -47,9 +47,8 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.BoolVar(&tailscaleWithProxy, "TT", false, "expose proxy port via Tailscale Serve (implies -p ?:?)")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
-	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments, sounds)")
+	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments, sounds, dev)")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
-	fs.BoolVar(&cfg.SelfDev, "self-dev", false, "enable selecting Gust panel elements and reload after proxy restart")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usageText)
 	}
@@ -76,6 +75,8 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 			cfg.CommentsEnabled = true
 		case "sounds":
 			cfg.SoundsEnabled = true
+		case "dev":
+			cfg.SelfDev = true
 		default:
 			fs.Usage()
 			return config.Config{}, fmt.Errorf("unknown --optin value %q", value)
@@ -109,7 +110,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 
 	if cfg.SelfDev && (!cfg.CommentsEnabled || !cfg.ProxyEnabled) {
 		fs.Usage()
-		return config.Config{}, errors.New("--self-dev requires --optin comments and a proxy port (-p app:proxy)")
+		return config.Config{}, errors.New("--optin dev requires --optin comments and a proxy port (-p app:proxy)")
 	}
 
 	if cfg.Tailscale && !cfg.HasAppPort {
@@ -159,20 +160,23 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	return cfg, nil
 }
 
-const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T|-TT] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [--self-dev] [-v]
+const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T|-TT] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
   --e.before <cmd>      command to run before each rerun, repeatable, fail-fast
   --e.after <cmd>       command to run after each start, repeatable
-  -p <port>             app port, or app:proxy ports; ? selects a free port
-  -h <path>             health endpoint path, requires app port
-  -T                    expose app port via Tailscale Serve, requires -p
-  -TT                   expose proxy port via Tailscale Serve; defaults to -p ?:?, -p takes precedence
-  --exclude <path>      path exclude, repeatable
-  --exclude.glob <glob> glob exclude, repeatable
-  --optin <feature>     opt-in feature, repeatable (comments, sounds)
-  --self-dev            allow Ctrl+click selection of Gust panel and reload after proxy restart
+  -p <port>             set app port, or app:proxy ports; ? selects a free port
+  -h <path>             check health endpoint at path; requires app port
+  -T                    expose proxy port, or app port without proxy, via Tailscale Serve
+  -TT                   enable Tailscale Serve and proxy; defaults to -p ?:?, explicit -p wins
+  --exclude <path>      exclude path prefix from file watching; repeatable
+  --exclude.glob <glob> exclude matching paths from file watching; repeatable
+  --optin <feature>     enable optional feature; repeatable: comments, sounds, dev
+                        comments: browser comments UI/API and gust ctl comments
+                        sounds: ambient rain/thunder controls in the Gust panel
+                        dev: work on Gust itself; enables Ctrl+click panel selection
+                             and page reload after proxy reconnect; requires comments and proxy
   -v                    enable verbose Gust logs
 
 Run "gust man" for a brief manual and samples.

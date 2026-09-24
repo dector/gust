@@ -109,7 +109,7 @@ start_gust() {
     --exclude .venv
     --optin comments
     --optin sounds
-    --self-dev
+    --optin dev
   )
   [ "$WANT_TAILSCALE" = "1" ] && args+=(-T)
   args+=(${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})

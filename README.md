@@ -51,8 +51,7 @@ Flags:
 - `-TT`: shorthand for `-T -p '?:?'`, selecting stable app and proxy ports automatically. If `-p` is also provided, its port selection wins and `-TT` acts as `-T`.
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
-- `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments`; `sounds` enables ambient rain/thunder toggles in the panel. Both are disabled by default.
-- `--self-dev`: with `--optin comments` and a proxy, let Ctrl+click select Gust panel elements in comment mode; reload the page after the proxy process reconnects. Works with `-T`. Default behavior still excludes Gust's UI.
+- `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments`; `sounds` enables ambient rain/thunder toggles in the panel; `dev` enables Gust self-development tools (Ctrl+click selection of Gust panel elements and page reload after proxy reconnect). All are disabled by default. `dev` requires `comments` and a proxy.
 - `-v`: verbose Gust logs.
 - `GUST_INFO=1`: enable info logs initially. Press `i` to toggle them.
 
