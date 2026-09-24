@@ -1098,7 +1098,7 @@ function mountIcon(){
 #__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}
 #__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
 #__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}
-#__gust_panel{top:36px;color-scheme:dark;background:#ffffff0d;color:#fff7e9;border:1px solid #ffffff24;border-radius:1.2rem;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
+#__gust_panel{top:36px;color-scheme:dark;background:#ffffff0d;color:#fff7e9;border:1px solid #ffffff24;border-radius:1.2rem;backdrop-filter:blur(12px);padding:12px 14px;box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
 #__gust_panel .__gust_label,#__gust_panel .__gust_log summary{color:#e0cfba}
 #__gust_panel .__gust_group{border-color:#f9bb7155;background:#49301cbb}
 #__gust_panel .__gust_group_title,#__gust_panel .__gust_notice{color:#ffca81}
@@ -1115,7 +1115,7 @@ function mountIcon(){
 @keyframes __gust_wind_fade{0%%{opacity:0}6%%,88%%{opacity:.65}100%%{opacity:0}}
 @keyframes __gust_wind_stream{to{stroke-dashoffset:var(--gust-wind-end)}}
 @keyframes __gust_wind_wander{0%%{transform:translate(-12vw,4vh) scale(.6);opacity:0}20%%,75%%{opacity:.9}100%%{transform:translate(40vw,-6vh) scale(1.1);opacity:0}}
-#__gust_comment_toolbar button{color:#e0cfba}
+#__gust_comment_toolbar button{color:#e0cfba;border-radius:10px}
 #__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#49301c;color:#fff7e9}
 #__gust_comment_toolbar button:focus-visible{outline-color:#f9bb71}
 #__gust_comment_toolbar [data-mode-title]{color:#fff7e9;border-color:#f9bb7155}
