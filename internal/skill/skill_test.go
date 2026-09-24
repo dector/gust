@@ -31,7 +31,7 @@ Use the actual control CLI:
 
 If the instance is not discoverable from the current directory, add ` + "`-S <socket>`" + ` after ` + "`ctl`" + `, for example ` + "`gust ctl -S /path/to/gust.sock comments --pending`" + `.
 
-Always check for seen unfinished comments with ` + "`gust ctl comments --pending`" + ` before waiting for new work. This recovers comments already marked seen by an interrupted agent. Work through recovered comments, then handle submitted batches with ` + "`gust ctl comments --wait`" + ` when there is new work. If the user asks you to monitor for comments, keep waiting for and processing new batches until asked to stop; otherwise, do not wait indefinitely.
+Always check for seen unfinished comments with ` + "`gust ctl comments --pending`" + ` before waiting for new work. This recovers comments already marked seen by an interrupted agent. Work through recovered comments, then handle submitted batches with ` + "`gust ctl comments --wait`" + ` when there is new work. For continuous monitoring, use ` + "`gust skill comment watch`" + `.
 
 ## Processing each comment
 
@@ -57,8 +57,30 @@ The CLI behavior is documented in ` + "`docs/man/ctl.txt`" + ` and the README's 
 	}
 }
 
+func TestRunCommentWatch(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"comment", "watch"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run() = %d, want 0; stderr: %q", code, stderr.String())
+	}
+	for _, text := range []string{
+		"name: gust-comment-watch",
+		"gust ctl comments --pending",
+		"gust ctl comments --wait",
+		"immediately run",
+		"do not start an unattended shell loop",
+		"gust ctl comments done <id>",
+	} {
+		if !bytes.Contains(stdout.Bytes(), []byte(text)) {
+			t.Errorf("watch skill missing %q", text)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
 func TestRunHelpAndInvalidArgs(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"help"}} {
+	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comment", "watch", "--help"}, {"help"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 0 {
 			t.Errorf("Run(%q) = %d, want 0", args, code)
@@ -71,7 +93,7 @@ func TestRunHelpAndInvalidArgs(t *testing.T) {
 		}
 	}
 
-	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"unknown", "extra"}} {
+	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comment"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("Run(%q) = %d, want 2", args, code)

@@ -111,12 +111,14 @@ A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `g
 
 ## Agent skill
 
-Print the Gust comments agent skill, including its YAML frontmatter, with
-`gust skill comments`. Redirect it to the skill location used by your agent, for
-example:
+Print the general Gust comments skill with `gust skill comments`. For an agent
+asked to monitor continuously, use `gust skill comment watch`. Redirect either
+output, including its YAML frontmatter, to your agent's skill directory:
 
 ```sh
+mkdir -p ~/.pi/agent/skills/gust-comments ~/.pi/agent/skills/gust-comment-watch
 gust skill comments > ~/.pi/agent/skills/gust-comments/SKILL.md
+gust skill comment watch > ~/.pi/agent/skills/gust-comment-watch/SKILL.md
 ```
 
 ## Manual
