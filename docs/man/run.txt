@@ -3,7 +3,7 @@ gust run - run and watch a command
 Usage:
   gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]...
        [-p <port>|<app:proxy>] [-h <path>] [-T]
-       [--exclude <path>] [--exclude.glob <glob>] [-v]
+       [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
@@ -14,6 +14,7 @@ Flags:
   -T                    expose proxy port if enabled, else app port via Tailscale Serve; requires -p
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
+  --optin <feature>     opt-in feature, repeatable (comments; default off)
   -v                    enable verbose Gust logs
 
 Samples:
@@ -24,6 +25,7 @@ Samples:
   gust -e 'go run ./cmd/server' -p 8080 -h /health -T
   gust -e 'go run ./cmd/server' --exclude frontend/node_modules -v
   gust -e 'go run ./cmd/server' --exclude.glob '*_templ.go'
+  gust -e 'go run ./cmd/server' -p 8080:5000 --optin comments
 
 Keys (when stdin is a terminal):
   r  rerun now
@@ -38,5 +40,8 @@ otherwise the app port is exposed. The HTTPS port is stable for the
 directory and exposed port unless occupied;
 existing Serve ports are skipped. Exposure stays up across reruns and is
 closed on shutdown. Failures are warnings; the app continues locally.
+
+Comments are disabled by default. Use --optin comments to enable the browser
+comments UI/API and `gust ctl comments` commands; unknown opt-in values are errors.
 
 Details: see README.md and docs/before-after.md.

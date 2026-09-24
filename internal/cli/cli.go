@@ -27,6 +27,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 
 	var excludes repeatableStrings
 	var excludeGlobs repeatableStrings
+	var optins repeatableStrings
 	var befores repeatableStrings
 	var afters repeatableStrings
 	var cfg config.Config
@@ -43,6 +44,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.BoolVar(&cfg.Tailscale, "T", false, "expose app port via Tailscale Serve")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
+	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments)")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usageText)
@@ -58,6 +60,18 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	if strings.TrimSpace(cfg.Exec) == "" {
 		fs.Usage()
 		return config.Config{}, errors.New("missing required -e")
+	}
+
+	for _, value := range optins {
+		if strings.TrimSpace(value) == "" {
+			fs.Usage()
+			return config.Config{}, errors.New("--optin requires a non-empty value")
+		}
+		if value != "comments" {
+			fs.Usage()
+			return config.Config{}, fmt.Errorf("unknown --optin value %q", value)
+		}
+		cfg.CommentsEnabled = true
 	}
 
 	if portSpec != "" {
@@ -125,7 +139,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	return cfg, nil
 }
 
-const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T] [--exclude <path>] [--exclude.glob <glob>] [-v]
+const usageText = `Usage: gust -e <cmd> [--e.before <cmd>]... [--e.after <cmd>]... [-p <port>|<app:proxy>] [-h <path>] [-T] [--exclude <path>] [--exclude.glob <glob>] [--optin <feature>]... [-v]
 
 Flags:
   -e <cmd>              required command, executed via /bin/sh -c
@@ -136,6 +150,7 @@ Flags:
   -T                    expose app port via Tailscale Serve, requires -p
   --exclude <path>      path exclude, repeatable
   --exclude.glob <glob> glob exclude, repeatable
+  --optin <feature>     opt-in feature, repeatable (comments)
   -v                    enable verbose Gust logs
 
 Run "gust man" for a brief manual and samples.

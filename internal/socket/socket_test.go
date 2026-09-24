@@ -96,6 +96,18 @@ func TestCommentsProtocolAndStateErrors(t *testing.T) {
 	}
 }
 
+func TestCommentsDisabledRespondsImmediately(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := startTestServer(t, ctx, t.TempDir(), &fakeControl{})
+	defer server.Close()
+
+	response := requestJSON(t, server.path, map[string]string{"action": "comments_wait"})
+	if response["ok"] != false || response["error"] != "comments_disabled" {
+		t.Fatalf("disabled comments response: %v", response)
+	}
+}
+
 func TestStatusRequest(t *testing.T) {
 	root := t.TempDir()
 	ctl := &fakeControl{status: coordinator.Status{

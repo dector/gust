@@ -15,20 +15,21 @@ const (
 
 // Config holds Gust runtime configuration.
 type Config struct {
-	Exec         string
-	Before       []string
-	After        []string
-	AppPort      int
-	HasAppPort   bool
-	ProxyPort    int
-	ProxyEnabled bool
-	HealthPath   string
-	Tailscale    bool
-	Excludes     []string
-	ExcludeGlobs []string
-	Verbose      bool
-	Info         bool
-	Root         string
+	Exec            string
+	Before          []string
+	After           []string
+	AppPort         int
+	HasAppPort      bool
+	ProxyPort       int
+	ProxyEnabled    bool
+	CommentsEnabled bool
+	HealthPath      string
+	Tailscale       bool
+	Excludes        []string
+	ExcludeGlobs    []string
+	Verbose         bool
+	Info            bool
+	Root            string
 }
 
 // ExposurePort returns the browser-facing proxy port when available, otherwise the app port.

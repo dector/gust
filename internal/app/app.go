@@ -82,15 +82,23 @@ func Run(ctx context.Context, args []string) error {
 		tailscaleURLReady = expose.StartReady()
 	}
 
-	commentStore, err := comments.Open()
-	if err != nil {
-		return err
+	var commentStore *comments.Store
+	if cfg.CommentsEnabled {
+		commentStore, err = comments.Open()
+		if err != nil {
+			return err
+		}
+		defer commentStore.Close()
+		if proxyServer != nil {
+			proxyServer.SetCommentStore(commentStore)
+		}
 	}
-	defer commentStore.Close()
-	if proxyServer != nil {
-		proxyServer.SetCommentStore(commentStore)
+	var socketServer *socket.Server
+	if commentStore != nil {
+		socketServer, err = socket.Start(serviceCtx, cfg, log, coord, commentStore)
+	} else {
+		socketServer, err = socket.Start(serviceCtx, cfg, log, coord)
 	}
-	socketServer, err := socket.Start(serviceCtx, cfg, log, coord, commentStore)
 	if err != nil {
 		return err
 	}

@@ -52,6 +52,28 @@ func TestParseMinimal(t *testing.T) {
 	}
 }
 
+func TestParseCommentsOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"-e", "run"}},
+		{args: []string{"-e", "run", "--optin", "comments"}, want: true},
+		{args: []string{"-e", "run", "--optin=comments", "--optin", "comments"}, want: true},
+	} {
+		cfg, err := ParseWithOutput(tc.args, nil)
+		if err != nil || cfg.CommentsEnabled != tc.want {
+			t.Fatalf("ParseWithOutput(%v) = comments %v, err %v; want %v", tc.args, cfg.CommentsEnabled, err, tc.want)
+		}
+	}
+	for _, value := range []string{"", "unknown"} {
+		_, err := ParseWithOutput([]string{"-e", "run", "--optin", value}, nil)
+		if err == nil {
+			t.Fatalf("--optin %q should fail", value)
+		}
+	}
+}
+
 func TestParseAppPort(t *testing.T) {
 	cfg, err := ParseWithOutput([]string{"-e", "run", "-p", "8080"}, nil)
 	if err != nil {

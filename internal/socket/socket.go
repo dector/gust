@@ -201,6 +201,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store c
 	}
 	switch req.Action {
 	case protocol.ActionCommentsWait, protocol.ActionCommentsPending, protocol.ActionCommentsDone, protocol.ActionCommentsAbandon:
+		if store == nil {
+			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrCommentsDisabled})
+			return
+		}
 		s.handleComments(ctx, conn, req, store)
 	case protocol.ActionRerun:
 		if !ctl.Trigger(coordinator.TriggerAgent, "socket") {
@@ -265,10 +269,6 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store c
 
 func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol.Request, store commentStore) {
 	enc := json.NewEncoder(conn)
-	if store == nil {
-		_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrInvalidRequest})
-		return
-	}
 	var resp protocol.Response
 	switch req.Action {
 	case protocol.ActionCommentsWait:

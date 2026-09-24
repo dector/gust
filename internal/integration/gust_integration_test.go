@@ -295,6 +295,32 @@ func TestProxyUnavailableToReadyRetries(t *testing.T) {
 	}
 }
 
+func TestCommentsOptIn(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+		code int
+	}{
+		{name: "disabled", want: "comments_disabled", code: 1},
+		{name: "enabled", args: []string{"--optin", "comments"}, want: "[]", code: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			run := writeScript(t, root, "run.sh", "trap 'exit 0' TERM\nwhile :; do sleep 1; done\n")
+			args := append([]string{"-e", run}, tt.args...)
+			gp := startGust(t, root, args...)
+			waitFor(t, 5*time.Second, func() bool {
+				return strings.Contains(gp.out.String(), "socket:")
+			}, "gust socket startup")
+			out, code := ctlCommand(t, root, "comments", "--pending")
+			if code != tt.code || !strings.Contains(out, tt.want) {
+				t.Fatalf("comments: code=%d out=%q; logs:\n%s", code, out, gp.out.String())
+			}
+		})
+	}
+}
+
 func TestCtlPauseAndResume(t *testing.T) {
 	root := t.TempDir()
 	stateDir := t.TempDir()

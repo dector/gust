@@ -30,6 +30,7 @@ const (
 	ErrShuttingDown          = "shutting_down"
 	ErrNoFailureLogs         = "no_failure_logs"
 	ErrCommentStore          = "comment_store_error"
+	ErrCommentsDisabled      = "comments_disabled"
 	ErrCommentNotFound       = "comment_not_found"
 	ErrCommentInvalidState   = "invalid_comment_state"
 	ErrCommentReasonRequired = "reason_required"

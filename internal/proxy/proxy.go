@@ -33,9 +33,10 @@ type Server struct {
 	proxyPort int
 	closeOnce sync.Once
 
-	statusMu       sync.RWMutex
-	statusProvider func(context.Context) (coordinator.Status, error)
-	comments       *comments.Store
+	statusMu        sync.RWMutex
+	statusProvider  func(context.Context) (coordinator.Status, error)
+	comments        *comments.Store
+	commentsEnabled bool
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -205,7 +206,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -239,6 +240,13 @@ func (s *Server) BrowserHub() *BrowserHub {
 func (s *Server) SetCommentStore(store *comments.Store) {
 	if s != nil {
 		s.comments = store
+	}
+}
+
+// SetCommentsEnabled controls the browser comments UI and API.
+func (s *Server) SetCommentsEnabled(enabled bool) {
+	if s != nil {
+		s.commentsEnabled = enabled
 	}
 }
 
@@ -279,7 +287,7 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		interval: config.ProxyRetryInterval,
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log)
+		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled)
 	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -304,10 +312,18 @@ func (s *Server) handler(target *url.URL) http.Handler {
 			return
 		}
 		if r.URL.Path == "/__gust/comments" {
+			if !s.commentsEnabled {
+				http.NotFound(w, r)
+				return
+			}
 			s.serveComments(w, r)
 			return
 		}
 		if r.URL.Path == "/__gust/comments/submit" {
+			if !s.commentsEnabled {
+				http.NotFound(w, r)
+				return
+			}
 			s.serveCommentSubmit(w, r)
 			return
 		}
@@ -436,7 +452,11 @@ func prepareBodyForRetry(r *http.Request) error {
 
 const flushNoLengthHeader = "X-Gust-Flush-No-Length"
 
-func reloadScript(version, appPort int) string {
+func reloadScript(version, appPort int, commentsEnabled ...bool) string {
+	commentsOn := true
+	if len(commentsEnabled) > 0 {
+		commentsOn = commentsEnabled[0]
+	}
 	return fmt.Sprintf(`<script id="__gust_reload">(function(){
 let lastVersion = %d;
 let retry = 250;
@@ -659,7 +679,7 @@ function renderCommentState(){
 function refreshComments(){
   fetch("/__gust/comments",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("Could not refresh comments ("+r.status+")");return r.json();}).then(function(data){if(!Array.isArray(data))throw new Error("Invalid comments response");commentState=data;commentUI.querySelector("[data-poll-error]").textContent="";renderCommentState();}).catch(function(e){if(commentUI){commentUI.querySelector("[data-poll-error]").textContent="Comment sync failed: "+e.message;}});
 }
-function startCommentRefresh(){if(commentRefreshTimer)return;refreshComments();commentRefreshTimer=setInterval(refreshComments,3000);}
+function startCommentRefresh(){if(!commentUI||commentRefreshTimer)return;refreshComments();commentRefreshTimer=setInterval(refreshComments,3000);}
 function updateCommentUI(){
   if (!commentUI) return;
   const status = commentUI.querySelector("[data-status]");
@@ -768,7 +788,6 @@ function savePinned(){
   try { localStorage.setItem("__gust_pinned", pinned ? "1" : "0"); } catch (_) {}
 }
 function mountIcon(){
-  startCommentRefresh();
   if (document.getElementById("__gust_icon")) { gustIcon = document.getElementById("__gust_icon"); applyIconState(); return; }
   let style = document.getElementById("__gust_icon_style");
   if (!style) {
@@ -786,7 +805,7 @@ function mountIcon(){
   gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z"/></svg>';
   gustPanel = document.createElement("div");
   gustPanel.id = "__gust_panel";
-  createCommentUI();
+  if (%t) { createCommentUI(); startCommentRefresh(); }
   widget.appendChild(gustIcon);
   widget.appendChild(gustPanel);
   widget.addEventListener("mouseenter", function(){ hovering = true; syncPanel(); });
@@ -837,10 +856,10 @@ function connect(){
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();
-})();</script>`, version, appPort)
+})();</script>`, version, appPort, commentsOn)
 }
 
-func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.Logger) error {
+func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.Logger, commentsEnabled ...bool) error {
 	if ok, reason := shouldInjectHTMLReason(resp); !ok {
 		if log != nil {
 			log.Verbosef("skipped HTML injection: %s", reason)
@@ -868,7 +887,7 @@ func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.L
 		return nil
 	}
 
-	body = append(body, reloadScript(version, appPort)...)
+	body = append(body, reloadScript(version, appPort, commentsEnabled...)...)
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	if hadContentLength {
 		resp.ContentLength = int64(len(body))

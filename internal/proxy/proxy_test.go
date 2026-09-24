@@ -671,7 +671,7 @@ func startProxyForTest(t *testing.T, appPort int) (string, *proxyCloser) {
 	t.Helper()
 	proxyPort := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	server, err := Start(ctx, config.Config{AppPort: appPort, ProxyPort: proxyPort, ProxyEnabled: true}, nil)
+	server, err := Start(ctx, config.Config{AppPort: appPort, ProxyPort: proxyPort, ProxyEnabled: true, CommentsEnabled: true}, nil)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -683,6 +683,33 @@ func startProxyForTest(t *testing.T, appPort int) (string, *proxyCloser) {
 func (c *proxyCloser) Close() {
 	c.cancel()
 	_ = c.Server.Close()
+}
+
+func TestBrowserCommentsDisabledByDefaultWhenConfigured(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	server.SetCommentsEnabled(false)
+
+	for _, path := range []string{"/__gust/comments", "/__gust/comments/submit"} {
+		req, err := http.NewRequest(http.MethodGet, proxyURL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s status=%d, want 404", path, resp.StatusCode)
+		}
+	}
+	injected := reloadScript(1, 8080, false)
+	if !strings.Contains(injected, "if (false) { createCommentUI(); startCommentRefresh(); }") {
+		t.Fatal("disabled reload widget includes comment UI")
+	}
 }
 
 func TestBrowserCommentsAPI(t *testing.T) {
