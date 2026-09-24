@@ -83,8 +83,40 @@ func TestRunCommentWatch(t *testing.T) {
 	}
 }
 
+func TestRunCommentsRun(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"comments", "run"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run() = %d, want 0; stderr: %q", code, stderr.String())
+	}
+	for _, text := range []string{
+		"Launch one worker subagent in **blocking** mode",
+		"Once a child finishes its cycle, launch the next blocking worker",
+		"The parent does no receiving, implementation, verification, or closing",
+		"gust ctl comments --pending",
+		"gust ctl comments --wait",
+		"1800-second (30-minute) tool timeout",
+		"exit code 124 is an idle cycle",
+		"A previous child may already have changed the source before interruption",
+		"comments are in Gust's memory and are lost if the Gust process exits or restarts",
+		"For ambiguity, do not mark done or abandon",
+		"gust ctl comments done <id>",
+		"gust ctl comments abandon <id> <reason>",
+		"Stop launching when the user asks you to stop",
+	} {
+		if !bytes.Contains(stdout.Bytes(), []byte(text)) {
+			t.Errorf("run prompt missing %q", text)
+		}
+	}
+	if bytes.Contains(stdout.Bytes(), []byte("ror dev:self")) {
+		t.Error("run prompt must not depend on Gust's self-development setup")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
 func TestRunHelpAndInvalidArgs(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comment", "watch", "--help"}, {"help"}} {
+	for _, args := range [][]string{{"--help"}, {"comments", "--help"}, {"comments", "run", "--help"}, {"comment", "watch", "--help"}, {"help"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 0 {
 			t.Errorf("Run(%q) = %d, want 0", args, code)
@@ -97,7 +129,7 @@ func TestRunHelpAndInvalidArgs(t *testing.T) {
 		}
 	}
 
-	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comment"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
+	for _, args := range [][]string{{}, {"unknown"}, {"comments", "extra"}, {"comments", "run", "extra"}, {"comment"}, {"comment", "watch", "extra"}, {"unknown", "extra"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("Run(%q) = %d, want 2", args, code)

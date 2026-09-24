@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const usage = "Usage: gust skill comments\n       gust skill comment watch\n       gust skill --help\n"
+const usage = "Usage: gust skill comments\n       gust skill comments run\n       gust skill comment watch\n       gust skill --help\n"
 
 var commentsSkill = strings.ReplaceAll(`---
 name: gust-comments
@@ -78,8 +78,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if (len(args) == 2 && args[0] == "comments" && isHelp(args[1])) ||
+		(len(args) == 3 && args[0] == "comments" && args[1] == "run" && isHelp(args[2])) ||
 		(len(args) == 3 && args[0] == "comment" && args[1] == "watch" && isHelp(args[2])) {
 		_, _ = io.WriteString(stdout, usage)
+		return 0
+	}
+	if len(args) == 2 && args[0] == "comments" && args[1] == "run" {
+		_, _ = io.WriteString(stdout, commentsRunPrompt)
 		return 0
 	}
 	if len(args) == 2 && args[0] == "comment" && args[1] == "watch" {

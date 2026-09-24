@@ -130,11 +130,36 @@ Comment commands emit stable JSON when Gust is launched with `--optin comments`.
 
 A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
 
-## Agent skill
+## Browser comments with Pi
+
+Start Gust in your project with a proxy and browser comments enabled, for example:
+
+```sh
+gust -e 'your app command' -p '?:?' --optin comments
+```
+
+In a separate terminal, open Pi **in the same project directory** and enter:
+
+```text
+!gust skill comments run
+```
+
+This prints instructions into the Pi conversation. Pi's top-level agent only
+launches one blocking worker at a time; that worker receives comments, changes
+the project, verifies the result, and closes the comments. When it finishes, Pi
+launches the next worker. Submit comments from the Gust proxy's browser panel;
+leave Pi running to keep listening. Stop the Pi turn to stop the workflow. No
+skill installation or `--optin dev` is needed. If Gust runs from another
+directory, the worker needs its socket path with `gust ctl -S <socket>`.
+Comments are lost if the Gust process exits; restarting the app under Gust is
+not the same thing. Pi must support blocking subagents for this workflow.
+
+## Other agent skills
 
 Print the general Gust comments skill with `gust skill comments`. For an agent
-asked to monitor continuously, use `gust skill comment watch`. Redirect either
-output, including its YAML frontmatter, to your agent's skill directory:
+asked to monitor continuously without the Pi orchestrator, use
+`gust skill comment watch`. Redirect either output, including its YAML
+frontmatter, to your agent's skill directory:
 
 ```sh
 mkdir -p ~/.pi/agent/skills/gust-comments ~/.pi/agent/skills/gust-comment-watch
