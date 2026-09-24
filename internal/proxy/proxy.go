@@ -483,6 +483,7 @@ function banner(){
 function showError(message){ banner().textContent = message || "Gust error"; }
 function hideError(){ const el = document.getElementById("__gust_error"); if (el) el.remove(); }
 let connected = false;
+let connectionAttempted = false;
 let failing = false;
 let gustIcon;
 let gustWidget;
@@ -523,7 +524,7 @@ function ago(ms){
   if (h < 24) return h + "h ago";
   return Math.floor(h / 24) + "d ago";
 }
-function applyIconState(){ if (!gustIcon) return; gustIcon.classList.toggle("__gust_icon_offline", !connected); gustIcon.classList.toggle("__gust_icon_failing", connected && failing); if (gustWidget) gustWidget.classList.toggle("__gust_wide", failing); }
+function applyIconState(){ if (!gustIcon) return; gustIcon.classList.toggle("__gust_icon_online", connected && !failing); gustIcon.classList.toggle("__gust_icon_offline", !connected && connectionAttempted); gustIcon.classList.toggle("__gust_icon_failing", connected && failing); if (gustWidget) gustWidget.classList.toggle("__gust_wide", failing); }
 function panelRow(label, value){ return '<div class="__gust_row"><span class="__gust_label">' + label + '</span><span>' + value + '</span></div>'; }
 function logSection(name, text){ return '<details class="__gust_log" data-name="' + name + '"><summary>' + name + '</summary><pre><code>' + esc(text) + '</code></pre></details>'; }
 function taskGroup(title, notice, exit){
@@ -882,6 +883,18 @@ function createCommentUI(){
     '#__gust_comment_editor button:focus-visible{outline:2px solid #f59e0b;outline-offset:2px}'+
     '#__gust_comment_editor small{margin-left:10px;color:#aaa;font:11px ui-monospace,SFMono-Regular,Menlo,monospace}'+
     '#__gust_comment_editor [data-result]{display:block;margin-top:6px;color:#fbbf24;font-size:12px}';
+  // Keep the editor readable over any host page, using the same warm palette as the panel.
+  editorStyle.textContent +=
+    '#__gust_comment_editor{color-scheme:dark;background:#24180f;color:#fff7e9;border-color:#f9bb7155}'+
+    '#__gust_comment_editor textarea{background:#352416;color:#fff7e9;border-color:#f9bb7155}'+
+    '#__gust_comment_editor textarea:focus{border-color:#f9bb71;box-shadow:0 0 0 2px #f9bb7133}'+
+    '#__gust_comment_editor button[aria-label="Close comment editor"]{color:#e0cfba}'+
+    '#__gust_comment_editor button[aria-label="Close comment editor"]:hover{color:#fff7e9;background:#49301c}'+
+    '#__gust_comment_editor button:not([aria-label]){border-color:#f9bb71;background:#704423;color:#fff7e9}'+
+    '#__gust_comment_editor button:not([aria-label]):hover{background:#90552a}'+
+    '#__gust_comment_editor button:focus-visible{outline-color:#f9bb71}'+
+    '#__gust_comment_editor small{color:#e0cfba}'+
+    '#__gust_comment_editor [data-result]{color:#ffca81}';
   document.documentElement.append(editorStyle,editor);
   commentUI.append(autoLabel,status,listHeader,submitResult,pollError,list);updateCommentUI();
 }
@@ -962,6 +975,37 @@ function mountIcon(){
 #__gust_selected_path .__gust_path_separator{color:#bababa}
 #__gust_selected_path .__gust_path_current{color:#ffdcac;font-weight:700}
 #__gust_selected_path .__gust_path_description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:3px;color:#eee;font-size:11px;overflow-wrap:anywhere}
+/* Warm demo palette; keep status and comment-state colors distinct. */
+#__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1}
+#__gust_icon svg{display:block;width:28px;height:28px}
+#__gust_icon:hover,#__gust_icon.__gust_pinned,#__gust_icon.__gust_icon_offline,#__gust_icon.__gust_icon_failing{color:#f9bb71;opacity:1}
+#__gust_icon::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border:2px solid #f9bb71;border-radius:50%%;background:#24180f;box-shadow:0 0 0 1px #24180f;pointer-events:none}
+#__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}
+#__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
+#__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}
+#__gust_panel{top:36px;color-scheme:dark;background:linear-gradient(135deg,#352416,#24180f);color:#fff7e9;border-color:#f9bb7155;box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
+#__gust_panel .__gust_label,#__gust_panel .__gust_log summary{color:#e0cfba}
+#__gust_panel .__gust_group{border-color:#f9bb7155;background:#49301cbb}
+#__gust_panel .__gust_group_title,#__gust_panel .__gust_notice{color:#ffca81}
+#__gust_panel .__gust_log pre{background:#24180f;border-color:#f9bb7133}
+#__gust_comment_toolbar{border-color:#f9bb7133}
+#__gust_comment_toolbar button{color:#e0cfba}
+#__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#49301c;color:#fff7e9}
+#__gust_comment_toolbar button:focus-visible{outline-color:#f9bb71}
+#__gust_comment_toolbar [data-mode-title]{color:#fff7e9;border-color:#f9bb7155}
+#__gust_comments{border-color:#f9bb7133}
+#__gust_comments textarea,[data-editor] textarea{background:#352416;color:#fff7e9;border-color:#f9bb7155}
+#__gust_comments .__gust_autosubmit{color:#e0cfba}
+#__gust_comments .__gust_comments_header{color:#fff7e9}
+#__gust_comments .__gust_comments_count{background:#49301c;color:#e0cfba}
+#__gust_comments [data-submit]{border-color:#f9bb7180;background:#49301c;color:#ffca81}
+#__gust_comments [data-submit]:hover{background:#704423;border-color:#f9bb71}
+#__gust_comments .__gust_comment_item{background:#352416;border-color:#f9bb7133}
+#__gust_comments .__gust_comment_item:hover{background:#49301c;border-color:#f9bb7180}
+#__gust_comments .__gust_comment_item:focus-within{border-color:#f9bb71}
+#__gust_comments .__gust_comment_row{color:#fff7e9}
+#__gust_comments .__gust_comment_row:focus-visible,#__gust_comments .__gust_remove_draft:focus-visible{outline-color:#f9bb71}
+#__gust_comments .__gust_comment_meta,#__gust_comments .__gust_remove_draft,#__gust_comments .__gust_comments_empty,#__gust_comments .__gust_done_summary{color:#e0cfba}
 ` + "`" + `;
     document.head.appendChild(style);
   }
@@ -971,7 +1015,7 @@ function mountIcon(){
   gustIcon = document.createElement("div");
   gustIcon.id = "__gust_icon";
   gustIcon.title = "Gust";
-  gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z"/></svg>';
+  gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,192c3.39,9.15,13.67,16,24,16a24,24,0,0,0,0-48H40" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M96,64c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M184,96c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
   gustPanel = document.createElement("div");
   gustPanel.id = "__gust_panel";
   if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
@@ -1021,7 +1065,7 @@ function connect(){
       }
     }
   };
-  socket.onclose = function(){ connected = false; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  socket.onclose = function(){ connected = false; connectionAttempted = true; applyIconState(); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();
