@@ -178,6 +178,9 @@ func TestGenericRerunnerWithoutPort(t *testing.T) {
 	if resp["ok"] != true || int(resp["pid"].(float64)) == 0 {
 		t.Fatalf("unexpected status: %#v; logs:\n%s", resp, gp.out.String())
 	}
+	if strings.Contains(gp.out.String(), "health check passed") {
+		t.Fatalf("unexpected health success without -h; logs:\n%s", gp.out.String())
+	}
 }
 
 func TestAppPortWithoutProxy(t *testing.T) {
@@ -194,6 +197,8 @@ func TestAppPortWithoutProxy(t *testing.T) {
 	if resp["ok"] != true || int(resp["app_port"].(float64)) != port {
 		t.Fatalf("unexpected status: %#v; logs:\n%s", resp, gp.out.String())
 	}
+	want := fmt.Sprintf("[gust] health check passed: http://127.0.0.1:%d/health", port)
+	waitFor(t, 5*time.Second, func() bool { return strings.Contains(gp.out.String(), want) }, "health success log")
 }
 
 func TestRandomAppAndProxyPorts(t *testing.T) {
@@ -282,6 +287,9 @@ func TestHealthFailureErrors(t *testing.T) {
 		script := writeScript(t, root, "run.sh", "trap 'exit 0' TERM\nwhile :; do sleep 1; done\n")
 		gp := startGust(t, root, "-e", script, "-p", strconv.Itoa(port), "-h", "/health")
 		waitFor(t, 13*time.Second, func() bool { return strings.Contains(gp.out.String(), "health check timed out") }, "health timeout log")
+		if strings.Contains(gp.out.String(), "health check passed") {
+			t.Fatalf("unexpected health success after timeout; logs:\n%s", gp.out.String())
+		}
 	})
 	t.Run("app exits before health", func(t *testing.T) {
 		root := t.TempDir()

@@ -806,6 +806,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 						c.readyHook()
 					}
 					if c.cfg.HealthPath != "" {
+						if c.log != nil {
+							c.log.Printf("health check passed: http://127.0.0.1:%d%s", c.cfg.AppPort, c.cfg.HealthPath)
+						}
 						startAfterTasks(ev.runID)
 					}
 				} else {
