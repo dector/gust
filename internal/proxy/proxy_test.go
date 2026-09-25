@@ -170,6 +170,16 @@ func TestGustBubbleInjected(t *testing.T) {
 				t.Errorf("bubble injection missing %q", fragment)
 			}
 		}
+		// The message count lives in the thread pin, not in the toolbox bubble.
+		for _, gone := range []string{
+			`bubbleCount`,
+			`updateBubbleCount`,
+			`__gust_bubble_count`,
+		} {
+			if strings.Contains(script, gone) {
+				t.Errorf("bubble still carries a message count: %q", gone)
+			}
+		}
 	}
 }
 
@@ -1303,7 +1313,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`localStorage.setItem("__gust_thread_seen_"+c.id`,
 		`unread.className="__gust_comment_unread"`,
 		`pin.className="__gust_pin __gust_pin_"+c.state+(unread?" __gust_pin_unread":"")`,
-		`.__gust_pin::before{content:'';position:absolute`,
+		`.__gust_pin_count{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);`,
+		`.__gust_pin_number{color:#fff;font:700 9px/1 system-ui,sans-serif}`,
 		`.__gust_pin_unread::after{content:'';position:absolute`,
 		`animation:__gust_pin_ring 1.4s ease-out infinite`,
 		`@media (prefers-reduced-motion:reduce){.__gust_pin_unread::after{animation:none`,
@@ -1443,6 +1454,117 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		t.Error("side panel rows should still focus their comment")
 	}
 }
+
+// TestCommentPinShowsMessageCountWhenNodeAvailable runs the real pin rendering
+// against a tiny DOM stub. The count is the thread's own messages, drawn inside
+// the pin dot, and it must be there with the popover closed and stay the same
+// when the popover opens or closes.
+func TestCommentPinShowsMessageCountWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	messagesStart := strings.Index(script, "function threadMessages(c){")
+	messagesEnd := strings.Index(script, "function threadLastSeen(id){")
+	pinsStart := strings.Index(script, "const overlay=ensurePinOverlay();")
+	pinsEnd := strings.Index(script, "renderCommentPopover();\n}\nfunction refreshComments()")
+	if messagesStart < 0 || messagesEnd < messagesStart || pinsStart < 0 || pinsEnd < pinsStart {
+		t.Fatal("could not extract the pin message count")
+	}
+	pins := "function renderPins(){\n" + script[pinsStart:pinsEnd] + "}\n"
+	harness := pinCountHarnessPrelude + script[messagesStart:messagesEnd] + pins + pinCountHarnessChecks
+	file := t.TempDir() + "/pin-count.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("pin message count behavior: %v\n%s", err, output)
+	}
+}
+
+const pinCountHarnessPrelude = `class El {
+  constructor(tag) {
+    this.tagName = String(tag).toUpperCase();
+    this.children = [];
+    this.attrs = {};
+    this.dataset = {};
+    this.style = {};
+    this.listeners = {};
+    this.className = '';
+    this.textContent = '';
+    this.title = '';
+    this.type = '';
+    this.hidden = false;
+    this.isConnected = true;
+  }
+  appendChild(c) { this.children.push(c); return c; }
+  replaceChildren(...cs) { this.children = []; for (const c of cs) this.appendChild(c); }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { this.listeners[t] = f; }
+}
+const document = { createElement: t => new El(t), documentElement: new El('html') };
+const location = { pathname: '/' };
+let commentState = [];
+let popoverCommentId = null;
+let pinSizeObserver = null;
+let pinOverlay = new El('div');
+let unread = false;
+function ensurePinOverlay() { return pinOverlay; }
+function matchingElement() { return new El('div'); }
+function pinPosition() { return { left: 10, top: 10 }; }
+function threadUnread() { return unread; }
+function renderCommentPopover() {}
+function openCommentPopover(id) { popoverCommentId = id; renderPins(); }
+function closePopover() { popoverCommentId = null; renderPins(); }
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function countOf(pin) { return pin.children[0].children[0].textContent; }
+`
+
+const pinCountHarnessChecks = `
+popoverCommentId = null;
+unread = false;
+commentState = [
+  { id: 't1', path: '/', state: 'review', text: 'on the dot', messages: [{ author: 'human', text: 'first' }, { author: 'agent', text: 'second' }] },
+  { id: 't2', path: '/', state: 'created', text: 'fresh', messages: [] },
+  { id: 't3', path: '/other', state: 'review', text: 'elsewhere', messages: [{}, {}, {}] },
+];
+renderPins();
+assert(pinOverlay.children.length === 2, 'only threads on this page get a pin');
+const pin = pinOverlay.children[0];
+assert(pin.dataset.commentId === 't1', 'pins keep their thread id');
+assert(pin.className === '__gust_pin __gust_pin_review', 'the review pin keeps its state class');
+// Default state: the dot is on the page and the popover is closed, so the count
+// has to be readable right now.
+assert(pin.children.length === 1, 'the pin holds the count dot and nothing else');
+assert(pin.children[0].className === '__gust_pin_count', 'the count is drawn inside the pin dot');
+assert(pin.children[0].attrs['aria-hidden'] === 'true', 'the drawn count is hidden from assistive tech');
+assert(pin.children[0].children.length === 1, 'the dot holds the number');
+assert(pin.children[0].children[0].className === '__gust_pin_number', 'the number has its own hook');
+assert(countOf(pin) === '3', 'a thread with two replies shows three messages inside the dot');
+assert(pin.attrs['aria-label'] === 'review comment, 3 messages', 'the pin names the count for assistive tech');
+assert(pin.title === 'review comment — 3 messages — click to inspect', 'the tooltip carries the count too');
+// One number, one meaning: each thread counts only its own messages.
+assert(countOf(pinOverlay.children[1]) === '1', 'a single-message thread shows one, never zero');
+assert(pinOverlay.children[1].attrs['aria-label'] === 'created comment, 1 message', 'one message reads as singular');
+assert(pinOverlay.children[1].className === '__gust_pin __gust_pin_created', 'the draft pin keeps its state class');
+// Opening and closing the popover cannot move the number.
+pin.listeners['click']({ preventDefault() {}, stopPropagation() {} });
+assert(popoverCommentId === 't1', 'clicking the pin opens its popover');
+const opened = pinOverlay.children[0];
+assert(countOf(opened) === '3', 'opening the popover keeps the number');
+closePopover();
+assert(popoverCommentId === null, 'closing the popover clears the selection');
+assert(countOf(pinOverlay.children[0]) === '3', 'closing the popover keeps the number');
+// A reply lands in the thread, so the dot grows with the thread.
+commentState[0].messages.push({ author: 'agent', text: 'third' });
+renderPins();
+assert(countOf(pinOverlay.children[0]) === '4', 'a new reply shows up in the dot');
+commentState = [];
+renderPins();
+assert(pinOverlay.children.length === 0, 'no threads means no pins and no stray counts');
+console.log('pin message count ok');
+`
 
 func TestCommentTargetIconInFloatingThreadPanel(t *testing.T) {
 	script := reloadScript(12, 8765)
