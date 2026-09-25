@@ -28,7 +28,6 @@ func TestWindOverlayInjectedWithoutComments(t *testing.T) {
 		`createToolbar();`,
 		`if (false) { selecting=loadCommentMode(); createCommentUI();`,
 		`gustPanel.appendChild(commentToolbar);`,
-		`gustIcon.parentNode.insertBefore(commentToggleButton,gustIcon);`,
 		`windButton.setAttribute("aria-pressed",String(windEnabled))`,
 		`localStorage.setItem("__gust_wind",enabled?"1":"0")`,
 		`if(!windEnabled||windMotion.matches||document.hidden)return;`,
@@ -173,6 +172,168 @@ func TestGustBubbleInjected(t *testing.T) {
 		}
 	}
 }
+
+func TestCommentModeBubbleInjected(t *testing.T) {
+	script := reloadScript(1, 8765, true, true)
+	for _, fragment := range []string{
+		`let commentBubble = null;`,
+		`function mountCommentBubble(){`,
+		`commentBubble.id="__gust_comment_bubble";`,
+		`commentBubble.innerHTML=commentAddIconSvg;`,
+		`commentBubble.setAttribute("aria-pressed","false");`,
+		`commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});`,
+		`[commentBubble]`,
+		`#__gust_comment_bubble{position:fixed;right:14px;top:50%;`,
+		`width:40px;height:40px`,
+		`transform:translateY(-50%);transition:background .18s ease,border-color .18s ease,color .18s ease}`,
+		`#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}`,
+		`#__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
+		`html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting #__gust_comment_bubble,`,
+		`html.__gust_selecting #__gust_widget button,html.__gust_selecting #__gust_comment_bubble,`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("comment mode bubble injection missing %q", fragment)
+		}
+	}
+
+	mountStart := strings.Index(script, `function mountCommentBubble(){`)
+	if mountStart < 0 {
+		t.Fatal("could not isolate comment mode bubble mounting")
+	}
+	mountEnd := strings.Index(script[mountStart:], `function createCommentUI(){`)
+	if mountEnd < 0 {
+		t.Fatal("could not isolate comment mode bubble mounting")
+	}
+	mount := script[mountStart : mountStart+mountEnd]
+	for _, removed := range []string{
+		"commentToggleButton",
+		"__gust_comment_toggle",
+		"const add=document.createElement(\"button\")",
+		"add.addEventListener(\"click\",beginSelection)",
+		"function beginSelection(",
+		"commentToolbar.querySelector(\"button:not(#__gust_wind_button)\")",
+	} {
+		if strings.Contains(script, removed) {
+			t.Errorf("legacy comment toggle %q is still present", removed)
+		}
+	}
+	for _, unexpected := range []string{"toggleToolbox", "syncPanel", "__gust_toolbox_open", "translateY(-6px)"} {
+		if strings.Contains(mount, unexpected) {
+			t.Errorf("comment mode bubble must not use panel or rising behavior %q", unexpected)
+		}
+	}
+	styleStart := strings.Index(script, `#__gust_comment_bubble{`)
+	if styleStart < 0 {
+		t.Fatal("could not isolate comment mode bubble styles")
+	}
+	styleEnd := strings.Index(script[styleStart:], `/* Bottom bubble;`)
+	if styleEnd < 0 {
+		t.Fatal("could not isolate comment mode bubble styles")
+	}
+	style := script[styleStart : styleStart+styleEnd]
+	if strings.Contains(style, "transition:transform") || strings.Contains(style, ":hover{transform") {
+		t.Error("comment mode bubble must not animate or rise on hover")
+	}
+	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}`
+	hoverRule := `#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}`
+	if !strings.Contains(style, activeRule) {
+		t.Error("comment mode bubble on state must use an opaque fill, high-contrast icon, and a visible halo")
+	}
+	if strings.Contains(style, `#__gust_comment_bubble[aria-pressed=true]{background:#49301c`) {
+		t.Error("comment mode bubble on state must not use the muted dark fill")
+	}
+	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) {
+		t.Error("comment mode bubble on state must remain filled when hovered")
+	}
+}
+
+func TestCommentModeBubbleBehaviorWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	modeStart := strings.Index(script, `function updateCommentUI(){`)
+	modeEnd := strings.Index(script, `function cssEscape(v){`)
+	mountStart := strings.Index(script, `function mountCommentBubble(){`)
+	mountEnd := strings.Index(script, `function createCommentUI(){`)
+	if modeStart < 0 || modeEnd < modeStart || mountStart < 0 || mountEnd < mountStart {
+		t.Fatal("could not extract comment mode bubble behavior")
+	}
+	harness := commentModeBubbleHarnessPrelude + script[modeStart:modeEnd] + script[mountStart:mountEnd] + commentModeBubbleHarnessChecks
+	file := t.TempDir() + "/comment-mode-bubble.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment mode bubble behavior: %v\n%s", err, output)
+	}
+}
+
+const commentModeBubbleHarnessPrelude = `class El {
+  constructor() { this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(type, fn) { this.listeners[type] = fn; }
+  appendChild(child) { this.child = child; return child; }
+}
+const document = {
+  documentElement: { classList: { toggle() {} } },
+  body: new El(),
+  createElement() { return new El(); },
+  querySelector() { return null; },
+};
+const commentAddIconSvg = '<svg data-icon="add-comment"></svg>';
+const selfDev = false;
+let commentBubble = null;
+let selecting = false;
+let editorOpen = false;
+let selectedElement = null;
+let selectedPoint = null;
+let editorAnchor = null;
+let hoverPath = [];
+const modeTitle = new El();
+const autoLabel = new El();
+const commentToolbar = {
+  querySelector(selector) {
+    if (selector === '[data-mode-title]') return modeTitle;
+    return null;
+  },
+};
+const gustWidget = { classList: { toggle() {} } };
+const commentUI = { querySelector(selector) { return selector === '[data-autosubmit-label]' ? autoLabel : null; } };
+function setHighlight() {}
+function saveCommentMode() {}
+function savePinned() {}
+function scheduleRenderPath() {}
+function updateEditorPosition() {}
+let panelSyncs = 0;
+function syncPanel() { panelSyncs++; }
+function assert(condition, message) { if (!condition) throw new Error(message); }
+`
+
+const commentModeBubbleHarnessChecks = `
+mountCommentBubble();
+assert(document.body.child === commentBubble, 'comment bubble mounts in the document');
+assert(commentBubble.id === '__gust_comment_bubble', 'comment bubble has a stable id');
+assert(commentBubble.title === 'Add comment', 'comment bubble has a visible tooltip');
+assert(commentBubble.attrs['aria-label'] === 'Add comment', 'comment bubble has an accessible name');
+assert(commentBubble.attrs['aria-pressed'] === 'false', 'comment bubble starts unpressed');
+assert(commentBubble.innerHTML === commentAddIconSvg, 'comment bubble uses the add-comment icon');
+let stopped = 0;
+commentBubble.listeners.click({ stopPropagation() { stopped++; } });
+assert(stopped === 1, 'comment bubble click does not leak to the page');
+assert(selecting === true, 'click enables comment creation mode');
+assert(commentBubble.attrs['aria-pressed'] === 'true', 'active comment mode is exposed as pressed');
+assert(commentBubble.attrs['aria-label'] === 'Exit comment mode', 'active comment mode has an exit label');
+assert(panelSyncs === 0, 'comment bubble does not open the Gust panel');
+commentBubble.listeners.click({ stopPropagation() { stopped++; } });
+assert(selecting === false, 'clicking again disables comment creation mode');
+assert(commentBubble.attrs['aria-pressed'] === 'false', 'disabled comment mode clears the pressed state');
+assert(commentBubble.attrs['aria-label'] === 'Add comment', 'disabled comment mode restores its label');
+assert(panelSyncs === 0, 'toggling comment mode never opens the Gust panel');
+console.log('comment mode bubble ok');
+`
 
 func TestProxyServesSoundsWithHashCache(t *testing.T) {
 	app := httptest.NewServer(http.NotFoundHandler())
@@ -890,7 +1051,6 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`gust-debug`,
 		`outline-offset: -1px`,
 		`outline-offset:2px`,
-		`add.setAttribute("aria-label","Add comment")`,
 		`commentToolbar) gustPanel.appendChild(commentToolbar)`,
 		`#__gust_comment_toolbar{display:flex;`,
 		`#__gust_widget.__gust_open.__gust_commenting #__gust_comments{display:block}`,
@@ -917,18 +1077,13 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`return {path:path, guessedIndex:Math.max(0,path.indexOf(guess))}`,
 		`function updateHoverPath(target){`,
 		`const commentIconSvg='<svg`,
-		`let commentHovering = false;`,
-		`if (pinned || (hovering && !commentHovering)) {`,
+		`if (pinned || hovering) {`,
 		`const commentAddIconSvg='<svg`,
-		`commentToggleButton.innerHTML=commentAddIconSvg;`,
-		`commentToggleButton.addEventListener("mouseenter",function(){commentHovering=true;syncPanel();});`,
-		`commentToggleButton.addEventListener("mouseleave",function(){commentHovering=false;syncPanel();});`,
-		`add.innerHTML=commentIconSvg;`,
-		`add.addEventListener("click",beginSelection);commentToolbar.insertBefore(add,windButton);`,
-		`commentToggleButton.addEventListener("click",beginCommentTool);`,
-		`#__gust_comment_toggle{display:grid;place-items:center;width:28px;height:28px;`,
-		`#__gust_comment_toggle[aria-pressed=true]{background:#49301c;color:#fff7e9}`,
-		`@media (hover:hover){#__gust_comment_toggle:hover{background:#49301c;color:#fff7e9}}`,
+		`function mountCommentBubble(){`,
+		`commentBubble.id="__gust_comment_bubble";`,
+		`commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});`,
+		`#__gust_comment_bubble{position:fixed;right:14px;top:50%;`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;`,
 		`#__gust_icon.__gust_pinned{background:#49301c;color:#fff7e9}`,
 		`const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=`,
 		`function beginCommentTool(){if(selecting||editorOpen){closeCommentMode();return;}`,
@@ -974,7 +1129,6 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`replace(/\s+/g," ")`,
 		`function locatorFor(`,
 		`function safeOuterHTML(`,
-		`function beginSelection(`,
 
 		`fetch("/__gust/comments"`,
 		`method:"POST"`,
@@ -1016,7 +1170,6 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`animation:__gust_comment_spin .9s linear infinite`,
 		`prefers-reduced-motion:reduce`,
 		`editor.append(close,title,textarea,save,hint,result)`,
-		`function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}`,
 		`replace(/\s+/g," ")`,
 		`Comment sync failed: `,
 		`open.title=onPage?`,
@@ -1037,7 +1190,19 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 			t.Fatalf("script missing %q in %s", check, script)
 		}
 	}
-	for _, removed := range []string{"Shrink", "Expand", "Choose this element", "Cancel", "Change selection", "Selected element"} {
+	for _, removed := range []string{
+		"Shrink",
+		"Expand",
+		"Choose this element",
+		"Cancel",
+		"Change selection",
+		"Selected element",
+		"commentToggleButton",
+		"__gust_comment_toggle",
+		"const add=document.createElement(\"button\")",
+		"add.addEventListener(\"click\",beginSelection)",
+		"function beginSelection(",
+	} {
 		if strings.Contains(script, removed) {
 			t.Errorf("script still contains removed comment-mode UI %q", removed)
 		}
