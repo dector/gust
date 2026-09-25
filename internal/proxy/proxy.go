@@ -727,7 +727,12 @@ function syncPanel(){
   gustWidget.classList.remove("__gust_open");
   stopInfo();
 }
-function isGustNode(el){ return !!(el && el.closest && el.closest("#__gust_widget,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox,#__gust_toolbox_panel,#__gust_error,[data-gust-overlay]")); }
+/* Every node Gust injects into the page. One list, two jobs: isGustNode() must
+   block these as comment targets, and safeOuterHTML() must strip them from
+   captured context. They used to be two hand-typed lists, and #__gust_bubble
+   landed in only one of them - so add a node here, never inline. */
+const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox,#__gust_toolbox_panel,#__gust_error,[data-gust-overlay]";
+function isGustNode(el){ return !!(el && el.closest && el.closest(gustNodes)); }
 function isPrivatePanelNode(el){ return !!(el && el.closest && el.closest("details.__gust_log,#__gust_comments [data-comments]")); }
 function isSelfDevPanel(el){ return !!(selfDev && el && el.closest && el.closest("#__gust_panel,#__gust_comments") && !isPrivatePanelNode(el)); }
 function blockedCommentTarget(el){ return isGustNode(el) && !isSelfDevPanel(el); }
@@ -1192,7 +1197,7 @@ function safeOuterHTML(el){
   if(isPrivatePanelNode(el)||el.matches("input[type=password],input[type=hidden]"))return "";
   const clone=el.cloneNode(true);
   if(clone.matches("textarea"))clone.textContent="";
-  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],#__gust_widget,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox,#__gust_toolbox_panel,#__gust_error,[data-gust-overlay],details.__gust_log,#__gust_comments [data-comments]").forEach(n=>n.remove());
+  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],"+gustNodes+",details.__gust_log,#__gust_comments [data-comments]").forEach(n=>n.remove());
   clone.querySelectorAll("textarea").forEach(n=>{n.textContent="";});
   [clone].concat(Array.from(clone.querySelectorAll("*"))).forEach(function(n){
     if(n.matches&&n.matches("input[type=password],input[type=hidden]"))return;

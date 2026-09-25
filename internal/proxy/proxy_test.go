@@ -280,8 +280,10 @@ func TestCommentUnreadBadgeInjected(t *testing.T) {
 		`openCommentPopover(c.id);locateComment(c);`,
 		`commentUnreadBadge.id="__gust_comment_unread_badge";`,
 		`commentUnreadBadge.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openFirstUnreadComment();});`,
-		`#__gust_widget,#__gust_comment_bubble,#__gust_comment_unread_badge`,
-		`#__gust_widget,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox`,
+		// The unread badge is registered in the one shared list of injected
+		// Gust nodes, so it is neither a comment target nor captured context.
+		`const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge`,
+		`hidden],"+gustNodes+",details.__gust_log,#__gust_comments [data-comments]")`,
 		`#__gust_comment_unread_badge{position:fixed;right:23px;top:calc(50% + 29px);`,
 		`#__gust_comment_unread_badge[hidden]{display:none}`,
 		`color:#fff;background:#dc2626;border:1px solid #fecaca`,
@@ -1117,6 +1119,12 @@ func TestProxySelfDevScript(t *testing.T) {
 		t.Fatal("self-dev must be opt-in")
 	}
 	for _, expected := range []string{
+		// One shared list of injected Gust nodes, used by both the comment
+		// target guard and the captured-context strip. Keep these in step.
+		`const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox,#__gust_toolbox_panel,#__gust_error,[data-gust-overlay]";`,
+		`function isGustNode(el){ return !!(el && el.closest && el.closest(gustNodes)); }`,
+		`function blockedCommentTarget(el){ return isGustNode(el) && !isSelfDevPanel(el); }`,
+		`clone.querySelectorAll("script,style,input[type=password],input[type=hidden],"+gustNodes+",details.__gust_log,#__gust_comments [data-comments]")`,
 		`function isSelfDevPanel(el)`,
 		`function isPrivatePanelNode(el)`,
 		`if(isPrivatePanelNode(el)||el.matches("input[type=password],input[type=hidden]"))return "";`,
@@ -1130,6 +1138,205 @@ func TestProxySelfDevScript(t *testing.T) {
 		}
 	}
 }
+
+// TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable runs the real comment
+// mode guard against a small DOM. It pins the deliberate parts - Ctrl unlocks
+// self-dev panel chrome, thread rows and pins stay blocked - and the bug: the
+// toolbox bubble must be blocked with no modifier, so in comment mode its own
+// click handler still opens the toolbox.
+func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	nodesStart := strings.Index(script, `const gustNodes = "`)
+	nodesEnd := strings.Index(script, `function meaningfulPath(el){`)
+	moveStart := strings.Index(script, "document.addEventListener(\"mousemove\",function(e){\n  if(!selecting)return;")
+	clickStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  if(!selecting||blockedCommentTarget(e.target)")
+	if nodesStart < 0 || nodesEnd < nodesStart || moveStart < 0 || clickStart < 0 {
+		t.Fatal("could not extract the comment target guard")
+	}
+	handlers := ""
+	for _, start := range []int{moveStart, clickStart} {
+		end := strings.Index(script[start:], "},true);")
+		if end < 0 {
+			t.Fatal("could not find the end of a comment mode guard")
+		}
+		handlers += script[start:start+end+len("},true);")] + "\n"
+	}
+	harness := commentGuardHarnessPrelude + script[nodesStart:nodesEnd] + handlers + commentGuardHarnessChecks
+	file := t.TempDir() + "/comment-guard.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment target guard: %v\n%s", err, output)
+	}
+}
+
+const commentGuardHarnessPrelude = `/* Just enough DOM for the real Element.closest()/matches() calls in the guard. */
+function matchesSimple(el, part) {
+  const parsed = /^([a-z]*)((?:[#.][\w-]+|\[[^\]]+\])*)$/i.exec(part);
+  if (!parsed) throw new Error('unsupported selector: ' + part);
+  if (parsed[1] && el.tagName.toLowerCase() !== parsed[1].toLowerCase()) return false;
+  for (const token of parsed[2].match(/[#.][\w-]+|\[[^\]]+\]/g) || []) {
+    if (token[0] === '#') { if (el.id !== token.slice(1)) return false; }
+    else if (token[0] === '.') { if (!el.classList.contains(token.slice(1))) return false; }
+    else if (!(token.slice(1, -1).split('=')[0] in el.attrs)) return false;
+  }
+  return true;
+}
+function matchesList(el, selector) {
+  return selector.split(',').some(function(part) {
+    const steps = part.trim().split(/\s+/);
+    let node = el;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (!node || !matchesSimple(node, steps[i])) return false;
+      node = node.parentElement;
+    }
+    return true;
+  });
+}
+class El {
+  constructor(tag) {
+    this.tagName = (tag || 'div').toUpperCase();
+    this.id = '';
+    this.attrs = {};
+    this.classes = [];
+    this.children = [];
+    this.parentElement = null;
+    this.listeners = {};
+    this.classList = { contains: (name) => this.classes.includes(name) };
+  }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+  addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+  matches(selector) { return matchesList(this, selector); }
+  closest(selector) { for (let n = this; n; n = n.parentElement) if (matchesList(n, selector)) return n; return null; }
+}
+const document = {
+  body: new El('body'),
+  documentElement: new El('html'),
+  listeners: {},
+  createElement(tag) { return new El(tag); },
+  addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+};
+const selfDev = true;
+const location = { pathname: '/' };
+let selecting = true;
+let hoverPath = [];
+let highlighted = null;
+let chooseCalls = 0;
+function updateHoverPath(target) { hoverPath = [target]; return true; }
+function chooseSelection() { chooseCalls++; }
+function setHighlight(el) { highlighted = el; }
+function updateCommentUI() {}
+function el(tag, id, attrs) {
+  const node = new El(tag);
+  if (id) node.id = id;
+  Object.keys(attrs || {}).forEach(function(name) { node.setAttribute(name, attrs[name]); });
+  return node;
+}
+function append(parent, child) { parent.appendChild(child); return child; }
+/* Browser order: capture handlers on document first, then the target's own
+   listeners, unless a capture handler stopped the event. */
+function send(type, target, ctrlKey) {
+  const event = {
+    target: target,
+    ctrlKey: !!ctrlKey,
+    stopped: false,
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() { this.stopped = true; },
+    stopImmediatePropagation() { this.stopped = true; },
+  };
+  for (const fn of (document.listeners[type] || []).slice()) {
+    fn(event);
+    if (event.stopped) break;
+  }
+  if (!event.stopped) for (const fn of (target.listeners[type] || []).slice()) fn(event);
+  return event;
+}
+function assert(condition, message) { if (!condition) throw new Error(message); }
+`
+
+const commentGuardHarnessChecks = `
+/* The real nesting: the info panel and the comment list are both children of
+   #__gust_widget, the bubble and comment badge hang off the body, and pins,
+   popover and breadcrumbs carry [data-gust-overlay]. */
+const widget = append(document.body, el('div', '__gust_widget'));
+const panel = append(widget, el('div', '__gust_panel'));
+const comments = append(widget, el('div', '__gust_comments'));
+const list = append(comments, el('div', '', { 'data-comments': '' }));
+
+/* A plain page element is a normal comment target. */
+const hero = append(document.body, el('h1'));
+const heroWord = append(hero, el('span'));
+send('click', heroWord);
+assert(!blockedCommentTarget(heroWord), 'a plain page element is not blocked');
+assert(chooseCalls === 1, 'a plain page element opens the comment editor');
+
+/* Ctrl unlocks self-dev panel chrome, and only that. */
+const label = append(append(panel, el('div')), el('span'));
+send('click', label, true);
+assert(!blockedCommentTarget(label), 'Ctrl unlocks panel chrome');
+assert(chooseCalls === 2, 'Ctrl selects panel chrome in comment mode');
+send('click', label, false);
+assert(chooseCalls === 2, 'without Ctrl panel chrome stays blocked');
+assert(isSelfDevPanel(label) && !isPrivatePanelNode(label), 'panel chrome is a self-dev node, so only the Ctrl clause changes');
+
+/* Deliberate: thread rows, pins, popover and breadcrumbs stay blocked, Ctrl or
+   not, so a new comment can never capture the text of an existing thread. */
+const thread = append(list, el('button', '', { 'data-comment-id': 'c1' }));
+send('click', thread, true);
+assert(chooseCalls === 2, 'a thread row is not a comment target even with Ctrl');
+assert(isPrivatePanelNode(thread), 'a thread row is a private panel node');
+const overlay = append(document.documentElement, el('div', '', { 'data-gust-overlay': '' }));
+const pin = append(overlay, el('button'));
+pin.classes = ['__gust_pin'];
+send('click', pin, true);
+assert(chooseCalls === 2, 'a pin is not a comment target even with Ctrl');
+const popover = append(overlay, el('div', '__gust_comment_popover'));
+const crumbs = append(overlay, el('div', '__gust_selected_path'));
+send('click', append(popover, el('button')));
+send('click', append(crumbs, el('span')));
+assert(chooseCalls === 2, 'the popover and breadcrumbs are not comment targets');
+const icon = append(widget, el('div', '__gust_icon'));
+send('click', icon, true);
+assert(chooseCalls === 2, 'the Gust icon is not a comment target even with Ctrl');
+const log = append(panel, el('details'));
+log.classes = ['__gust_log'];
+send('click', append(log, el('pre')));
+assert(chooseCalls === 2, 'the server log is not a comment target');
+
+/* The bug: #__gust_bubble was never registered, so comment mode opened the
+   editor on it and swallowed the click that shapeshifts it into the toolbox. */
+const bubble = append(document.body, el('button', '__gust_bubble'));
+let toolboxToggles = 0;
+bubble.addEventListener('click', function() { toolboxToggles++; });
+const mark = append(bubble, el('span', '__gust_bubble_mark'));
+assert(isGustNode(bubble), 'the toolbox bubble is a Gust node');
+assert(blockedCommentTarget(bubble), 'the toolbox bubble is a blocked comment target');
+assert(blockedCommentTarget(mark), 'anything inside the bubble is blocked with its parent');
+send('click', bubble);
+assert(chooseCalls === 2, 'a plain click on the bubble never opens the comment editor');
+assert(toolboxToggles === 1, 'a plain click on the bubble opens the toolbox in comment mode');
+send('click', bubble, true);
+assert(chooseCalls === 2, 'Ctrl does not turn the bubble into a comment target either');
+assert(toolboxToggles === 2, 'Ctrl held, the bubble still opens the toolbox');
+hoverPath = ['stale'];
+send('mousemove', bubble);
+assert(hoverPath.length === 0, 'hovering the bubble clears the comment path');
+send('mousemove', heroWord);
+assert(hoverPath.length === 1 && hoverPath[0] === heroWord, 'hovering a page element still builds a path');
+
+/* The comment bubble and unread badge keep working the other way round. */
+const commentBubble = append(document.body, el('button', '__gust_comment_bubble'));
+const unreadBadge = append(document.body, el('button', '__gust_comment_unread_badge'));
+assert(blockedCommentTarget(commentBubble), 'the comment bubble is a blocked comment target');
+assert(blockedCommentTarget(unreadBadge), 'the unread badge is a blocked comment target');
+console.log('comment target guard ok');
+`
 
 func TestProxyInjectedScriptContent(t *testing.T) {
 	script := reloadScript(12, 8765)
