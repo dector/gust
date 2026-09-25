@@ -148,6 +148,32 @@ func TestToolboxInjected(t *testing.T) {
 	}
 }
 
+func TestGustBubbleInjected(t *testing.T) {
+	for _, script := range []string{reloadScript(1, 8765), reloadScript(1, 8765, true, false, true)} {
+		for _, fragment := range []string{
+			`let gustBubble;`,
+			`const gustMarkSvg='<svg`,
+			`function mountBubble(){`,
+			`gustBubble.id = "__gust_bubble";`,
+			`gustBubble.innerHTML = gustMarkSvg;`,
+			`gustBubble.addEventListener("click", function(){ toggleToolbox(`,
+			`function toggleToolbox(open){`,
+			`gustBubble.classList.toggle("__gust_toolbox_open", open);`,
+			`if (document.body) mountBubble();`,
+			`width:40px;height:40px`,
+			`background:#ffffff0d;border:1px solid #ffffff24;border-radius:999px;backdrop-filter:blur(12px)`,
+			`cursor:pointer;`,
+			`#__gust_bubble:hover{transform:translate(-50%,-6px);`,
+			`#__gust_bubble.__gust_toolbox_open{width:min(400px,calc(100vw - 32px));height:90px;padding:12px 14px;border-radius:1.2rem;color:#ffd9a8}`,
+			`#__gust_bubble.__gust_toolbox_open svg{width:64px;height:64px}`,
+		} {
+			if !strings.Contains(script, fragment) {
+				t.Errorf("bubble injection missing %q", fragment)
+			}
+		}
+	}
+}
+
 func TestProxyServesSoundsWithHashCache(t *testing.T) {
 	app := httptest.NewServer(http.NotFoundHandler())
 	defer app.Close()

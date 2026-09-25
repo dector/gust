@@ -572,6 +572,7 @@ let failing = false;
 let gustIcon;
 let gustWidget;
 let gustPanel;
+let gustBubble;
 let gustToolbox;
 let gustToolboxPanel;
 let toolboxOpen = false;
@@ -626,6 +627,7 @@ let popoverReplyId = null;
 let popoverReplyPending = false;
 let popoverResolvePending = false;
 let pathFrame = 0;
+const gustMarkSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,192c3.39,9.15,13.67,16,24,16a24,24,0,0,0,0-48H40" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M96,64c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M184,96c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
 const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/></svg>';
 const commentAddIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M12 9v6"/><path d="M9 12h6"/></svg>';
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
@@ -1571,6 +1573,15 @@ function mountIcon(){
 #__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}
 #__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
 #__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}
+/* Bottom bubble; on click it shapeshifts into the toolbox panel. */
+#__gust_bubble{position:fixed;left:50%%;bottom:14px;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transform:translate(-50%%,0);transition:transform .18s ease,background .18s ease,border-color .18s ease,color .18s ease,width .2s ease,height .2s ease,border-radius .2s ease}
+#__gust_bubble svg{display:block;width:22px;height:22px}
+#__gust_bubble:hover{transform:translate(-50%%,-6px);background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}
+/* Toolbox panel: 10x wide, and as tall as one big icon plus padding/borders. */
+#__gust_bubble.__gust_toolbox_open{width:min(400px,calc(100vw - 32px));height:90px;padding:12px 14px;border-radius:1.2rem;color:#ffd9a8}
+#__gust_bubble.__gust_toolbox_open:hover{transform:translate(-50%%,0)}
+#__gust_bubble.__gust_toolbox_open svg{width:64px;height:64px}
+@media (prefers-reduced-motion:reduce){#__gust_bubble{transition:none}#__gust_bubble:hover,#__gust_bubble.__gust_toolbox_open:hover{transform:translate(-50%%,0)}}
 #__gust_panel{top:36px;color-scheme:dark;background:#ffffff0d;color:#fff7e9;border:1px solid #ffffff24;border-radius:1.2rem;backdrop-filter:blur(12px);padding:12px 14px;box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
 #__gust_panel .__gust_label,#__gust_panel .__gust_log summary{color:#e0cfba}
 #__gust_panel .__gust_group{border-color:#f9bb7155;background:#49301cbb}
@@ -1627,7 +1638,7 @@ function mountIcon(){
   gustIcon = document.createElement("div");
   gustIcon.id = "__gust_icon";
   gustIcon.title = "Gust";
-  gustIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-hidden="true"><path d="M128,192c3.39,9.15,13.67,16,24,16a24,24,0,0,0,0-48H40" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M96,64c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M184,96c3.39-9.15,13.67-16,24-16a24,24,0,0,1,0,48H32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
+  gustIcon.innerHTML = gustMarkSvg;
   gustPanel = document.createElement("div");
   gustPanel.id = "__gust_panel";
   const iconRow = document.createElement("div");
@@ -1658,6 +1669,26 @@ function mountIcon(){
   syncPanel();
 }
 if (document.body) mountIcon(); else document.addEventListener("DOMContentLoaded", mountIcon, {once:true});
+/* Bottom bubble; on click it shapeshifts into the toolbox panel. Not wired to
+   any action yet. */
+function mountBubble(){
+  if (document.getElementById("__gust_bubble")) return;
+  gustBubble = document.createElement("button");
+  gustBubble.id = "__gust_bubble";
+  gustBubble.type = "button";
+  gustBubble.setAttribute("aria-expanded", "false");
+  gustBubble.title = "Gust";
+  gustBubble.innerHTML = gustMarkSvg;
+  gustBubble.addEventListener("click", function(){ toggleToolbox(!gustBubble.classList.contains("__gust_toolbox_open")); });
+  document.body.appendChild(gustBubble);
+}
+function toggleToolbox(open){
+  if (!gustBubble) return;
+  gustBubble.classList.toggle("__gust_toolbox_open", open);
+  gustBubble.setAttribute("aria-expanded", String(open));
+}
+document.addEventListener("keydown", function(e){ if(e.key==="Escape"&&gustBubble&&gustBubble.classList.contains("__gust_toolbox_open")) toggleToolbox(false); });
+if (document.body) mountBubble(); else document.addEventListener("DOMContentLoaded", mountBubble, {once:true});
 /* Toolbox disabled for now.
 function mountToolbox(){
   if (document.getElementById("__gust_toolbox")) { gustToolbox = document.getElementById("__gust_toolbox"); gustToolboxPanel = document.getElementById("__gust_toolbox_panel"); return; }
