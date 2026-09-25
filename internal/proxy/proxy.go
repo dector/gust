@@ -606,6 +606,7 @@ let selectedIndex = 0;
 let highlighted = null;
 let selectedElement = null;
 let selectedPoint = null;
+let gustSelection = false;
 let editorAnchor = null;
 let editorOpen = false;
 let commentState = [];
@@ -735,17 +736,23 @@ const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_
 function isGustNode(el){ return !!(el && el.closest && el.closest(gustNodes)); }
 function isPrivatePanelNode(el){ return !!(el && el.closest && el.closest("details.__gust_log,#__gust_comments [data-comments]")); }
 function isSelfDevPanel(el){ return !!(selfDev && el && el.closest && el.closest("#__gust_panel,#__gust_comments") && !isPrivatePanelNode(el)); }
-function blockedCommentTarget(el){ return isGustNode(el) && !isSelfDevPanel(el); }
-function meaningfulPath(el){
-  if (!el || el.nodeType !== 1 || blockedCommentTarget(el)) return {path:[], guessedIndex:0};
+/* Every node of Gust's own UI, private ones included. */
+function isGustNodeOrPanel(el){ return isGustNode(el) || isSelfDevPanel(el) || isPrivatePanelNode(el); }
+/* Ctrl+click is how you comment on Gust while building Gust, so with Ctrl every
+   element on the page is a target - the widget, the toolbar, thread rows, pins,
+   the popover, the breadcrumbs, the log. Without Ctrl Gust's own nodes stay
+   unselectable and their clicks fall through to the panel. */
+function blockedCommentTarget(el, ctrlKey){ return !ctrlKey && isGustNodeOrPanel(el); }
+function meaningfulPath(el, ctrlKey){
+  if (!el || el.nodeType !== 1 || blockedCommentTarget(el, ctrlKey)) return {path:[], guessedIndex:0};
   let guess = el;
   const interactive = el.closest("button,a,input,textarea,select,[role=button],[role=link]");
-  if (interactive && !blockedCommentTarget(interactive)) guess = interactive;
+  if (interactive && !blockedCommentTarget(interactive, ctrlKey)) guess = interactive;
   else {
     let n = el;
     while (n.parentElement && n.parentElement !== document.body && n.parentElement !== document.documentElement) {
       const p = n.parentElement;
-      if (isSelfDevPanel(el) && p.id === "__gust_widget") break;
+      if (isGustNodeOrPanel(el) && p.id === "__gust_widget") break;
       if (p.children.length > 1 || (p.textContent || "").trim().length > 180) break;
       n = p;
     }
@@ -753,9 +760,9 @@ function meaningfulPath(el){
   }
   const path = [];
   for (let n = el; n && path.length < 12; n = n.parentElement) {
-    if (blockedCommentTarget(n)) break;
+    if (blockedCommentTarget(n, ctrlKey)) break;
     path.push(n);
-    if (isSelfDevPanel(el) && (n.id === "__gust_panel" || n.id === "__gust_comments")) break;
+    if (isGustNodeOrPanel(el) && (n.id === "__gust_panel" || n.id === "__gust_comments")) break;
   }
   return {path:path, guessedIndex:Math.max(0,path.indexOf(guess))};
 }
@@ -808,7 +815,12 @@ function matchingElement(c){
   const l=parseLocator(c); if(!l||!l.selector||l.confidence!=="high"||l.matches!==1)return null;
   let matches; try{matches=document.querySelectorAll(l.selector);}catch(_){return null;}
   if(matches.length!==1)return null;
-  const el=matches[0]; if(blockedCommentTarget(el)||el.tagName.toLowerCase()!==l.tag)return null;
+  const el=matches[0]; if(blockedCommentTarget(el,l.gust)||el.tagName.toLowerCase()!==l.tag)return null;
+  /* A Ctrl comment sits on Gust's own UI, which keeps moving: a thread row
+     flips Draft to Submitted, the log scrolls, a pin count grows with every
+     reply. Such a locator carries a stable identity, so match on that and never
+     on the text that was on screen when the comment was made. */
+  if(l.gust&&l.identity)return gustIdentityOf(el)===l.identity?el:null;
   if(l.text){const actual=(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ");if(!actual.includes(l.text))return null;}
   return el;
 }
@@ -1165,23 +1177,55 @@ function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPa
 function updateCommentUI(){
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
-  const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click to select Gust panel elements)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);[commentBubble].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle)modeTitle.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
+  const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click selects any element, Gust's own UI included)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click selects any element, Gust's own UI included)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);[commentBubble].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle)modeTitle.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
-function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
-function beginCommentTool(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
-function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);updateCommentUI();}
+function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function beginCommentTool(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);updateCommentUI();}
 function chooseSelection(e){if(!hoverPath.length)return;selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
+  gustSelection=!!e.ctrlKey&&isGustNodeOrPanel(selectedElement);
   const r=selectedElement.getBoundingClientRect();
   selectedPoint=r.width>0&&r.height>0?{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}:null;
   editorAnchor={x:e.clientX,y:e.clientY};
   selecting=false;editorOpen=true;hoverPath=[];setHighlight(null);updateCommentUI();const box=document.querySelector("[data-editor] textarea");if(box)box.focus();}
 function cssEscape(v){ return window.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/[^a-zA-Z0-9_-]/g,"\\$&"); }
+/* Attributes that name one node of Gust's own UI for as long as it lives: the
+   thread id on a row and on its pin, and a log section's name. */
+const gustIdentities = "[data-comment-id],[data-name]";
+function gustIdentityOf(el){
+  const anchor=el&&el.closest&&el.closest(gustIdentities);
+  if(!anchor)return "";
+  return anchor.getAttribute("data-comment-id")||anchor.getAttribute("data-name")||"";
+}
+/* Gust's own UI re-renders under a comment: the thread list is rebuilt on
+   every poll and the log scrolls. A selector that counts positions therefore
+   dies, so anchor it on the nearest stable id and give only the short path from
+   that anchor down to the selected element. Empty when there is no anchor. */
+function gustLocatorSelector(el){
+  const anchor=el.closest(gustIdentities);
+  if(!anchor)return "";
+  const identity=gustIdentityOf(anchor);
+  let scope="";for(let n=anchor.parentElement;n&&!scope;n=n.parentElement){ if(n.id)scope="#"+cssEscape(n.id); }
+  const steps=[];
+  for(let n=el;n&&n!==anchor;n=n.parentElement){
+    const same=n.parentElement?Array.from(n.parentElement.children).filter(function(x){return x.tagName===n.tagName;}):[];
+    steps.unshift(n.tagName.toLowerCase()+(same.length>1?":nth-of-type("+(same.indexOf(n)+1)+")":""));
+    if(steps.length>4)return "";
+  }
+  const attr=anchor.hasAttribute("data-comment-id")?"data-comment-id":"data-name";
+  const selector=scope+" "+anchor.tagName.toLowerCase()+"["+attr+"=\""+identity.replace(/\\/g,"\\\\").replace(/"/g,"\\\"")+"\"]"+steps.map(function(s){return " > "+s;}).join("");
+  try{ return document.querySelectorAll(selector).length===1?selector:""; }catch(_){ return ""; }
+}
+/* True when the comment being saved is a Ctrl selection of Gust's own UI. A
+   Ctrl+click on the host page captures exactly what a plain click captures. */
+function isGustSelection(el){ return gustSelection && isGustNodeOrPanel(el); }
 function locatorFor(el,point){
   const tag=el.tagName.toLowerCase();
-  let selector="";
-  if(el===document.body||el===document.documentElement)selector=tag;
+  const gust=isGustSelection(el);
+  let selector=gust?gustLocatorSelector(el):"";
+  if(!selector&&(el===document.body||el===document.documentElement))selector=tag;
   if(!selector&&el.id){ const candidate="#"+cssEscape(el.id); if(document.querySelectorAll(candidate).length===1) selector=candidate; }
   if(!selector){
     const attrs=["data-testid","name","aria-label"];
@@ -1189,15 +1233,20 @@ function locatorFor(el,point){
   }
   if(!selector){ let n=el, bits=[]; while(n&&n.nodeType===1&&n!==document.body&&bits.length<5){let bit=n.tagName.toLowerCase();if(n.parentElement){const same=Array.from(n.parentElement.children).filter(x=>x.tagName===n.tagName);if(same.length>1)bit+=":nth-of-type("+(same.indexOf(n)+1)+")";}bits.unshift(bit);const s=bits.join(" > ");try{if(document.querySelectorAll(s).length===1){selector=s;break;}}catch(_){} n=n.parentElement;} }
   const hasPrivateChildren=isSelfDevPanel(el)&&!!el.querySelector("details.__gust_log,#__gust_comments [data-comments]");
-  const text=(el===document.body||el===document.documentElement||isPrivatePanelNode(el)||hasPrivateChildren)?"":(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ").slice(0,160);
+  const privateNode=!gust&&(isPrivatePanelNode(el)||hasPrivateChildren);
+  const text=(el===document.body||el===document.documentElement||privateNode)?"":(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ").slice(0,160);
   let count=0;try{count=selector?document.querySelectorAll(selector).length:0;}catch(_){}
-  return JSON.stringify({selector:selector,tag:tag,text:text,confidence:selector&&count===1?"high":"low",matches:count,point:point});
+  return JSON.stringify({selector:selector,tag:tag,text:text,confidence:selector&&count===1?"high":"low",matches:count,point:point,gust:gust,identity:gust?gustIdentityOf(el):""});
 }
 function safeOuterHTML(el){
-  if(isPrivatePanelNode(el)||el.matches("input[type=password],input[type=hidden]"))return "";
+  const gust=isGustSelection(el);
+  if(el.matches("input[type=password],input[type=hidden]")||(!gust&&isPrivatePanelNode(el)))return "";
   const clone=el.cloneNode(true);
   if(clone.matches("textarea"))clone.textContent="";
-  clone.querySelectorAll("script,style,input[type=password],input[type=hidden],"+gustNodes+",details.__gust_log,#__gust_comments [data-comments]").forEach(n=>n.remove());
+  /* A Ctrl comment is about Gust's own UI, so it keeps the widget, the log and
+     the comment list; every other comment stays free of injected chrome. */
+  const strip="script,style,input[type=password],input[type=hidden]"+(gust?"":","+gustNodes+",details.__gust_log,#__gust_comments [data-comments]");
+  clone.querySelectorAll(strip).forEach(n=>n.remove());
   clone.querySelectorAll("textarea").forEach(n=>{n.textContent="";});
   [clone].concat(Array.from(clone.querySelectorAll("*"))).forEach(function(n){
     if(n.matches&&n.matches("input[type=password],input[type=hidden]"))return;
@@ -1286,23 +1335,23 @@ function createCommentUI(){
   mountCommentBubble();
   updateCommentUI();
 }
-function updateHoverPath(target){
-  const result=meaningfulPath(target),path=result.path;
+function updateHoverPath(target, ctrlKey){
+  const result=meaningfulPath(target,ctrlKey),path=result.path;
   if(!path.length){hoverPath=[];setHighlight(null);updateCommentUI();return false;}
   hoverPath=path;selectedIndex=result.guessedIndex;setHighlight(hoverPath[selectedIndex]);updateCommentUI();return true;
 }
 document.addEventListener("mousemove",function(e){
   if(!selecting)return;
-  if(blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}
-  updateHoverPath(e.target);
+  if(blockedCommentTarget(e.target,e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}
+  updateHoverPath(e.target,e.ctrlKey);
 },true);
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
 window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true);
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
 document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(editorOpen){const box=document.querySelector("[data-editor] textarea");if(box)box.value="";resumeSelection();}else if(selecting)closeCommentMode();else if(popoverCommentId)closeCommentPopover();}},true);
 document.addEventListener("click",function(e){
-  if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey))return;
-  if(!updateHoverPath(e.target))return;
+  if(!selecting||blockedCommentTarget(e.target,e.ctrlKey))return;
+  if(!updateHoverPath(e.target,e.ctrlKey))return;
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
   chooseSelection(e);
 },true);

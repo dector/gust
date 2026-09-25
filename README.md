@@ -51,7 +51,7 @@ Flags:
 - `-TT`: shorthand for `-T -p '?:?'`, selecting stable app and proxy ports automatically. If `-p` is also provided, its port selection wins and `-TT` acts as `-T`.
 - `--exclude <path>`: repeatable watched-path exclude.
 - `--exclude.glob <glob>`: repeatable glob exclude for watched events.
-- `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments`; `sounds` enables ambient rain/thunder toggles in the panel; `dev` enables Gust self-development tools (Ctrl+click selection of Gust panel elements and page reload after proxy reconnect). All are disabled by default. `dev` requires `comments` and a proxy.
+- `--optin <feature>`: opt in to an optional feature; repeatable. `comments` enables browser comments and `gust ctl comments`; `sounds` enables ambient rain/thunder toggles in the panel; `dev` enables Gust self-development tools (Ctrl+click selection of any element, including Gust's own UI, and page reload after proxy reconnect). All are disabled by default. `dev` requires `comments` and a proxy.
 - `-v`: verbose Gust logs.
 - `GUST_INFO=1`: enable info logs initially. Press `i` to toggle them.
 
@@ -69,10 +69,15 @@ keyboard controls (`r`, `s`, `i`, `D`) work through the wrapper. Press `q` or
 Ctrl+C to restart Gust; press Ctrl+C again to stop the wrapper. To disable
 Tailscale locally, use `DEV_SELF_TAILSCALE=0 ror dev:self`.
 
-In comment mode, Ctrl+click a **panel** element to select it; normal clicks
-still operate the panel. Logs and existing comments are not selectable. Gust's
-icon and floating editor remain unselectable. `-T` exposes this dev mode to
-anyone allowed to access the Tailscale Serve URL; use it only with trusted viewers.
+In comment mode, Ctrl+click selects **any** element on the page, including
+all of Gust's own UI: the panel, the toolbar, comment threads, thread pins, the
+popover, the breadcrumbs, the server log and the count badges. A comment made
+that way captures that element's real text and HTML. A plain click still
+operates the panel, and without Ctrl Gust's own nodes are not selectable. A pin
+on Gust's own UI is anchored on a stable id (the thread id, the log section
+name) instead of the text on screen, so it survives a thread changing state or
+the log scrolling. Because a Ctrl comment on the panel captures the log and
+existing comment text, keep `-T` dev mode for trusted viewers only.
 After the supervisor restarts Gust, the browser reloads on reconnection.
 Comments are still in memory: have the agent read or record submitted comments
 *before* editing Gust source, because a successful rebuild restarts Gust.

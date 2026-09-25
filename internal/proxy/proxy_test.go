@@ -283,7 +283,7 @@ func TestCommentUnreadBadgeInjected(t *testing.T) {
 		// The unread badge is registered in the one shared list of injected
 		// Gust nodes, so it is neither a comment target nor captured context.
 		`const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge`,
-		`hidden],"+gustNodes+",details.__gust_log,#__gust_comments [data-comments]")`,
+		`+gustNodes+",details.__gust_log,#__gust_comments [data-comments]");`,
 		`#__gust_comment_unread_badge{position:fixed;right:23px;top:calc(50% + 29px);`,
 		`#__gust_comment_unread_badge[hidden]{display:none}`,
 		`color:#fff;background:#dc2626;border:1px solid #fecaca`,
@@ -1123,13 +1123,16 @@ func TestProxySelfDevScript(t *testing.T) {
 		// target guard and the captured-context strip. Keep these in step.
 		`const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox,#__gust_toolbox_panel,#__gust_error,[data-gust-overlay]";`,
 		`function isGustNode(el){ return !!(el && el.closest && el.closest(gustNodes)); }`,
-		`function blockedCommentTarget(el){ return isGustNode(el) && !isSelfDevPanel(el); }`,
-		`clone.querySelectorAll("script,style,input[type=password],input[type=hidden],"+gustNodes+",details.__gust_log,#__gust_comments [data-comments]")`,
+		`function isGustNodeOrPanel(el){ return isGustNode(el) || isSelfDevPanel(el) || isPrivatePanelNode(el); }`,
+		`function blockedCommentTarget(el, ctrlKey){ return !ctrlKey && isGustNodeOrPanel(el); }`,
+		`clone.querySelectorAll(strip)`,
+		`+gustNodes+",details.__gust_log,#__gust_comments [data-comments]");`,
 		`function isSelfDevPanel(el)`,
 		`function isPrivatePanelNode(el)`,
-		`if(isPrivatePanelNode(el)||el.matches("input[type=password],input[type=hidden]"))return "";`,
-		`isSelfDevPanel(e.target)&&!e.ctrlKey`,
-		`if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey))return;`,
+		`(!gust&&isPrivatePanelNode(el)))return "";`,
+		`function isGustSelection(el){ return gustSelection && isGustNodeOrPanel(el); }`,
+		`if(!selecting||blockedCommentTarget(e.target,e.ctrlKey))return;`,
+		`if(blockedCommentTarget(e.target,e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
 		`if(selfDev&&restartPending){restartPending=false;location.reload();}`,
 		`if(bootID&&bootID!==msg.bootId)restartPending=true;`,
 	} {
@@ -1140,10 +1143,9 @@ func TestProxySelfDevScript(t *testing.T) {
 }
 
 // TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable runs the real comment
-// mode guard against a small DOM. It pins the deliberate parts - Ctrl unlocks
-// self-dev panel chrome, thread rows and pins stay blocked - and the bug: the
-// toolbox bubble must be blocked with no modifier, so in comment mode its own
-// click handler still opens the toolbox.
+// mode guard against a small DOM. It pins the deliberate parts - Ctrl selects
+// any element, including every part of Gust's own UI, and a plain click still
+// reaches the panel so the bubble opens the toolbox in comment mode.
 func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -1151,9 +1153,9 @@ func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 	}
 	script := reloadScript(1, 8765, true, true)
 	nodesStart := strings.Index(script, `const gustNodes = "`)
-	nodesEnd := strings.Index(script, `function meaningfulPath(el){`)
+	nodesEnd := strings.Index(script, `function setHighlight(el){`)
 	moveStart := strings.Index(script, "document.addEventListener(\"mousemove\",function(e){\n  if(!selecting)return;")
-	clickStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  if(!selecting||blockedCommentTarget(e.target)")
+	clickStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  if(!selecting||blockedCommentTarget(e.target,")
 	if nodesStart < 0 || nodesEnd < nodesStart || moveStart < 0 || clickStart < 0 {
 		t.Fatal("could not extract the comment target guard")
 	}
@@ -1175,45 +1177,238 @@ func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 	}
 }
 
+// TestCtrlCommentCapturesContextAndPinSurvives runs the real capture path -
+// locatorFor(), safeOuterHTML() and matchingElement() - against a DOM shaped
+// like Gust's own panel. A Ctrl comment on a thread row, a pin, the log or the
+// count badge must carry real text and real HTML, must stay scrubbed of
+// passwords, and must keep resolving a pin after the element's own text
+// changes, because a thread row flips Draft -> Submitted -> In progress and the
+// panel list is rebuilt on every poll. Without Ctrl nothing changes.
+func TestCtrlCommentCapturesContextAndPinSurvives(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	spans := []struct {
+		from, to string
+	}{
+		{`const gustNodes = "`, `function meaningfulPath(`},
+		{`function cssEscape(`, `function mountCommentBubble(){`},
+		{`function parseLocator(c){`, `function ensurePinOverlay(){`},
+	}
+	captured := ""
+	for _, span := range spans {
+		from, to := strings.Index(script, span.from), strings.Index(script, span.to)
+		if from < 0 || to < from {
+			t.Fatalf("could not extract the capture path around %q", span.from)
+		}
+		captured += script[from:to] + "\n"
+	}
+	file := t.TempDir() + "/comment-capture.js"
+	if err := os.WriteFile(file, []byte(commentGuardHarnessPrelude+captured+commentCaptureHarnessChecks), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment capture: %v\n%s", err, output)
+	}
+}
+
+const commentCaptureHarnessChecks = `
+/* The real nesting: the panel and the comment list hang off #__gust_widget, the
+   pin overlay off <html>, and Gust's own nodes carry [data-gust-overlay]. */
+const hero = append(document.body, el('h1'));
+append(hero, el('span')).text = 'Hello';
+const widget = append(document.body, el('div', '__gust_widget'));
+const panel = append(widget, el('div', '__gust_panel'));
+const log = append(panel, el('details', '', { 'data-name': 'Server' }));
+addClass(log, '__gust_log');
+append(log, el('summary')).text = 'Server';
+text(append(log, el('pre')), 'listening on 127.0.0.1:8080');
+append(log, el('input', '', { 'type': 'password', 'value': 'hunter2' }));
+const comments = append(widget, el('div', '__gust_comments'));
+const header = append(comments, el('div'));
+append(header, el('span')).text = 'Comments';
+const count = text(append(header, el('span', '', { 'data-comment-count': '' })), '1');
+const list = append(comments, el('div', '', { 'data-comments': '' }));
+const overlay = append(document.documentElement, el('div', '__gust_pin_overlay'));
+overlay.setAttribute('data-gust-overlay', '');
+
+/* renderCommentState() builds a thread row, and the pin for that thread. */
+function renderThread(state) {
+  list.replaceChildren();
+  const item = append(list, el('div', '', { 'data-comment-id': 'c1' }));
+  const row = append(item, el('button'));
+  addClass(row, '__gust_comment_row');
+  text(append(row, el('span', '__gust_comment_text')), 'Make the badge bigger');
+  const badge = text(append(append(row, el('span')), el('span')), state);
+  overlay.replaceChildren();
+  const pin = append(overlay, el('button', '', { 'data-comment-id': 'c1' }));
+  addClass(pin, '__gust_pin');
+  text(append(pin, el('span', '__gust_pin_count')), '1');
+  return { item: item, row: row, badge: badge, pin: pin };
+}
+let thread = renderThread('Draft');
+
+/* Ctrl+click a thread row: real text, real HTML, and a selector that does not
+   depend on the state label the row is showing. */
+gustSelection = true;
+const rowLocator = JSON.parse(locatorFor(thread.row, { x: 0.5, y: 0.5 }));
+assert(rowLocator.selector === '#__gust_comments div[data-comment-id="c1"] > button', 'a thread row selector is anchored on the thread id, got ' + rowLocator.selector);
+assert(rowLocator.gust === true && rowLocator.identity === 'c1', 'a thread row comment records the thread id');
+assert(rowLocator.text.includes('Make the badge bigger') && rowLocator.text.includes('Draft'), 'a thread row comment keeps the row text, got ' + rowLocator.text);
+assert(rowLocator.confidence === 'high' && rowLocator.matches === 1, 'a thread row comment resolves to exactly one node');
+const rowHTML = safeOuterHTML(thread.row);
+assert(rowHTML.includes('Make the badge bigger') && rowHTML.includes('Draft') && rowHTML.includes('</button>'), 'a thread row comment keeps the row HTML');
+
+/* The row re-renders when the thread changes state. The pin must follow the
+   thread id, not the text that was on screen when the comment was made. */
+thread = renderThread('In progress');
+assert(matchingElement({ locator: JSON.stringify(rowLocator) }) === thread.row, 'the pin follows the re-rendered row after its state label changed');
+thread = renderThread('Submitted');
+assert(matchingElement({ locator: JSON.stringify(rowLocator) }) === thread.row, 'the pin survives a submitted label too');
+thread = renderThread('Draft');
+
+/* Ctrl+click a thread pin: the count inside it changes with every reply, so the
+   comment must not depend on it either. */
+const pinLocator = JSON.parse(locatorFor(thread.pin, { x: 0.5, y: 0.5 }));
+assert(pinLocator.selector === '#__gust_pin_overlay button[data-comment-id="c1"]', 'a pin selector is anchored on the thread id, got ' + pinLocator.selector);
+assert(pinLocator.gust === true && pinLocator.identity === 'c1', 'a pin comment records the thread id');
+assert(pinLocator.text === '1', 'a pin comment keeps the count it pointed at, got ' + pinLocator.text);
+const pinHTML = safeOuterHTML(thread.pin);
+assert(pinHTML.includes('__gust_pin') && pinHTML.includes('1'), 'a pin comment keeps the pin HTML');
+thread = renderThread('Draft');
+text(thread.pin.children[0], '4');
+assert(matchingElement({ locator: JSON.stringify(pinLocator) }) === thread.pin, 'the pin survives its own count changing');
+
+/* Ctrl+click the server log: the log text is the context, but a password input
+   inside it is still dropped. */
+const logLocator = JSON.parse(locatorFor(log, { x: 0.5, y: 0.5 }));
+assert(logLocator.selector === '#__gust_panel details[data-name="Server"]', 'a log selector is anchored on the log name, got ' + logLocator.selector);
+assert(logLocator.gust === true && logLocator.identity === 'Server', 'a log comment records the log name');
+assert(logLocator.text.includes('listening on 127.0.0.1:8080'), 'a log comment keeps the log text, got ' + logLocator.text);
+const logHTML = safeOuterHTML(log);
+assert(logHTML.includes('listening on 127.0.0.1:8080'), 'a log comment keeps the log HTML');
+assert(!logHTML.includes('hunter2') && !logHTML.includes('type="password"'), 'a log comment still drops password inputs');
+
+/* The count badge has no stable id, so the comment relies on the panel's own
+   markup - and must survive the number changing. */
+const countLocator = JSON.parse(locatorFor(count, { x: 0.5, y: 0.5 }));
+assert(countLocator.gust === true && countLocator.identity === '', 'a count badge comment is a Ctrl comment with no identity');
+assert(countLocator.text === '1', 'a count badge comment keeps the count, got ' + countLocator.text);
+assert(safeOuterHTML(count).includes('>1<'), 'a count badge comment keeps the badge HTML');
+count.text = '12';
+assert(matchingElement({ locator: JSON.stringify(countLocator) }) === count, 'the count badge pin survives the count changing');
+
+/* Without Ctrl a thread row still captures nothing, and a stored comment from
+   before this behaviour existed never resolves onto a Gust node. */
+gustSelection = false;
+assert(JSON.parse(locatorFor(thread.row, null)).text === '', 'without Ctrl a thread row still captures no text');
+assert(safeOuterHTML(thread.row) === '', 'without Ctrl a thread row still captures no HTML');
+assert(JSON.parse(locatorFor(thread.row, null)).gust === false, 'without Ctrl a thread row comment is not a Ctrl comment');
+const legacy = JSON.parse(JSON.stringify(rowLocator));
+legacy.gust = false;
+legacy.identity = '';
+assert(matchingElement({ locator: JSON.stringify(legacy) }) === null, 'a stored comment without the Ctrl flag never resolves onto a thread row');
+
+/* Ctrl on the host page captures exactly what a plain click captures, and the
+   injected widget is still stripped out of a page element's context. */
+gustSelection = true;
+const pageLocator = JSON.parse(locatorFor(hero.children[0], null));
+assert(pageLocator.gust === false && pageLocator.identity === '', 'Ctrl on a page element is not a Ctrl comment');
+assert(pageLocator.text === 'Hello', 'Ctrl on a page element keeps the page text, got ' + pageLocator.text);
+assert(!safeOuterHTML(document.body).includes('__gust_widget'), 'Ctrl on body still strips the injected widget');
+console.log('comment capture ok');
+`
+
 const commentGuardHarnessPrelude = `/* Just enough DOM for the real Element.closest()/matches() calls in the guard. */
 function matchesSimple(el, part) {
-  const parsed = /^([a-z]*)((?:[#.][\w-]+|\[[^\]]+\])*)$/i.exec(part);
+  if (part === '*') return true;
+  const parsed = /^([a-z]*)((?:[#.][\w-]+|\[[^\]]+\]|:nth-of-type\(\d+\))*)$/i.exec(part);
   if (!parsed) throw new Error('unsupported selector: ' + part);
   if (parsed[1] && el.tagName.toLowerCase() !== parsed[1].toLowerCase()) return false;
-  for (const token of parsed[2].match(/[#.][\w-]+|\[[^\]]+\]/g) || []) {
+  for (const token of parsed[2].match(/[#.][\w-]+|\[[^\]]+\]|:nth-of-type\(\d+\)/g) || []) {
     if (token[0] === '#') { if (el.id !== token.slice(1)) return false; }
     else if (token[0] === '.') { if (!el.classList.contains(token.slice(1))) return false; }
-    else if (!(token.slice(1, -1).split('=')[0] in el.attrs)) return false;
+    else if (token[0] === ':') {
+      const at = el.parentElement ? Array.from(el.parentElement.children).filter((x) => x.tagName === el.tagName).indexOf(el) + 1 : 1;
+      if (at !== Number(token.match(/^:nth-of-type\((\d+)\)$/)[1])) return false;
+    } else {
+      const body = token.slice(1, -1), eq = body.indexOf('=');
+      const name = eq < 0 ? body : body.slice(0, eq);
+      if (!el.hasAttribute(name)) return false;
+      if (eq >= 0 && el.getAttribute(name) !== body.slice(eq + 1).replace(/^["']|["']$/g, '')) return false;
+    }
   }
   return true;
 }
 function matchesList(el, selector) {
   return selector.split(',').some(function(part) {
-    const steps = part.trim().split(/\s+/);
-    let node = el;
+    const steps = part.trim().split(/\s+/).filter(Boolean);
+    let node = el, direct = true;
     for (let i = steps.length - 1; i >= 0; i--) {
-      if (!node || !matchesSimple(node, steps[i])) return false;
-      node = node.parentElement;
+      if (direct) { if (!node || !matchesSimple(node, steps[i])) return false; }
+      else {
+        while (node && !matchesSimple(node, steps[i])) node = node.parentElement;
+        if (!node) return false;
+      }
+      if (i > 0) { direct = steps[i - 1] === '>'; if (direct) i--; node = node.parentElement; }
     }
     return true;
   });
 }
+const voids = ['input', 'br', 'img', 'hr', 'meta', 'link'];
 class El {
   constructor(tag) {
     this.tagName = (tag || 'div').toUpperCase();
+    this.nodeType = 1;
     this.id = '';
     this.attrs = {};
     this.classes = [];
     this.children = [];
+    this.text = '';
     this.parentElement = null;
     this.listeners = {};
     this.classList = { contains: (name) => this.classes.includes(name) };
   }
-  setAttribute(name, value) { this.attrs[name] = String(value); }
+  setAttribute(name, value) { this.attrs[name] = String(value); if (name === 'id') this.id = String(value); }
+  getAttribute(name) { return name in this.attrs ? this.attrs[name] : (name === 'id' && this.id ? this.id : null); }
+  hasAttribute(name) { return this.getAttribute(name) !== null; }
+  removeAttribute(name) { delete this.attrs[name]; }
+  get attributes() { return Object.keys(this.attrs).map((name) => ({ name: name, value: this.attrs[name] })); }
   appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+  remove() {
+    if (!this.parentElement) return;
+    const at = this.parentElement.children.indexOf(this);
+    if (at >= 0) this.parentElement.children.splice(at, 1);
+    this.parentElement = null;
+  }
+  replaceChildren() { this.children = []; }
+  cloneNode() {
+    const copy = new El(this.tagName);
+    copy.id = this.id;
+    copy.attrs = Object.assign({}, this.attrs);
+    copy.classes = this.classes.slice();
+    copy.text = this.text;
+    this.children.forEach((child) => copy.appendChild(child.cloneNode(true)));
+    return copy;
+  }
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
   matches(selector) { return matchesList(this, selector); }
   closest(selector) { for (let n = this; n; n = n.parentElement) if (matchesList(n, selector)) return n; return null; }
+  descendants() { return this.children.reduce((all, child) => all.concat([child], child.descendants()), []); }
+  querySelectorAll(selector) { return this.descendants().filter((node) => matchesList(node, selector)); }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  get textContent() { return this.text + this.children.map((child) => child.textContent).join(''); }
+  set textContent(value) { this.text = value; this.children = []; }
+  get innerText() { return this.textContent; }
+  get innerHTML() { return this.text + this.children.map((child) => child.outerHTML).join(''); }
+  get outerHTML() {
+    const tag = this.tagName.toLowerCase();
+    const attrs = Object.keys(this.attrs).map((name) => ' ' + name + '="' + this.attrs[name] + '"').join('');
+    if (voids.includes(tag)) return '<' + tag + attrs + '>';
+    return '<' + tag + attrs + '>' + this.innerHTML + '</' + tag + '>';
+  }
 }
 const document = {
   body: new El('body'),
@@ -1221,14 +1416,18 @@ const document = {
   listeners: {},
   createElement(tag) { return new El(tag); },
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+  querySelectorAll(selector) { return [this.documentElement, this.body].flatMap((root) => root.querySelectorAll(selector)); },
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
 };
+const window = {};
 const selfDev = true;
 const location = { pathname: '/' };
 let selecting = true;
 let hoverPath = [];
 let highlighted = null;
 let chooseCalls = 0;
-function updateHoverPath(target) { hoverPath = [target]; return true; }
+let gustSelection = false;
+function updateHoverPath(target, ctrlKey) { hoverPath = [target]; return true; }
 function chooseSelection() { chooseCalls++; }
 function setHighlight(el) { highlighted = el; }
 function updateCommentUI() {}
@@ -1239,6 +1438,8 @@ function el(tag, id, attrs) {
   return node;
 }
 function append(parent, child) { parent.appendChild(child); return child; }
+function addClass(node, name) { node.classes.push(name); node.setAttribute('class', node.classes.join(' ')); return node; }
+function text(node, value) { node.text = value; return node; }
 /* Browser order: capture handlers on document first, then the target's own
    listeners, unless a capture handler stopped the event. */
 function send(type, target, ctrlKey) {
@@ -1269,72 +1470,106 @@ const panel = append(widget, el('div', '__gust_panel'));
 const comments = append(widget, el('div', '__gust_comments'));
 const list = append(comments, el('div', '', { 'data-comments': '' }));
 
-/* A plain page element is a normal comment target. */
+/* A plain page element is a normal comment target, with or without Ctrl. */
 const hero = append(document.body, el('h1'));
 const heroWord = append(hero, el('span'));
 send('click', heroWord);
-assert(!blockedCommentTarget(heroWord), 'a plain page element is not blocked');
+assert(!blockedCommentTarget(heroWord, false), 'a plain page element is not blocked');
 assert(chooseCalls === 1, 'a plain page element opens the comment editor');
+send('click', heroWord, true);
+assert(chooseCalls === 2, 'Ctrl opens the comment editor on a page element too');
 
-/* Ctrl unlocks self-dev panel chrome, and only that. */
+/* Ctrl selects panel chrome; a plain click does not. */
 const label = append(append(panel, el('div')), el('span'));
 send('click', label, true);
-assert(!blockedCommentTarget(label), 'Ctrl unlocks panel chrome');
-assert(chooseCalls === 2, 'Ctrl selects panel chrome in comment mode');
+assert(!blockedCommentTarget(label, true), 'Ctrl unlocks panel chrome');
+assert(chooseCalls === 3, 'Ctrl selects panel chrome in comment mode');
 send('click', label, false);
-assert(chooseCalls === 2, 'without Ctrl panel chrome stays blocked');
-assert(isSelfDevPanel(label) && !isPrivatePanelNode(label), 'panel chrome is a self-dev node, so only the Ctrl clause changes');
+assert(chooseCalls === 3, 'without Ctrl panel chrome stays blocked');
+assert(blockedCommentTarget(label, false), 'panel chrome is blocked with no modifier');
+assert(isSelfDevPanel(label) && !isPrivatePanelNode(label), 'panel chrome is a self-dev node');
 
-/* Deliberate: thread rows, pins, popover and breadcrumbs stay blocked, Ctrl or
-   not, so a new comment can never capture the text of an existing thread. */
+/* Ctrl selects the parts that used to be private - thread rows, pins, the
+   popover, the breadcrumbs, the Gust icon, the server log. Without Ctrl they
+   stay unselectable, so their own click handlers still run. */
 const thread = append(list, el('button', '', { 'data-comment-id': 'c1' }));
+let threadClicks = 0;
+thread.addEventListener('click', function() { threadClicks++; });
 send('click', thread, true);
-assert(chooseCalls === 2, 'a thread row is not a comment target even with Ctrl');
+assert(chooseCalls === 4, 'Ctrl selects a thread row');
 assert(isPrivatePanelNode(thread), 'a thread row is a private panel node');
+send('click', thread, false);
+assert(chooseCalls === 4, 'without Ctrl a thread row stays blocked');
+assert(threadClicks === 1, 'without Ctrl a thread row still gets its own click');
+/* Ctrl also builds a hover path for a private node, bounded by the comment list
+   instead of running up the whole page. */
+const hoverThread = meaningfulPath(thread, true);
+assert(hoverThread.path.length > 0, 'Ctrl builds a hover path for a thread row');
+assert(hoverThread.path[hoverThread.path.length - 1] === comments, 'a thread row path stops at the comment list');
+assert(hoverThread.path[hoverThread.guessedIndex] === thread, 'a thread row defaults to the row itself');
+assert(meaningfulPath(thread, false).path.length === 0, 'without Ctrl a thread row has no path at all');
 const overlay = append(document.documentElement, el('div', '', { 'data-gust-overlay': '' }));
 const pin = append(overlay, el('button'));
 pin.classes = ['__gust_pin'];
 send('click', pin, true);
-assert(chooseCalls === 2, 'a pin is not a comment target even with Ctrl');
+assert(chooseCalls === 5, 'Ctrl selects a thread pin');
+send('click', pin, false);
+assert(chooseCalls === 5, 'without Ctrl a thread pin stays blocked');
 const popover = append(overlay, el('div', '__gust_comment_popover'));
 const crumbs = append(overlay, el('div', '__gust_selected_path'));
+send('click', append(popover, el('button')), true);
+send('click', append(crumbs, el('span')), true);
+assert(chooseCalls === 7, 'Ctrl selects the popover and the breadcrumbs');
 send('click', append(popover, el('button')));
 send('click', append(crumbs, el('span')));
-assert(chooseCalls === 2, 'the popover and breadcrumbs are not comment targets');
+assert(chooseCalls === 7, 'without Ctrl the popover and breadcrumbs stay blocked');
 const icon = append(widget, el('div', '__gust_icon'));
 send('click', icon, true);
-assert(chooseCalls === 2, 'the Gust icon is not a comment target even with Ctrl');
+assert(chooseCalls === 8, 'Ctrl selects the Gust icon');
+send('click', icon);
+assert(chooseCalls === 8, 'without Ctrl the Gust icon stays blocked');
 const log = append(panel, el('details'));
 log.classes = ['__gust_log'];
+send('click', append(log, el('pre')), true);
+assert(chooseCalls === 9, 'Ctrl selects the server log');
 send('click', append(log, el('pre')));
-assert(chooseCalls === 2, 'the server log is not a comment target');
+assert(chooseCalls === 9, 'without Ctrl the server log stays blocked');
 
-/* The bug: #__gust_bubble was never registered, so comment mode opened the
-   editor on it and swallowed the click that shapeshifts it into the toolbox. */
+/* A plain click on the bubble is never a comment target, so in comment mode its
+   own click handler still opens the toolbox. Ctrl selects it like any other
+   element instead, which is the point of Ctrl. */
 const bubble = append(document.body, el('button', '__gust_bubble'));
 let toolboxToggles = 0;
 bubble.addEventListener('click', function() { toolboxToggles++; });
 const mark = append(bubble, el('span', '__gust_bubble_mark'));
 assert(isGustNode(bubble), 'the toolbox bubble is a Gust node');
-assert(blockedCommentTarget(bubble), 'the toolbox bubble is a blocked comment target');
-assert(blockedCommentTarget(mark), 'anything inside the bubble is blocked with its parent');
+assert(blockedCommentTarget(bubble, false), 'the toolbox bubble is a blocked comment target');
+assert(blockedCommentTarget(mark, false), 'anything inside the bubble is blocked with its parent');
 send('click', bubble);
-assert(chooseCalls === 2, 'a plain click on the bubble never opens the comment editor');
+assert(chooseCalls === 9, 'a plain click on the bubble never opens the comment editor');
 assert(toolboxToggles === 1, 'a plain click on the bubble opens the toolbox in comment mode');
 send('click', bubble, true);
-assert(chooseCalls === 2, 'Ctrl does not turn the bubble into a comment target either');
-assert(toolboxToggles === 2, 'Ctrl held, the bubble still opens the toolbox');
+assert(chooseCalls === 10, 'Ctrl selects the bubble like any other element');
+assert(toolboxToggles === 1, 'Ctrl+click selects the bubble instead of toggling the toolbox');
 hoverPath = ['stale'];
 send('mousemove', bubble);
 assert(hoverPath.length === 0, 'hovering the bubble clears the comment path');
+send('mousemove', bubble, true);
+assert(hoverPath.length === 1 && hoverPath[0] === bubble, 'Ctrl hovering the bubble builds a path');
 send('mousemove', heroWord);
 assert(hoverPath.length === 1 && hoverPath[0] === heroWord, 'hovering a page element still builds a path');
 
 /* The comment bubble and unread badge keep working the other way round. */
 const commentBubble = append(document.body, el('button', '__gust_comment_bubble'));
 const unreadBadge = append(document.body, el('button', '__gust_comment_unread_badge'));
-assert(blockedCommentTarget(commentBubble), 'the comment bubble is a blocked comment target');
-assert(blockedCommentTarget(unreadBadge), 'the unread badge is a blocked comment target');
+assert(blockedCommentTarget(commentBubble, false), 'the comment bubble is a blocked comment target');
+assert(blockedCommentTarget(unreadBadge, false), 'the unread badge is a blocked comment target');
+send('click', commentBubble);
+send('click', unreadBadge);
+assert(chooseCalls === 10, 'plain clicks on the comment bubble and the badge open nothing');
+send('click', commentBubble, true);
+send('click', unreadBadge, true);
+assert(chooseCalls === 12, 'Ctrl selects the comment bubble and the unread badge');
 console.log('comment target guard ok');
 `
 
@@ -1427,14 +1662,14 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`position:fixed;display:none;z-index:2147483647`,
 		`font:13px/1.5 ui-monospace`,
 		`max-height:calc(100vh - 24px)`,
-		`if(blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
+		`if(blockedCommentTarget(e.target,e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
 		`window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true)`,
 		`function closeCommentMode()`,
 		`function meaningfulPath(`,
 		`for (let n = el; n && path.length < 12; n = n.parentElement)`,
-		`if(el===document.body||el===document.documentElement)selector=tag`,
+		`if(!selector&&(el===document.body||el===document.documentElement))selector=tag`,
 		`return {path:path, guessedIndex:Math.max(0,path.indexOf(guess))}`,
-		`function updateHoverPath(target){`,
+		`function updateHoverPath(target, ctrlKey){`,
 		`const commentIconSvg='<svg`,
 		`if (pinned || hovering) {`,
 		`const commentAddIconSvg='<svg`,

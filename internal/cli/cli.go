@@ -175,8 +175,9 @@ Flags:
   --optin <feature>     enable optional feature; repeatable: comments, sounds, dev
                         comments: browser comments UI/API and gust ctl comments
                         sounds: ambient rain/thunder controls in the Gust panel
-                        dev: work on Gust itself; enables Ctrl+click panel selection
-                             and page reload after proxy reconnect; requires comments and proxy
+                        dev: work on Gust itself; enables Ctrl+click selection of any
+                             element, including Gust's own UI, and page reload after
+                             proxy reconnect; requires comments and proxy
   -v                    enable verbose Gust logs
 
 Run "gust man" for a brief manual and samples.
