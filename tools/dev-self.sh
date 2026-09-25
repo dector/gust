@@ -130,6 +130,14 @@ start_gust() {
   log "Gust pid $GUST_PID"
 }
 
+# instance_serving reports whether another Gust already answers on the socket
+# derived from the demo directory. Starting a second one would steal that
+# socket and leave the first instance unreachable.
+instance_serving() {
+  [ -x "$BIN" ] || return 1
+  ( cd "$DEMO_DIR" && "$BIN" ctl status ) >/dev/null 2>&1
+}
+
 cleanup() {
   STOPPING=1
   stop_gust
@@ -161,6 +169,10 @@ main() {
   sig="$(snapshot)"
 
   if build; then
+    if instance_serving; then
+      log "a Gust instance is already serving $DEMO_DIR; stop it before starting dev:self"
+      exit 1
+    fi
     start_gust
   else
     log "initial build failed; watching for fixes"
