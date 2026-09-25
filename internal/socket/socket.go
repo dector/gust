@@ -25,6 +25,7 @@ const socketDirMode = 0o700
 
 type commentStore interface {
 	NextBatch(context.Context) (comments.Batch, error)
+	NextOne(context.Context) (comments.Batch, error)
 	ListUnfinished(context.Context) ([]comments.Comment, error)
 	ListSeenUnfinished(context.Context) ([]comments.Comment, error)
 	MarkDone(context.Context, string) (comments.Comment, error)
@@ -283,7 +284,13 @@ func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol
 			_, _ = conn.Read(b[:])
 			cancel()
 		}()
-		batch, err := store.NextBatch(waitCtx)
+		var batch comments.Batch
+		var err error
+		if req.One {
+			batch, err = store.NextOne(waitCtx)
+		} else {
+			batch, err = store.NextBatch(waitCtx)
+		}
 		if err != nil {
 			if waitCtx.Err() != nil {
 				return

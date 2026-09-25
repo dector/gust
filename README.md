@@ -121,6 +121,7 @@ gust ctl logs     # output captured from the last failed exit
 gust ctl comments                     # list all unfinished threads
                                       # (created, submitted, seen, review)
 gust ctl comments --wait              # wait for oldest submitted comment batch
+gust ctl comments --wait --one        # claim one comment at a time from oldest batch
 gust ctl comments --pending           # recover seen unfinished comments
 gust ctl comments reply <id> <text>   # agent reply on a seen thread
 gust ctl comments review <id> <text>  # agent reply + mark thread review

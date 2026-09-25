@@ -43,6 +43,7 @@ type Request struct {
 	Action Action `json:"action"`
 	ID     string `json:"id,omitempty"`
 	Text   string `json:"text,omitempty"`
+	One    bool   `json:"one,omitempty"`
 }
 
 // ExitSummary describes the most recent application process exit.

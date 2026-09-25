@@ -403,6 +403,16 @@ func (s *Store) submit(ctx context.Context, id string) (Batch, error) {
 // NextBatch waits for and atomically claims the oldest submitted batch. Claiming
 // changes its comments to seen; cancellation does not change any state.
 func (s *Store) NextBatch(ctx context.Context) (Batch, error) {
+	return s.next(ctx, false)
+}
+
+// NextOne waits for and atomically claims one submitted comment from the oldest
+// batch with pending work. Other comments in that batch stay submitted.
+func (s *Store) NextOne(ctx context.Context) (Batch, error) {
+	return s.next(ctx, true)
+}
+
+func (s *Store) next(ctx context.Context, one bool) (Batch, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return Batch{}, err
@@ -412,7 +422,7 @@ func (s *Store) NextBatch(ctx context.Context) (Batch, error) {
 			s.mu.Unlock()
 			return Batch{}, err
 		}
-		batch, found, err := s.claimOldest(ctx)
+		batch, found, err := s.claimOldest(ctx, one)
 		wait := s.changed
 		s.mu.Unlock()
 		if err != nil {
@@ -568,7 +578,7 @@ func (s *Store) Review(ctx context.Context, id, text string) (Comment, error) {
 	return s.getLocked(ctx, id)
 }
 
-func (s *Store) claimOldest(ctx context.Context) (Batch, bool, error) {
+func (s *Store) claimOldest(ctx context.Context, one bool) (Batch, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Batch{}, false, err
@@ -585,28 +595,48 @@ func (s *Store) claimOldest(ctx context.Context) (Batch, bool, error) {
 	}
 	b.SubmittedAt = fromStamp(ts)
 	now := stamp(time.Now().UTC())
-	if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='seen',seen_at=?,updated_at=? WHERE batch_id=? AND state='submitted'`, now, now, b.ID); err != nil {
-		return Batch{}, false, err
+	if one {
+		var id string
+		err = tx.QueryRowContext(ctx, `SELECT id FROM comments WHERE batch_id=? AND state='submitted' ORDER BY created_at,id LIMIT 1`, b.ID).Scan(&id)
+		if err != nil {
+			return Batch{}, false, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='seen',seen_at=?,updated_at=? WHERE id=? AND state='submitted'`, now, now, id); err != nil {
+			return Batch{}, false, err
+		}
+		b.Comments, err = queryClaimed(ctx, tx, `SELECT `+columns+` FROM comments WHERE id=?`, id)
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='seen',seen_at=?,updated_at=? WHERE batch_id=? AND state='submitted'`, now, now, b.ID); err != nil {
+			return Batch{}, false, err
+		}
+		b.Comments, err = queryClaimed(ctx, tx, `SELECT `+columns+` FROM comments WHERE batch_id=? AND state='seen' AND seen_at=? ORDER BY created_at,id`, b.ID, now)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+columns+` FROM comments WHERE batch_id=? ORDER BY created_at,id`, b.ID)
 	if err != nil {
-		return Batch{}, false, err
-	}
-	b.Comments, err = scanComments(rows)
-	closeErr := rows.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return Batch{}, false, err
-	}
-	if err = loadMessages(ctx, tx, b.Comments); err != nil {
 		return Batch{}, false, err
 	}
 	if err = tx.Commit(); err != nil {
 		return Batch{}, false, err
 	}
 	return b, true, nil
+}
+
+func queryClaimed(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]Comment, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := scanComments(rows)
+	closeErr := rows.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = loadMessages(ctx, tx, cs); err != nil {
+		return nil, err
+	}
+	return cs, nil
 }
 
 const columns = `id,batch_id,path,text,html,locator,state,created_at,updated_at,submitted_at,seen_at,finished_at`

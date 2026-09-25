@@ -62,6 +62,38 @@ func runCtl(t *testing.T, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+func TestCommentsWaitOne(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	first, _ := store.Create(ctx, comments.Input{Path: "/", Text: "first"})
+	second, _ := store.Create(ctx, comments.Input{Path: "/", Text: "second"})
+	batch, err := store.SubmitCreated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	server, err := socket.Start(serverCtx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	for _, id := range []string{first.ID, second.ID} {
+		code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait", "--one")
+		if code != 0 || !strings.Contains(out, `"id":"`+batch.ID+`"`) || !strings.Contains(out, `"id":"`+id+`"`) || strings.Contains(out, `"id":"`+map[string]string{first.ID: second.ID, second.ID: first.ID}[id]+`"`) {
+			t.Fatalf("one: code=%d out=%q stderr=%q", code, out, stderr)
+		}
+	}
+	code, _, stderr := runCtl(t, "-S", server.Path(), "comments", "--one")
+	if code != 2 || !strings.Contains(stderr, "invalid comments command") {
+		t.Fatalf("bare --one: code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestCommentsCommandsAndRecovery(t *testing.T) {
 	store, err := comments.Open()
 	if err != nil {

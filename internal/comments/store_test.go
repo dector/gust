@@ -133,6 +133,58 @@ func TestCreateSubmitAndTransitions(t *testing.T) {
 	}
 }
 
+func TestNextOneDrainsBatchInOrder(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "first")
+	create(t, s, "second")
+	firstBatch, err := s.SubmitCreated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create(t, s, "third")
+	secondBatch, err := s.SubmitCreated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ id, batch string }{{"first", firstBatch.ID}, {"second", firstBatch.ID}, {"third", secondBatch.ID}} {
+		got, err := s.NextOne(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ID != tc.batch || len(got.Comments) != 1 || got.Comments[0].ID != tc.id || got.Comments[0].State != StateSeen {
+			t.Fatalf("next one: %+v, want %s in %s", got, tc.id, tc.batch)
+		}
+		if tc.id == "first" {
+			remaining, err := s.List(ctx, StateSubmitted)
+			if err != nil || len(remaining) != 2 || remaining[0].ID != "second" {
+				t.Fatalf("remaining: %+v, %v", remaining, err)
+			}
+		}
+	}
+}
+
+func TestNextBatchAfterNextOneDoesNotReturnClaimedComment(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "first")
+	create(t, s, "second")
+	if _, err := s.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextOne(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.NextBatch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Comments) != 1 || got.Comments[0].ID != "second" {
+		t.Fatalf("remaining batch: %+v", got)
+	}
+}
+
 func TestMarkDoneAllowedFromSubmittedSeenAndReview(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
