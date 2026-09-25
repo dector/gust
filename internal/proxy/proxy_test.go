@@ -147,18 +147,52 @@ func TestToolboxInjected(t *testing.T) {
 	}
 }
 
-func TestGustBubbleInjected(t *testing.T) {
+// TestGustBubbleHidden pins the hidden bottom bubble. The bubble is not
+// removed: its mount code and its styles stay in the injected script, the
+// mount code behind one comment block, so nothing can inject the bubble any
+// more and uncommenting brings it straight back. It is not the way into the
+// comment UI - the Gust icon, the comment mode bubble, the unread badge and the
+// pins all are - so hiding it leaves every path open.
+func TestGustBubbleHidden(t *testing.T) {
 	for _, script := range []string{reloadScript(1, 8765), reloadScript(1, 8765, true, false, true)} {
-		for _, fragment := range []string{
-			`let gustBubble;`,
-			`const gustMarkSvg='<svg`,
+		// The note, then one block comment from there to the disabled toolbox.
+		start := strings.Index(script, "/* Bottom bubble hidden for now; kept for future features.")
+		if start < 0 {
+			t.Fatal("the bottom bubble must stay behind a note about future features, not be deleted")
+		}
+		blockEnd := strings.Index(script[start:], "*/\n/* Toolbox disabled for now.")
+		if blockEnd < 0 {
+			t.Fatal("the bottom bubble block must be commented out and close before the disabled toolbox")
+		}
+		block := script[start : start+blockEnd]
+		// Everything that mounts and drives the bubble is inside that block.
+		for _, kept := range []string{
 			`function mountBubble(){`,
 			`gustBubble.id = "__gust_bubble";`,
 			`gustBubble.innerHTML = gustMarkSvg;`,
 			`gustBubble.addEventListener("click", function(){ toggleToolbox(`,
 			`function toggleToolbox(open){`,
 			`gustBubble.classList.toggle("__gust_toolbox_open", open);`,
+			`document.body.appendChild(gustBubble);`,
 			`if (document.body) mountBubble();`,
+		} {
+			if !strings.Contains(block, kept) {
+				t.Errorf("hidden bubble block must keep %q", kept)
+			}
+		}
+		// Markup and handlers are untouched: the variable, the mark and the
+		// click, the hover and the transform are all still there.
+		for _, kept := range []string{
+			`let gustBubble;`,
+			`const gustMarkSvg='<svg`,
+		} {
+			if !strings.Contains(script, kept) {
+				t.Errorf("hidden bubble must keep %q", kept)
+			}
+		}
+		// So are the styles, in a live string, not in the comment.
+		for _, style := range []string{
+			`#__gust_bubble{position:fixed;left:50%;bottom:14px;`,
 			`width:40px;height:40px`,
 			`background:#ffffff0d;border:1px solid #ffffff24;border-radius:999px;backdrop-filter:blur(12px)`,
 			`cursor:pointer;`,
@@ -166,8 +200,30 @@ func TestGustBubbleInjected(t *testing.T) {
 			`#__gust_bubble.__gust_toolbox_open{width:min(400px,calc(100vw - 32px));height:90px;padding:12px 14px;border-radius:1.2rem;color:#ffd9a8}`,
 			`#__gust_bubble.__gust_toolbox_open svg{width:64px;height:64px}`,
 		} {
-			if !strings.Contains(script, fragment) {
-				t.Errorf("bubble injection missing %q", fragment)
+			if !strings.Contains(script, style) {
+				t.Errorf("hidden bubble must keep its styles %q", style)
+			}
+		}
+		// A hidden node keeps its id in the shared list, so the guard and the
+		// captured-context strip still recognise it.
+		if !strings.Contains(script, `const gustNodes = "#__gust_widget,#__gust_bubble,`) {
+			t.Error("#__gust_bubble must stay in the shared injected node list")
+		}
+		// Every mention of the mount path lives inside that one block, so no
+		// code left can put the bubble in the page.
+		for _, only := range []string{
+			`function mountBubble(){`,
+			`mountBubble, {once:true});`,
+			`function toggleToolbox(open){`,
+			`gustBubble.classList.toggle("__gust_toolbox_open", open);`,
+			`gustBubble.id = "__gust_bubble";`,
+			`document.body.appendChild(gustBubble);`,
+		} {
+			if !strings.Contains(block, only) {
+				t.Errorf("hidden bubble block must keep %q", only)
+			}
+			if got, want := strings.Count(script, only), strings.Count(block, only); got != want {
+				t.Errorf("%q must stay inside the hidden block: %d in the script, %d in the block", only, got, want)
 			}
 		}
 		// The message count lives in the thread pin, not in the toolbox bubble.
@@ -1145,7 +1201,9 @@ func TestProxySelfDevScript(t *testing.T) {
 // TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable runs the real comment
 // mode guard against a small DOM. It pins the deliberate parts - Ctrl selects
 // any element, including every part of Gust's own UI, and a plain click still
-// reaches the panel so the bubble opens the toolbox in comment mode.
+// reaches the node's own handler instead of the comment editor. The bubble is
+// hidden now, but its id stays in the shared node list, so a Gust node stays
+// blocked whether or not Gust renders it today.
 func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -1535,9 +1593,10 @@ assert(chooseCalls === 9, 'Ctrl selects the server log');
 send('click', append(log, el('pre')));
 assert(chooseCalls === 9, 'without Ctrl the server log stays blocked');
 
-/* A plain click on the bubble is never a comment target, so in comment mode its
-   own click handler still opens the toolbox. Ctrl selects it like any other
-   element instead, which is the point of Ctrl. */
+/* The bubble is not mounted any more, but the guard must still know the id.
+   A plain click on it is never a comment target, so its own click handler - the
+   harness stands one in for the commented-out toolbox toggle - still runs. Ctrl
+   selects it like any other element instead, which is the point of Ctrl. */
 const bubble = append(document.body, el('button', '__gust_bubble'));
 let toolboxToggles = 0;
 bubble.addEventListener('click', function() { toolboxToggles++; });

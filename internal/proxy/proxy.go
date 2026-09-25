@@ -1679,7 +1679,8 @@ function mountIcon(){
 #__gust_comment_unread_badge::after{content:"";position:absolute;inset:-3px;border:2px solid #ef4444;border-radius:999px;pointer-events:none;animation:__gust_comment_unread_pulse 1.6s ease-out infinite}
 @keyframes __gust_comment_unread_pulse{0%%{opacity:1;transform:scale(.9)}75%%,100%%{opacity:0;transform:scale(1.45)}}
 @media (prefers-reduced-motion:reduce){#__gust_comment_unread_badge{transition:none}#__gust_comment_unread_badge::after{animation:none;opacity:.65;transform:scale(1)}}
-/* Bottom bubble; on click it shapeshifts into the toolbox panel. */
+/* Bottom bubble, hidden with its mount code below; kept for future features.
+   On click it shapeshifts into the toolbox panel. */
 #__gust_bubble{position:fixed;left:50%%;bottom:14px;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transform:translate(-50%%,0);transition:transform .18s ease,background .18s ease,border-color .18s ease,color .18s ease,width .2s ease,height .2s ease,border-radius .2s ease}
 #__gust_bubble svg{display:block;width:22px;height:22px}
 #__gust_bubble:hover{transform:translate(-50%%,-6px);background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}
@@ -1775,8 +1776,9 @@ function mountIcon(){
   syncPanel();
 }
 if (document.body) mountIcon(); else document.addEventListener("DOMContentLoaded", mountIcon, {once:true});
-/* Bottom bubble; on click it shapeshifts into the toolbox panel. Not wired to
-   any action yet. */
+/* Bottom bubble hidden for now; kept for future features. It only shapeshifts
+   into the toolbox, which is still disabled below, so nothing else needs it.
+   Uncomment this block to bring the bubble back.
 function mountBubble(){
   if (document.getElementById("__gust_bubble")) return;
   gustBubble = document.createElement("button");
@@ -1795,6 +1797,7 @@ function toggleToolbox(open){
 }
 document.addEventListener("keydown", function(e){ if(e.key==="Escape"&&gustBubble&&gustBubble.classList.contains("__gust_toolbox_open")) toggleToolbox(false); });
 if (document.body) mountBubble(); else document.addEventListener("DOMContentLoaded", mountBubble, {once:true});
+*/
 /* Toolbox disabled for now.
 function mountToolbox(){
   if (document.getElementById("__gust_toolbox")) { gustToolbox = document.getElementById("__gust_toolbox"); gustToolboxPanel = document.getElementById("__gust_toolbox_panel"); return; }
