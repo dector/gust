@@ -185,9 +185,11 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		`[commentBubble]`,
 		`#__gust_comment_bubble{position:fixed;right:14px;top:50%;`,
 		`width:40px;height:40px`,
+		`color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24`,
 		`transform:translateY(-50%);transition:background .18s ease,border-color .18s ease,color .18s ease}`,
 		`#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}`,
-		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`,
+		`@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`,
 		`#__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
 		`html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting #__gust_comment_bubble,`,
 		`html.__gust_selecting #__gust_widget button,html.__gust_selecting #__gust_comment_bubble,`,
@@ -227,7 +229,7 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 	if styleStart < 0 {
 		t.Fatal("could not isolate comment mode bubble styles")
 	}
-	styleEnd := strings.Index(script[styleStart:], `/* Bottom bubble;`)
+	styleEnd := strings.Index(script[styleStart:], `#__gust_comment_unread_badge{`)
 	if styleEnd < 0 {
 		t.Fatal("could not isolate comment mode bubble styles")
 	}
@@ -235,18 +237,147 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 	if strings.Contains(style, "transition:transform") || strings.Contains(style, ":hover{transform") {
 		t.Error("comment mode bubble must not animate or rise on hover")
 	}
-	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}`
+	for _, attentionTreatment := range []string{"#dc2626", "#ef4444", "::after", "animation:"} {
+		if strings.Contains(style, attentionTreatment) {
+			t.Errorf("comment mode bubble must not use unread count treatment %q", attentionTreatment)
+		}
+	}
+	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`
 	hoverRule := `#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}`
 	if !strings.Contains(style, activeRule) {
-		t.Error("comment mode bubble on state must use an opaque fill, high-contrast icon, and a visible halo")
+		t.Error("comment mode bubble on state must use its warm high-contrast treatment")
 	}
-	if strings.Contains(style, `#__gust_comment_bubble[aria-pressed=true]{background:#49301c`) {
-		t.Error("comment mode bubble on state must not use the muted dark fill")
+	if !strings.Contains(style, `color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24`) {
+		t.Error("comment mode bubble must retain its normal glass treatment")
+	}
+	if !strings.Contains(style, `@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`) {
+		t.Error("comment mode bubble transitions must respect reduced motion")
 	}
 	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) {
 		t.Error("comment mode bubble on state must remain filled when hovered")
 	}
 }
+
+func TestCommentUnreadBadgeInjected(t *testing.T) {
+	script := reloadScript(1, 8765, true, true)
+	for _, fragment := range []string{
+		`let commentUnreadBadge = null;`,
+		`function unreadPageThreads(){`,
+		`c.state!=="done" && c.path===location.pathname && threadUnread(c)`,
+		`function updateUnreadBadge(){`,
+		`commentUnreadBadge.hidden=count===0;`,
+		`function openFirstUnreadComment(){`,
+		`openCommentPopover(c.id);locateComment(c);`,
+		`commentUnreadBadge.id="__gust_comment_unread_badge";`,
+		`commentUnreadBadge.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openFirstUnreadComment();});`,
+		`#__gust_widget,#__gust_comment_bubble,#__gust_comment_unread_badge`,
+		`#__gust_widget,#__gust_comment_bubble,#__gust_comment_unread_badge,#__gust_toolbox`,
+		`#__gust_comment_unread_badge{position:fixed;right:23px;top:calc(50% + 29px);`,
+		`#__gust_comment_unread_badge[hidden]{display:none}`,
+		`color:#fff;background:#dc2626;border:1px solid #fecaca`,
+		`#__gust_comment_unread_badge:hover{background:#ef4444;border-color:#fee2e2;color:#fff}`,
+		`#__gust_comment_unread_badge::after{content:"";position:absolute;inset:-3px;border:2px solid #ef4444;border-radius:999px;pointer-events:none;animation:__gust_comment_unread_pulse 1.6s ease-out infinite}`,
+		`@keyframes __gust_comment_unread_pulse{0%{opacity:1;transform:scale(.9)}75%,100%{opacity:0;transform:scale(1.45)}}`,
+		`@media (prefers-reduced-motion:reduce){#__gust_comment_unread_badge{transition:none}#__gust_comment_unread_badge::after{animation:none;opacity:.65;transform:scale(1)}}`,
+		`#__gust_comment_unread_badge:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("comment unread badge injection missing %q", fragment)
+		}
+	}
+	if !strings.Contains(script, `document.body.appendChild(commentBubble);document.body.appendChild(commentUnreadBadge);`) {
+		t.Error("unread badge must mount as a body sibling, not inside the comment bubble")
+	}
+}
+
+func TestCommentUnreadBadgeBehaviorWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	helperStart := strings.Index(script, `function threadMessages(c){`)
+	helperEnd := strings.Index(script, `function popoverAuthorLabel(author){`)
+	mountStart := strings.Index(script, `function mountCommentBubble(){`)
+	mountEnd := strings.Index(script, `function createCommentUI(){`)
+	if helperStart < 0 || helperEnd < helperStart || mountStart < 0 || mountEnd < mountStart {
+		t.Fatal("could not extract comment unread badge behavior")
+	}
+	harness := commentUnreadBadgeHarnessPrelude + script[helperStart:helperEnd] + script[mountStart:mountEnd] + commentUnreadBadgeHarnessChecks
+	file := t.TempDir() + "/comment-unread-badge.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment unread badge behavior: %v\n%s", err, output)
+	}
+}
+
+const commentUnreadBadgeHarnessPrelude = `class El {
+  constructor() { this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; this.children = []; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(type, fn) { this.listeners[type] = fn; }
+  appendChild(child) { this.children.push(child); return child; }
+}
+const document = { body: new El(), createElement() { return new El(); } };
+const commentAddIconSvg = '<svg data-icon="add-comment"></svg>';
+let commentState = [];
+let commentBubble = null;
+let commentUnreadBadge = null;
+let popoverCommentId = null;
+let commentPopover = null;
+let bubbleClicks = 0;
+const opened = [];
+const located = [];
+const location = { pathname: '/' };
+const localStorage = {
+  store: {},
+  getItem(k) { return Object.prototype.hasOwnProperty.call(this.store, k) ? this.store[k] : null; },
+  setItem(k, v) { this.store[k] = String(v); },
+};
+function openCommentPopover(id) { opened.push(id); popoverCommentId = id; markThreadSeen(commentState.find(function(c) { return c.id === id; })); }
+function locateComment(c) { located.push(c && c.id); }
+function beginCommentTool() { bubbleClicks++; }
+function assert(condition, message) { if (!condition) throw new Error(message); }
+`
+
+const commentUnreadBadgeHarnessChecks = `
+const old = new Date(Date.now() - 10000).toISOString();
+const now = new Date().toISOString();
+const agentMessage = function(text) { return { author: 'agent', text: text, createdAt: now }; };
+commentState = [
+  { id: 'done', path: '/', state: 'done', messages: [agentMessage('done')] },
+  { id: 'other-page', path: '/other', state: 'review', messages: [agentMessage('other')] },
+  { id: 'read', path: '/', state: 'review', messages: [agentMessage('read')] },
+  { id: 'first', path: '/', state: 'seen', messages: [agentMessage('first')] },
+  { id: 'second', path: '/', state: 'review', messages: [agentMessage('second')] },
+];
+localStorage.setItem('__gust_thread_seen_read', String(Date.parse(now)));
+mountCommentBubble();
+updateUnreadBadge();
+assert(document.body.children[0] === commentBubble, 'badge test mounts the comment bubble');
+assert(document.body.children[1] === commentUnreadBadge, 'badge test mounts the badge separately');
+assert(commentUnreadBadge.hidden === false, 'badge is visible for unread threads');
+assert(commentUnreadBadge.textContent === '2', 'badge counts only current-page unresolved unread threads');
+assert(commentUnreadBadge.attrs['aria-label'] === '2 new comment threads', 'badge exposes an accessible new-thread count');
+let prevented = 0;
+let stopped = 0;
+commentUnreadBadge.listeners.click({ preventDefault() { prevented++; }, stopPropagation() { stopped++; } });
+assert(prevented === 1 && stopped === 1, 'badge click is isolated from the page');
+assert(bubbleClicks === 0, 'badge click does not toggle add-comment mode');
+assert(opened.length === 1 && opened[0] === 'first', 'badge opens the first unread thread');
+assert(located.length === 1 && located[0] === 'first', 'badge scrolls the first unread target');
+updateUnreadBadge();
+assert(commentUnreadBadge.textContent === '1', 'opening a thread clears only that thread from the badge');
+assert(commentUnreadBadge.hidden === false, 'badge remains visible while another thread is unread');
+commentUnreadBadge.listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert(opened.length === 2 && opened[1] === 'second', 'a second click opens the next unread thread');
+markThreadSeen(commentState[4]);
+updateUnreadBadge();
+assert(commentUnreadBadge.textContent === '', 'badge clears its text when no unread threads remain');
+assert(commentUnreadBadge.hidden === true, 'badge hides when no unread threads remain');
+console.log('comment unread badge ok');
+`
 
 func TestCommentModeBubbleBehaviorWhenNodeAvailable(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -272,10 +403,10 @@ func TestCommentModeBubbleBehaviorWhenNodeAvailable(t *testing.T) {
 }
 
 const commentModeBubbleHarnessPrelude = `class El {
-  constructor() { this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; }
+  constructor() { this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; this.children = []; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(type, fn) { this.listeners[type] = fn; }
-  appendChild(child) { this.child = child; return child; }
+  appendChild(child) { this.children.push(child); this.child = child; return child; }
 }
 const document = {
   documentElement: { classList: { toggle() {} } },
@@ -286,6 +417,8 @@ const document = {
 const commentAddIconSvg = '<svg data-icon="add-comment"></svg>';
 const selfDev = false;
 let commentBubble = null;
+let commentUnreadBadge = null;
+let badgeClicks = 0;
 let selecting = false;
 let editorOpen = false;
 let selectedElement = null;
@@ -307,6 +440,7 @@ function saveCommentMode() {}
 function savePinned() {}
 function scheduleRenderPath() {}
 function updateEditorPosition() {}
+function openFirstUnreadComment() { badgeClicks++; }
 let panelSyncs = 0;
 function syncPanel() { panelSyncs++; }
 function assert(condition, message) { if (!condition) throw new Error(message); }
@@ -314,12 +448,15 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 
 const commentModeBubbleHarnessChecks = `
 mountCommentBubble();
-assert(document.body.child === commentBubble, 'comment bubble mounts in the document');
+assert(document.body.children[0] === commentBubble, 'comment bubble mounts before the badge');
+assert(document.body.children[1] === commentUnreadBadge, 'unread badge is a sibling of the bubble');
 assert(commentBubble.id === '__gust_comment_bubble', 'comment bubble has a stable id');
 assert(commentBubble.title === 'Add comment', 'comment bubble has a visible tooltip');
 assert(commentBubble.attrs['aria-label'] === 'Add comment', 'comment bubble has an accessible name');
 assert(commentBubble.attrs['aria-pressed'] === 'false', 'comment bubble starts unpressed');
 assert(commentBubble.innerHTML === commentAddIconSvg, 'comment bubble uses the add-comment icon');
+assert(commentUnreadBadge.id === '__gust_comment_unread_badge', 'unread badge has a stable id');
+assert(commentUnreadBadge.hidden === true, 'unread badge is hidden without unread threads');
 let stopped = 0;
 commentBubble.listeners.click({ stopPropagation() { stopped++; } });
 assert(stopped === 1, 'comment bubble click does not leak to the page');
@@ -327,6 +464,11 @@ assert(selecting === true, 'click enables comment creation mode');
 assert(commentBubble.attrs['aria-pressed'] === 'true', 'active comment mode is exposed as pressed');
 assert(commentBubble.attrs['aria-label'] === 'Exit comment mode', 'active comment mode has an exit label');
 assert(panelSyncs === 0, 'comment bubble does not open the Gust panel');
+let badgePrevented = 0;
+commentUnreadBadge.listeners.click({ preventDefault() { badgePrevented++; }, stopPropagation() { stopped++; } });
+assert(badgePrevented === 1, 'unread badge click does not submit or activate the page');
+assert(stopped === 2, 'unread badge click does not leak to the page');
+assert(badgeClicks === 1, 'unread badge delegates to the unread-thread action');
 commentBubble.listeners.click({ stopPropagation() { stopped++; } });
 assert(selecting === false, 'clicking again disables comment creation mode');
 assert(commentBubble.attrs['aria-pressed'] === 'false', 'disabled comment mode clears the pressed state');
@@ -1302,6 +1444,31 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 	}
 }
 
+func TestCommentTargetIconInFloatingThreadPanel(t *testing.T) {
+	script := reloadScript(12, 8765)
+	const targetIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><line x1="128" y1="128" x2="224" y2="32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M195.88,60.12a95.88,95.88,0,1,0,18.77,26.49" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M161.94,94.06a48,48,0,1,0,14,31.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>`
+	for _, fragment := range []string{
+		`const commentTargetIconSvg='` + targetIcon + `';`,
+		`function renderCommentTarget(container,target){`,
+		`icon.className="__gust_popover_path_icon";icon.setAttribute("aria-hidden","true");icon.innerHTML=commentTargetIconSvg;`,
+		`text.className="__gust_popover_path_text";text.textContent=target||"/";`,
+		`container.replaceChildren(icon,text);`,
+		`renderCommentTarget(parts.path,c.path||"/");`,
+		`#__gust_comment_popover .__gust_popover_path{display:flex;align-items:center;gap:5px;flex:1 1 auto;min-width:0;overflow:hidden;direction:ltr;text-align:left}`,
+		`#__gust_comment_popover .__gust_popover_path_icon{display:inline-flex;flex:none;width:14px;height:14px;color:#e0cfba}`,
+		`#__gust_comment_popover .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
+		`#__gust_comment_popover .__gust_popover_path_text{display:block;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("floating thread target icon missing %q", fragment)
+		}
+	}
+	// The requested follow-up replaces the first proposed icon; do not ship both.
+	if strings.Contains(script, `x1="128" y1="232" x2="128" y2="200"`) {
+		t.Error("floating thread target still contains the first proposed icon")
+	}
+}
+
 // TestProxyFloatingCommentPanelBehaviorWhenNodeAvailable runs the extracted
 // popover functions against a tiny DOM stub, so the pin-to-panel interaction is
 // exercised at runtime rather than only checked as source text.
@@ -1346,7 +1513,7 @@ const popoverHarnessPrelude = `class El {
   }
   appendChild(c) { this.children.push(c); if (c) c.parentNode = this; return c; }
   append(...cs) { for (const c of cs) if (c && typeof c === 'object') { this.children.push(c); c.parentNode = this; } }
-  replaceChildren() { for (const c of this.children) if (c) c.parentNode = null; this.children = []; }
+  replaceChildren(...cs) { for (const c of this.children) if (c) c.parentNode = null; this.children = []; for (const c of cs) this.appendChild(c); }
   remove() {
     if (this.parentNode) {
       const i = this.parentNode.children.indexOf(this);
@@ -1363,10 +1530,18 @@ const popoverHarnessPrelude = `class El {
   getBoundingClientRect() { return { left: 100, right: 120, top: 100, bottom: 120, width: 20, height: 20 }; }
 }
 const document = { createElement: t => new El(t), documentElement: new El('html'), activeElement: null };
+const commentTargetIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><line x1="128" y1="128" x2="224" y2="32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M195.88,60.12a95.88,95.88,0,1,0,18.77,26.49" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M161.94,94.06a48,48,0,1,0,14,31.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
 const location = { pathname: '/' };
 const innerWidth = 1000;
 const innerHeight = 800;
 let commentState = [];
+let commentUnreadBadge = null;
+function threadUnread(c) {
+  const messages = c && Array.isArray(c.messages) ? c.messages : [];
+  const newest = messages.length ? messages[messages.length - 1] : null;
+  return !!(newest && newest.author === 'agent');
+}
+function updateUnreadBadge() {}
 let commentPopover = null;
 let popoverCommentId = null;
 let popoverAnchor = null;
@@ -1405,6 +1580,13 @@ assert(popoverCommentId === 'a', 'panel remembers its comment id');
 assert(commentPopover.children.length === 7, 'panel has header, text, meta, replies, reply box, actions, and error');
 assert(commentPopover.children[0].children[0].textContent === 'Draft', 'created state renders the Draft badge');
 assert(commentPopover.children[1].textContent === 'first\nsecond', 'multi-line text is preserved');
+const targetPath = popoverParts.path;
+assert(targetPath.children.length === 2, 'target renders an icon and a text label');
+assert(targetPath.children[0].className === '__gust_popover_path_icon', 'target icon precedes the text');
+assert(targetPath.children[0].attrs['aria-hidden'] === 'true', 'decorative target icon is hidden from assistive technology');
+assert(targetPath.children[0].innerHTML === commentTargetIconSvg, 'target uses the requested second SVG');
+assert(targetPath.children[1].className === '__gust_popover_path_text', 'target text has a dedicated truncation wrapper');
+assert(targetPath.children[1].textContent === '/', 'target text remains the original path');
 assert(commentPopover.children[3].children[0].textContent === 'No replies yet.', 'empty thread shows a placeholder');
 const createdActions = commentPopover.children[5];
 assert(createdActions.children[2].hidden === false, 'drafts expose Remove draft');
