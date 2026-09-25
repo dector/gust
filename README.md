@@ -118,17 +118,19 @@ gust ctl pause    # pause filesystem auto-reload
 gust ctl rerun    # reload now (works while paused)
 gust ctl resume   # resume auto-reload
 gust ctl logs     # output captured from the last failed exit
-gust ctl comments                  # list all unfinished comments (created, submitted, seen)
-gust ctl comments --wait           # wait for oldest submitted comment batch
-gust ctl comments --pending        # recover seen unfinished comments
-gust ctl comments done <id>
-gust ctl comments abandon <id> <reason>
+gust ctl comments                     # list all unfinished threads
+                                      # (created, submitted, seen, review)
+gust ctl comments --wait              # wait for oldest submitted comment batch
+gust ctl comments --pending           # recover seen unfinished comments
+gust ctl comments reply <id> <text>   # agent reply on a seen thread
+gust ctl comments review <id> <text>  # agent reply + mark thread review
+gust ctl comments done <id>           # resolve a thread (human only)
 gust ctl help
 ```
 
 Both invocations find the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
 
-Comment commands emit stable JSON when Gust is launched with `--optin comments`. Without that opt-in, comment socket commands return `comments_disabled`, browser comment API paths return 404, and the injected widget contains only reload/status controls. Opt-in works without proxy mode too, allowing ctl comment workflows without browser submission. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` lists all unfinished comments (created, submitted, and seen). `comments --pending` lists only seen-but-unfinished comments for recovery after an interrupted agent. Mark each comment `done` or `abandon` it with a reason. Comment data is in-memory and is lost when Gust exits. In proxy mode, the injected browser panel lets viewers select page elements, add comments, and inspect comment history. Ctrl+Enter saves a comment. Comment mode stays active after a reload in the same tab (an open editor returns to selection mode; unsaved text is not retained). Autosubmit is on by default in comment mode and submits each saved comment individually; turn it off to keep drafts, then use Submit to send all drafts as a batch. The newest comments appear first, with drafts, submitted comments, and in-progress comments clearly labeled. Drafts can be removed with the × beside each one. Done and abandoned comments are counted at the bottom instead of shown individually. Pins distinguish created, submitted, and seen comments; done comments have no pins. Clicking a pin opens a floating panel beside it with the comment text, its state, and Remove draft for drafts (plus Locate when the comment's element is found on the current page), instead of opening the side panel; the panel follows the pin, updates as the comment changes state, and closes when the comment is resolved, removed, or dismissed. Escape clears an open editor or exits comment selection mode before it dismisses the floating panel. New pins track the clicked point relative to the selected element, including when it moves or resizes. Pin placement requires a confident element match, otherwise the panel reports that the location was not found. The panel displays comments from other paths as pending. Page backgrounds (body/html) can also be selected; closing the floating editor returns to selection mode. The browser does not start an agent; use the CLI commands above to receive and finish submitted comments.
+Comment commands emit stable JSON when Gust is launched with `--optin comments`. Without that opt-in, comment socket commands return `comments_disabled`, browser comment API paths return 404, and the injected widget contains only reload/status controls. Opt-in works without proxy mode too, allowing ctl comment workflows without browser submission. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` lists all unfinished threads (created, submitted, seen, and review). `comments --pending` lists only seen-but-unfinished threads for recovery after an interrupted agent. The agent posts a reply with `comments reply`, or posts a reply and marks the thread review with `comments review`; only the human resolves a thread with `comments done`. Comment data is in-memory and is lost when Gust exits. In proxy mode, the injected browser panel lets viewers select page elements, add comments, and inspect thread history. Ctrl+Enter saves a comment. Comment mode stays active after a reload in the same tab (an open editor returns to selection mode; unsaved text is not retained). Autosubmit is on by default in comment mode and submits each saved comment individually; turn it off to keep drafts, then use Submit to send all drafts as a batch. The newest threads appear first, with drafts, submitted threads, in-progress threads, and review threads clearly labeled. Drafts can be removed with the × beside each one. Resolved threads are counted at the bottom instead of shown individually. Pins distinguish created, submitted, seen, and review threads; resolved threads have no pins. Clicking a pin opens a floating thread panel beside it with the root comment, its state, its replies, a reply box, and Resolve (plus Remove draft for drafts and Locate when the comment's element is found on the current page), instead of opening the side panel; review threads with unread agent replies are highlighted, and the panel follows the pin, updates as the thread changes, and closes when it is resolved, removed, or dismissed. Escape clears an open editor or exits comment selection mode before it dismisses the floating panel. New pins track the clicked point relative to the selected element, including when it moves or resizes. Pin placement requires a confident element match, otherwise the panel reports that the location was not found. The panel displays comments from other paths as pending. Page backgrounds (body/html) can also be selected; closing the floating editor returns to selection mode. The browser does not start an agent; use the CLI commands above to receive submitted threads, reply, and mark them review.
 
 A typical agent flow is: `gust ctl pause`, edit files, `gust ctl rerun`, then `gust ctl resume`. Pausing only stops filesystem-triggered reloads; manual and `rerun` reloads still work. Resuming runs one reload if file changes were missed while paused.
 
@@ -152,9 +154,12 @@ printed for Pi also tell each worker to use the matching invocation for all
 `ctl` commands.
 
 This prints instructions into the Pi conversation. Pi's top-level agent only
-launches one blocking worker at a time; that worker receives comments, changes
-the project, verifies the result, and closes the comments. When it finishes, Pi
-launches the next worker. Submit comments from the Gust proxy's browser panel;
+launches one blocking worker at a time; that worker receives comments,
+dispatches one subagent per thread to change the project and verify the result,
+and each subagent posts its own concise reply and marks the thread review. The
+orchestrator relays results and never resolves a thread: only the human resolves
+in the browser panel. When a worker finishes, Pi launches the next worker.
+Submit comments from the Gust proxy's browser panel;
 leave Pi running to keep listening. Stop the Pi turn to stop the workflow. No
 skill installation or `--optin dev` is needed. If Gust runs from another
 directory, the worker needs its socket path with `go tool gust ctl -S <socket>`

@@ -2,6 +2,7 @@ package comments
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -93,15 +94,15 @@ func TestCreateSubmitAndTransitions(t *testing.T) {
 	if c.State != StateCreated || c.CreatedAt.IsZero() {
 		t.Fatalf("created comment: %+v", c)
 	}
+	if len(c.Messages) != 0 {
+		t.Fatalf("new comment messages: %+v", c.Messages)
+	}
 	b, err := s.SubmitCreated(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(b.Comments) != 1 || b.Comments[0].BatchID != b.ID || b.Comments[0].State != StateSubmitted {
 		t.Fatalf("batch: %+v", b)
-	}
-	if _, err = s.MarkDone(ctx, c.ID); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("done before seen: %v", err)
 	}
 	got, err := s.NextBatch(ctx)
 	if err != nil {
@@ -121,11 +122,222 @@ func TestCreateSubmitAndTransitions(t *testing.T) {
 	if done.State != StateDone || done.FinishedAt.IsZero() {
 		t.Fatalf("done: %+v", done)
 	}
-	if _, err = s.Abandon(ctx, c.ID, "not needed"); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("terminal move accepted: %v", err)
+	if _, err = s.Reply(ctx, c.ID, AuthorHuman, "still there?"); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("reply to done accepted: %v", err)
+	}
+	if _, err = s.Review(ctx, c.ID, "reviewing done"); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("review of done accepted: %v", err)
 	}
 	if _, err = s.SubmitCreated(ctx); !errors.Is(err, ErrNoCreated) {
 		t.Fatalf("empty submit: %v", err)
+	}
+}
+
+func TestMarkDoneAllowedFromSubmittedSeenAndReview(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// submitted -> done
+	create(t, s, "submitted")
+	if _, err := s.SubmitOne(ctx, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.MarkDone(ctx, "submitted"); err != nil || c.State != StateDone {
+		t.Fatalf("done from submitted: %+v, %v", c, err)
+	}
+
+	// seen -> done
+	create(t, s, "seen")
+	if _, err := s.SubmitOne(ctx, "seen"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.MarkDone(ctx, "seen"); err != nil || c.State != StateDone {
+		t.Fatalf("done from seen: %+v, %v", c, err)
+	}
+
+	// review -> done
+	create(t, s, "review")
+	if _, err := s.SubmitOne(ctx, "review"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Review(ctx, "review", "looks done"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.MarkDone(ctx, "review"); err != nil || c.State != StateDone {
+		t.Fatalf("done from review: %+v, %v", c, err)
+	}
+
+	// created -> done rejected
+	create(t, s, "created")
+	if _, err := s.MarkDone(ctx, "created"); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("done from created: %v", err)
+	}
+}
+
+func TestReplyAndReviewTransitions(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "t")
+	if _, err := s.SubmitOne(ctx, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Reply(ctx, "t", AuthorAgent, "   "); !errors.Is(err, ErrTextRequired) {
+		t.Fatalf("blank reply: %v", err)
+	}
+	if _, err := s.Review(ctx, "t", ""); !errors.Is(err, ErrTextRequired) {
+		t.Fatalf("blank review: %v", err)
+	}
+
+	// agent reply in seen stays seen and appends a message
+	got, err := s.Reply(ctx, "t", AuthorAgent, "working on it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateSeen || len(got.Messages) != 1 || got.Messages[0].Author != AuthorAgent || got.Messages[0].Text != "working on it" {
+		t.Fatalf("agent reply: %+v", got)
+	}
+
+	// human reply in seen stays seen
+	got, err = s.Reply(ctx, "t", AuthorHuman, "thanks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateSeen || len(got.Messages) != 2 || got.Messages[1].Author != AuthorHuman {
+		t.Fatalf("human reply: %+v", got)
+	}
+
+	// review moves seen -> review and appends agent message
+	got, err = s.Review(ctx, "t", "please verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateReview || len(got.Messages) != 3 || got.Messages[2].Text != "please verify" {
+		t.Fatalf("review: %+v", got)
+	}
+	if _, err = s.Review(ctx, "t", "again"); err != nil {
+		t.Fatalf("review of review: %v", err)
+	}
+	if _, err = s.Review(ctx, "missing", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("review missing: %v", err)
+	}
+
+	// agent reply in review keeps review state
+	got, err = s.Reply(ctx, "t", AuthorAgent, "one more")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateReview {
+		t.Fatalf("agent reply in review: %+v", got)
+	}
+}
+
+func TestHumanReplyReopensReviewAsSubmitted(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "t")
+	if _, err := s.SubmitOne(ctx, "t"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.NextBatch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Review(ctx, "t", "done, please check"); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := s.Reply(ctx, "t", AuthorHuman, "one more thing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.State != StateSubmitted || reopened.BatchID == "" || reopened.BatchID == first.ID {
+		t.Fatalf("reopened: %+v (old batch %s)", reopened, first.ID)
+	}
+	if len(reopened.Messages) != 2 || reopened.Messages[1].Author != AuthorHuman {
+		t.Fatalf("reopened messages: %+v", reopened.Messages)
+	}
+
+	// the reopened thread is claimable as a fresh batch with the same id
+	again, err := s.NextBatch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != reopened.BatchID || len(again.Comments) != 1 || again.Comments[0].ID != "t" || again.Comments[0].State != StateSeen {
+		t.Fatalf("reopened batch: %+v", again)
+	}
+	if len(again.Comments[0].Messages) != 2 {
+		t.Fatalf("reopened batch messages: %+v", again.Comments[0].Messages)
+	}
+}
+
+func TestOldSchemaMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSchema := `
+CREATE TABLE batches (id TEXT PRIMARY KEY, submitted_at INTEGER NOT NULL);
+CREATE TABLE comments (
+ id TEXT PRIMARY KEY,
+ batch_id TEXT REFERENCES batches(id),
+ path TEXT NOT NULL,
+ text TEXT NOT NULL,
+ html TEXT NOT NULL,
+ locator TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('created','submitted','seen','done','abandoned')),
+ reason TEXT NOT NULL DEFAULT '',
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ submitted_at INTEGER,
+ seen_at INTEGER,
+ finished_at INTEGER
+);
+CREATE INDEX comments_state_batch ON comments(state, batch_id);
+INSERT INTO comments(id,path,text,html,locator,state,reason,created_at,updated_at) VALUES('kept','/p','t','<b>','body','abandoned','cannot do it',1,1);
+INSERT INTO comments(id,path,text,html,locator,state,reason,created_at,updated_at) VALUES('open','/q','u','<i>','body','created','',1,1);
+`
+	if _, err := db.Exec(oldSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := OpenAt(path)
+	if err != nil {
+		t.Fatalf("open old db: %v", err)
+	}
+	defer s.Close()
+	got, err := s.Get(context.Background(), "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateDone {
+		t.Fatalf("migrated abandoned state = %q, want done", got.State)
+	}
+	if len(got.Messages) != 0 {
+		t.Fatalf("migrated messages = %+v", got.Messages)
+	}
+	if _, err := s.Get(context.Background(), "open"); err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, schemaVersion)
 	}
 }
 
@@ -154,6 +366,35 @@ func TestDeleteDraft(t *testing.T) {
 	}
 }
 
+func TestDeleteDraftRemovesMessages(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "draft")
+	if _, err := s.Reply(ctx, "draft", AuthorHuman, "a human reply"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 1 {
+		t.Fatalf("draft messages = %+v, want one", got.Messages)
+	}
+	if err := s.DeleteDraft(ctx, "draft"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(ctx, "draft"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("draft still present: %v", err)
+	}
+	var orphans int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE comment_id=?`, "draft").Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 0 {
+		t.Fatalf("DeleteDraft left %d orphaned message(s)", orphans)
+	}
+}
+
 func TestSubmitOneLeavesOtherDrafts(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -179,7 +420,7 @@ func TestSubmitOneLeavesOtherDrafts(t *testing.T) {
 	}
 }
 
-func TestSubmitGroupsOnlyCreatedAndAbandonReason(t *testing.T) {
+func TestSubmitGroupsOnlyCreated(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	create(t, s, "a")
@@ -194,15 +435,15 @@ func TestSubmitGroupsOnlyCreatedAndAbandonReason(t *testing.T) {
 	if _, err = s.NextBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Abandon(ctx, "a", ""); err == nil {
-		t.Fatal("empty reason accepted")
+	if _, err = s.Review(ctx, "a", "explained in reply"); err != nil {
+		t.Fatal(err)
 	}
-	abandoned, err := s.Abandon(ctx, "a", "duplicate")
+	reviewed, err := s.Get(ctx, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if abandoned.State != StateAbandoned || abandoned.Reason != "duplicate" {
-		t.Fatalf("abandoned: %+v", abandoned)
+	if reviewed.State != StateReview || len(reviewed.Messages) != 1 || reviewed.Messages[0].Author != AuthorAgent {
+		t.Fatalf("reviewed: %+v", reviewed)
 	}
 	unfinished, err := s.ListSeenUnfinished(ctx)
 	if err != nil || len(unfinished) != 1 || unfinished[0].ID != "b" {
@@ -275,6 +516,54 @@ func TestNextBatchWaitsUntilSubmit(t *testing.T) {
 	}
 }
 
+func TestNextBatchWakesWhenReviewThreadReopenedByHumanReply(t *testing.T) {
+	s := testStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	create(t, s, "reviewed")
+	if _, err := s.SubmitCreated(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Review(ctx, "reviewed", "agent reply"); err != nil {
+		t.Fatal(err)
+	}
+	// The store now holds no submitted batch for the waiter.
+	result := make(chan Batch, 1)
+	errs := make(chan error, 1)
+	go func() {
+		b, err := s.NextBatch(ctx)
+		if err != nil {
+			errs <- err
+			return
+		}
+		result <- b
+	}()
+	time.Sleep(20 * time.Millisecond)
+	reopened, err := s.Reply(ctx, "reviewed", AuthorHuman, "please adjust")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.State != StateSubmitted {
+		t.Fatalf("human reply state = %s, want submitted", reopened.State)
+	}
+	select {
+	case b := <-result:
+		if len(b.Comments) != 1 || b.Comments[0].ID != "reviewed" {
+			t.Fatalf("next batch = %+v, want reopened thread", b)
+		}
+		if b.Comments[0].State != StateSeen {
+			t.Fatalf("claimed state = %s, want seen", b.Comments[0].State)
+		}
+	case err := <-errs:
+		t.Fatal(err)
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for reopened thread")
+	}
+}
+
 func TestListUnfinishedIncludesOpenStatesOnly(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -300,15 +589,15 @@ func TestListUnfinishedIncludesOpenStatesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// abandoned: submit, claim, then finish with a reason.
-	create(t, s, "abandoned")
+	// review: submit, claim, then mark review.
+	create(t, s, "review")
 	if _, err := s.SubmitCreated(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.NextBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Abandon(ctx, "abandoned", "not actionable"); err != nil {
+	if _, err := s.Review(ctx, "review", "please check"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -329,7 +618,7 @@ func TestListUnfinishedIncludesOpenStatesOnly(t *testing.T) {
 	for _, c := range open {
 		got[c.ID] = c.State
 	}
-	want := map[string]State{"created": StateCreated, "submitted": StateSubmitted, "seen": StateSeen}
+	want := map[string]State{"created": StateCreated, "submitted": StateSubmitted, "seen": StateSeen, "review": StateReview}
 	if len(got) != len(want) {
 		t.Fatalf("ListUnfinished returned %v, want %v", got, want)
 	}

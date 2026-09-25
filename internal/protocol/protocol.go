@@ -15,8 +15,9 @@ const (
 	ActionCommentsWait    Action = "comments_wait"
 	ActionCommentsList    Action = "comments_list"
 	ActionCommentsPending Action = "comments_pending"
+	ActionCommentsReply   Action = "comments_reply"
+	ActionCommentsReview  Action = "comments_review"
 	ActionCommentsDone    Action = "comments_done"
-	ActionCommentsAbandon Action = "comments_abandon"
 )
 
 // Auto-reload states returned in Response.AutoReload.
@@ -27,21 +28,21 @@ const (
 
 // Error codes returned in Response.Error.
 const (
-	ErrInvalidRequest        = "invalid_request"
-	ErrShuttingDown          = "shutting_down"
-	ErrNoFailureLogs         = "no_failure_logs"
-	ErrCommentStore          = "comment_store_error"
-	ErrCommentsDisabled      = "comments_disabled"
-	ErrCommentNotFound       = "comment_not_found"
-	ErrCommentInvalidState   = "invalid_comment_state"
-	ErrCommentReasonRequired = "reason_required"
+	ErrInvalidRequest      = "invalid_request"
+	ErrShuttingDown        = "shutting_down"
+	ErrNoFailureLogs       = "no_failure_logs"
+	ErrCommentStore        = "comment_store_error"
+	ErrCommentsDisabled    = "comments_disabled"
+	ErrCommentNotFound     = "comment_not_found"
+	ErrCommentInvalidState = "invalid_comment_state"
+	ErrCommentTextRequired = "text_required"
 )
 
 // Request is a single control request sent over the socket.
 type Request struct {
 	Action Action `json:"action"`
 	ID     string `json:"id,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	Text   string `json:"text,omitempty"`
 }
 
 // ExitSummary describes the most recent application process exit.

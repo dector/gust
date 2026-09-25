@@ -262,7 +262,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--pending|--wait|done <id>|abandon <id> <reason>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--pending|--wait|reply <id> <text>|review <id> <text>|done <id>]")
 	}
 	var req protocol.Request
 	if len(positional) == 1 {
@@ -273,8 +273,10 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		req.Action = protocol.ActionCommentsWait
 	} else if len(positional) == 3 && positional[1] == "done" && positional[2] != "" {
 		req.Action, req.ID = protocol.ActionCommentsDone, positional[2]
-	} else if len(positional) == 4 && positional[1] == "abandon" && positional[2] != "" && positional[3] != "" {
-		req.Action, req.ID, req.Reason = protocol.ActionCommentsAbandon, positional[2], positional[3]
+	} else if len(positional) == 4 && positional[1] == "reply" && positional[2] != "" && strings.TrimSpace(positional[3]) != "" {
+		req.Action, req.ID, req.Text = protocol.ActionCommentsReply, positional[2], positional[3]
+	} else if len(positional) == 4 && positional[1] == "review" && positional[2] != "" && strings.TrimSpace(positional[3]) != "" {
+		req.Action, req.ID, req.Text = protocol.ActionCommentsReview, positional[2], positional[3]
 	} else {
 		fmt.Fprintln(stderr, "gust ctl: invalid comments command")
 		usage()
@@ -333,15 +335,16 @@ Commands:
   resume    resume filesystem auto-reload
   rerun     reload now (works while paused)
   logs      show output captured from the last failed exit
-  comments  wait for, recover, or finish submitted comments
+  comments  wait for, recover, reply to, or review submitted comments
   help      show this help
 
 Comments:
   comments                    list all unfinished comments as JSON
   comments --pending          list seen unfinished comments as JSON
   comments --wait             wait for oldest batch; marks comments seen
-  comments done <id>          mark a seen comment done
-  comments abandon <id> <reason>
+  comments reply <id> <text>  post an agent reply on a seen thread
+  comments review <id> <text> post an agent reply and mark the thread review
+  comments done <id>          resolve a submitted, seen, or review thread
 
 Discovery:
   Without -S, the socket path is derived from the current directory.

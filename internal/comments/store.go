@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,14 +26,31 @@ const (
 	StateCreated   State = "created"
 	StateSubmitted State = "submitted"
 	StateSeen      State = "seen"
+	StateReview    State = "review"
 	StateDone      State = "done"
-	StateAbandoned State = "abandoned"
 )
+
+// Author identifies who wrote a thread message.
+type Author string
+
+const (
+	AuthorHuman Author = "human"
+	AuthorAgent Author = "agent"
+)
+
+// Message is a single reply in a comment thread.
+type Message struct {
+	ID        string    `json:"id"`
+	Author    Author    `json:"author"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"createdAt"`
+}
 
 var (
 	ErrNotFound     = errors.New("comment not found")
 	ErrInvalidState = errors.New("invalid comment state transition")
 	ErrNoCreated    = errors.New("no created comments to submit")
+	ErrTextRequired = errors.New("comment text is required")
 )
 
 // Comment contains user-authored text and the selected element context.
@@ -44,7 +62,7 @@ type Comment struct {
 	HTML        string    `json:"html"`
 	Locator     string    `json:"locator"`
 	State       State     `json:"state"`
-	Reason      string    `json:"reason,omitempty"`
+	Messages    []Message `json:"messages"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	SubmittedAt time.Time `json:"submittedAt,omitempty"`
@@ -96,6 +114,10 @@ func OpenAt(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err = migrate(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -111,16 +133,93 @@ CREATE TABLE IF NOT EXISTS comments (
  text TEXT NOT NULL,
  html TEXT NOT NULL,
  locator TEXT NOT NULL,
- state TEXT NOT NULL CHECK (state IN ('created','submitted','seen','done','abandoned')),
- reason TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK (state IN ('created','submitted','seen','review','done')),
  created_at INTEGER NOT NULL,
  updated_at INTEGER NOT NULL,
  submitted_at INTEGER,
  seen_at INTEGER,
  finished_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS messages (
+ id TEXT PRIMARY KEY,
+ comment_id TEXT NOT NULL REFERENCES comments(id),
+ author TEXT NOT NULL CHECK (author IN ('human','agent')),
+ text TEXT NOT NULL,
+ created_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS comments_state_batch ON comments(state, batch_id);
+CREATE INDEX IF NOT EXISTS messages_comment ON messages(comment_id, created_at, id);
 `
+
+const schemaVersion = 2
+
+// migrate upgrades a database created before threads. The old schema stored a
+// reason column and allowed state='abandoned'; both are gone. Rebuilding the
+// comments table keeps old tmpfs-backed dev:self databases openable.
+func migrate(db *sql.DB) error {
+	hasReason, err := columnExists(db, "comments", "reason")
+	if err != nil {
+		return err
+	}
+	if hasReason {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		stmts := []string{
+			`CREATE TABLE comments_new (
+ id TEXT PRIMARY KEY,
+ batch_id TEXT REFERENCES batches(id),
+ path TEXT NOT NULL,
+ text TEXT NOT NULL,
+ html TEXT NOT NULL,
+ locator TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('created','submitted','seen','review','done')),
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ submitted_at INTEGER,
+ seen_at INTEGER,
+ finished_at INTEGER
+)`,
+			`INSERT INTO comments_new(id,batch_id,path,text,html,locator,state,created_at,updated_at,submitted_at,seen_at,finished_at)
+ SELECT id,batch_id,path,text,html,locator,CASE state WHEN 'abandoned' THEN 'done' ELSE state END,created_at,updated_at,submitted_at,seen_at,finished_at FROM comments`,
+			`DROP TABLE comments`,
+			`ALTER TABLE comments_new RENAME TO comments`,
+			`CREATE INDEX IF NOT EXISTS comments_state_batch ON comments(state, batch_id)`,
+		}
+		for _, stmt := range stmts {
+			if _, err = tx.Exec(stmt); err != nil {
+				return err
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
+	return err
+}
+
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
 
 const stateDirMode = 0o700
 
@@ -218,7 +317,12 @@ func (s *Store) DeleteDraft(ctx context.Context, id string) error {
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM comments WHERE id=? AND state='created'`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM comments WHERE id=? AND state='created'`, id)
 	if err != nil {
 		return err
 	}
@@ -227,12 +331,20 @@ func (s *Store) DeleteDraft(ctx context.Context, id string) error {
 		return err
 	}
 	if n == 0 {
-		if _, err := s.getLocked(ctx, id); err != nil {
+		var state State
+		err := tx.QueryRowContext(ctx, `SELECT state FROM comments WHERE id=?`, id).Scan(&state)
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		if err != nil {
 			return err
 		}
 		return ErrInvalidState
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE comment_id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SubmitCreated atomically groups all created comments into a newly submitted batch.
@@ -317,14 +429,15 @@ func (s *Store) NextBatch(ctx context.Context) (Batch, error) {
 	}
 }
 
-// ListUnfinished returns all non-closed comments (created, submitted, and seen).
+// ListUnfinished returns all non-closed comments (created, submitted, seen,
+// and review).
 func (s *Store) ListUnfinished(ctx context.Context) ([]Comment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
-	return s.queryComments(ctx, `SELECT `+columns+` FROM comments WHERE state IN ('created','submitted','seen') ORDER BY created_at,id`)
+	return s.queryComments(ctx, `SELECT `+columns+` FROM comments WHERE state IN ('created','submitted','seen','review') ORDER BY created_at,id`)
 }
 
 // ListSeenUnfinished returns seen comments for recovery after interrupted work.
@@ -337,27 +450,19 @@ func (s *Store) ListSeenUnfinished(ctx context.Context) ([]Comment, error) {
 	return s.queryComments(ctx, `SELECT `+columns+` FROM comments WHERE state='seen' ORDER BY seen_at,created_at,id`)
 }
 
-// MarkDone finishes a seen comment.
+// MarkDone finishes a submitted, seen, or review comment. Only the human does this.
 func (s *Store) MarkDone(ctx context.Context, id string) (Comment, error) {
-	return s.finish(ctx, id, StateDone, "")
+	return s.finish(ctx, id)
 }
 
-// Abandon finishes a seen comment with a non-empty reason.
-func (s *Store) Abandon(ctx context.Context, id, reason string) (Comment, error) {
-	if reason == "" {
-		return Comment{}, fmt.Errorf("abandon reason is required")
-	}
-	return s.finish(ctx, id, StateAbandoned, reason)
-}
-
-func (s *Store) finish(ctx context.Context, id string, target State, reason string) (Comment, error) {
+func (s *Store) finish(ctx context.Context, id string) (Comment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkOpen(); err != nil {
 		return Comment{}, err
 	}
 	now := stamp(time.Now().UTC())
-	res, err := s.db.ExecContext(ctx, `UPDATE comments SET state=?,reason=?,finished_at=?,updated_at=? WHERE id=? AND state='seen'`, target, reason, now, now, id)
+	res, err := s.db.ExecContext(ctx, `UPDATE comments SET state='done',finished_at=?,updated_at=? WHERE id=? AND state IN ('submitted','seen','review')`, now, now, id)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -367,6 +472,98 @@ func (s *Store) finish(ctx context.Context, id string, target State, reason stri
 	}
 	if n == 0 {
 		return Comment{}, s.stateError(ctx, id)
+	}
+	return s.getLocked(ctx, id)
+}
+
+// Reply appends a message from author to the thread. A human reply to a review
+// thread reopens it as submitted and creates a fresh batch for the agent inbox.
+func (s *Store) Reply(ctx context.Context, id string, author Author, text string) (Comment, error) {
+	if strings.TrimSpace(text) == "" {
+		return Comment{}, ErrTextRequired
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return Comment{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Comment{}, err
+	}
+	defer tx.Rollback()
+	var state State
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM comments WHERE id=?`, id).Scan(&state); err != nil {
+		if err == sql.ErrNoRows {
+			return Comment{}, ErrNotFound
+		}
+		return Comment{}, err
+	}
+	if state == StateDone {
+		return Comment{}, fmt.Errorf("%w: cannot reply to comment in %q", ErrInvalidState, state)
+	}
+	now := time.Now().UTC()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,comment_id,author,text,created_at) VALUES(?,?,?,?,?)`, newID(), id, string(author), text, stamp(now)); err != nil {
+		return Comment{}, err
+	}
+	reopened := author == AuthorHuman && state == StateReview
+	if reopened {
+		batchID := newID()
+		if _, err = tx.ExecContext(ctx, `INSERT INTO batches(id,submitted_at) VALUES(?,?)`, batchID, stamp(now)); err != nil {
+			return Comment{}, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='submitted',batch_id=?,submitted_at=?,updated_at=? WHERE id=?`, batchID, stamp(now), stamp(now), id); err != nil {
+			return Comment{}, err
+		}
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE comments SET updated_at=? WHERE id=?`, stamp(now), id); err != nil {
+			return Comment{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return Comment{}, err
+	}
+	if reopened {
+		s.signalLocked()
+	}
+	return s.getLocked(ctx, id)
+}
+
+// Review appends an agent message and moves a seen (or already review) thread
+// to review. Only the human can resolve it afterwards.
+func (s *Store) Review(ctx context.Context, id, text string) (Comment, error) {
+	if strings.TrimSpace(text) == "" {
+		return Comment{}, ErrTextRequired
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return Comment{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Comment{}, err
+	}
+	defer tx.Rollback()
+	var state State
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM comments WHERE id=?`, id).Scan(&state); err != nil {
+		if err == sql.ErrNoRows {
+			return Comment{}, ErrNotFound
+		}
+		return Comment{}, err
+	}
+	if state != StateSeen && state != StateReview {
+		return Comment{}, fmt.Errorf("%w: cannot review comment in %q", ErrInvalidState, state)
+	}
+	now := time.Now().UTC()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,comment_id,author,text,created_at) VALUES(?,?,?,?,?)`, newID(), id, string(AuthorAgent), text, stamp(now)); err != nil {
+		return Comment{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='review',updated_at=? WHERE id=?`, stamp(now), id); err != nil {
+		return Comment{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Comment{}, err
 	}
 	return s.getLocked(ctx, id)
 }
@@ -403,13 +600,21 @@ func (s *Store) claimOldest(ctx context.Context) (Batch, bool, error) {
 	if err != nil {
 		return Batch{}, false, err
 	}
+	if err = loadMessages(ctx, tx, b.Comments); err != nil {
+		return Batch{}, false, err
+	}
 	if err = tx.Commit(); err != nil {
 		return Batch{}, false, err
 	}
 	return b, true, nil
 }
 
-const columns = `id,batch_id,path,text,html,locator,state,reason,created_at,updated_at,submitted_at,seen_at,finished_at`
+const columns = `id,batch_id,path,text,html,locator,state,created_at,updated_at,submitted_at,seen_at,finished_at`
+
+// querier is satisfied by both *sql.DB and *sql.Tx.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
 
 func (s *Store) queryComments(ctx context.Context, q string, args ...any) ([]Comment, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -417,8 +622,53 @@ func (s *Store) queryComments(ctx context.Context, q string, args ...any) ([]Com
 		return nil, err
 	}
 	defer rows.Close()
-	return scanComments(rows)
+	cs, err := scanComments(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := loadMessages(ctx, s.db, cs); err != nil {
+		return nil, err
+	}
+	return cs, nil
 }
+
+// loadMessages populates Messages for cs, ordered by created_at then id.
+func loadMessages(ctx context.Context, q querier, cs []Comment) error {
+	for i := range cs {
+		cs[i].Messages = []Message{}
+	}
+	if len(cs) == 0 {
+		return nil
+	}
+	byID := make(map[string]*Comment, len(cs))
+	placeholders := make([]string, 0, len(cs))
+	args := make([]any, 0, len(cs))
+	for i := range cs {
+		byID[cs[i].ID] = &cs[i]
+		placeholders = append(placeholders, "?")
+		args = append(args, cs[i].ID)
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id,comment_id,author,text,created_at FROM messages WHERE comment_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY created_at,id`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m Message
+		var commentID, author string
+		var created int64
+		if err := rows.Scan(&m.ID, &commentID, &author, &m.Text, &created); err != nil {
+			return err
+		}
+		m.Author = Author(author)
+		m.CreatedAt = fromStamp(created)
+		if c := byID[commentID]; c != nil {
+			c.Messages = append(c.Messages, m)
+		}
+	}
+	return rows.Err()
+}
+
 func scanComments(rows *sql.Rows) ([]Comment, error) {
 	out := []Comment{}
 	for rows.Next() {
@@ -427,13 +677,14 @@ func scanComments(rows *sql.Rows) ([]Comment, error) {
 		var state string
 		var created, updated int64
 		var submitted, seen, finished sql.NullInt64
-		if err := rows.Scan(&c.ID, &batchID, &c.Path, &c.Text, &c.HTML, &c.Locator, &state, &c.Reason, &created, &updated, &submitted, &seen, &finished); err != nil {
+		if err := rows.Scan(&c.ID, &batchID, &c.Path, &c.Text, &c.HTML, &c.Locator, &state, &created, &updated, &submitted, &seen, &finished); err != nil {
 			return nil, err
 		}
 		if batchID.Valid {
 			c.BatchID = batchID.String
 		}
 		c.State = State(state)
+		c.Messages = []Message{}
 		c.CreatedAt = fromStamp(created)
 		c.UpdatedAt = fromStamp(updated)
 		if submitted.Valid {

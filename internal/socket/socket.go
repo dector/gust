@@ -28,7 +28,8 @@ type commentStore interface {
 	ListUnfinished(context.Context) ([]comments.Comment, error)
 	ListSeenUnfinished(context.Context) ([]comments.Comment, error)
 	MarkDone(context.Context, string) (comments.Comment, error)
-	Abandon(context.Context, string, string) (comments.Comment, error)
+	Reply(context.Context, string, comments.Author, string) (comments.Comment, error)
+	Review(context.Context, string, string) (comments.Comment, error)
 }
 
 type control interface {
@@ -201,7 +202,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store c
 		s.log.Verbosef("socket request: %s", req.Action)
 	}
 	switch req.Action {
-	case protocol.ActionCommentsWait, protocol.ActionCommentsList, protocol.ActionCommentsPending, protocol.ActionCommentsDone, protocol.ActionCommentsAbandon:
+	case protocol.ActionCommentsWait, protocol.ActionCommentsList, protocol.ActionCommentsPending, protocol.ActionCommentsReply, protocol.ActionCommentsReview, protocol.ActionCommentsDone:
 		if store == nil {
 			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrCommentsDisabled})
 			return
@@ -305,11 +306,14 @@ func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol
 		} else {
 			resp = protocol.Response{OK: true, Comments: cs}
 		}
+	case protocol.ActionCommentsReply:
+		c, err := store.Reply(ctx, req.ID, comments.AuthorAgent, req.Text)
+		resp = commentMutationResponse(c, err)
+	case protocol.ActionCommentsReview:
+		c, err := store.Review(ctx, req.ID, req.Text)
+		resp = commentMutationResponse(c, err)
 	case protocol.ActionCommentsDone:
 		c, err := store.MarkDone(ctx, req.ID)
-		resp = commentMutationResponse(c, err)
-	case protocol.ActionCommentsAbandon:
-		c, err := store.Abandon(ctx, req.ID, req.Reason)
 		resp = commentMutationResponse(c, err)
 	}
 	_ = enc.Encode(resp)
@@ -323,10 +327,9 @@ func commentMutationResponse(c comments.Comment, err error) protocol.Response {
 		return protocol.Response{OK: false, Error: protocol.ErrCommentNotFound}
 	case errors.Is(err, comments.ErrInvalidState):
 		return protocol.Response{OK: false, Error: protocol.ErrCommentInvalidState}
+	case errors.Is(err, comments.ErrTextRequired):
+		return protocol.Response{OK: false, Error: protocol.ErrCommentTextRequired}
 	default:
-		if err.Error() == "abandon reason is required" {
-			return protocol.Response{OK: false, Error: protocol.ErrCommentReasonRequired}
-		}
 		return protocol.Response{OK: false, Error: protocol.ErrCommentStore}
 	}
 }

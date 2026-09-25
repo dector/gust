@@ -9,7 +9,7 @@ Commands:
   resume    resume filesystem auto-reload
   rerun     reload now (works while paused)
   logs      show output captured from the last failed exit
-  comments  wait for, recover, or finish submitted comments
+  comments  wait for, recover, reply to, or review submitted comments
   help      show the ctl help
 
 Discovery:
@@ -24,16 +24,18 @@ Samples:
   gust ctl comments
   gust ctl comments --wait
   gust ctl comments --pending
+  gust ctl comments reply <id> <text>
+  gust ctl comments review <id> <text>
   gust ctl comments done <id>
-  gust ctl comments abandon <id> <reason>
   gust ctl -S /tmp/gust-1000/abc.sock status
 
 Comment handoff:
   comments --wait blocks for the oldest submitted batch and marks its
   comments seen. Output is JSON. comments lists all unfinished comments
-  (created, submitted, and seen). comments --pending lists only seen,
-  unfinished comments for recovery after an interrupted agent. Finish
-  individual seen comments with done or abandon; abandon requires a reason.
+  (created, submitted, seen, and review). comments --pending lists only seen,
+  unfinished comments for recovery after an interrupted agent. The agent
+  posts a reply on a seen thread with reply, or posts a reply and marks the
+  thread review with review. Only the human resolves a thread, with done.
   Comments exist only while the Gust process runs.
 
 Typical agent flow:

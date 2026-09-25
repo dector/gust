@@ -104,13 +104,21 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	if !strings.Contains(out, c1.ID) || !strings.Contains(out, c2.ID) {
 		t.Fatalf("pending output: %s", out)
 	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c1.ID, "working on it")
+	if code != 0 || !strings.Contains(out, `"state":"seen"`) || !strings.Contains(out, `"author":"agent"`) {
+		t.Fatalf("reply: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "review", c2.ID, "please verify")
+	if code != 0 || !strings.Contains(out, `"state":"review"`) || !strings.Contains(out, "please verify") {
+		t.Fatalf("review: code=%d out=%q stderr=%q", code, out, stderr)
+	}
 	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "done", c1.ID)
 	if code != 0 || !strings.Contains(out, `"state":"done"`) {
 		t.Fatalf("done: code=%d out=%q stderr=%q", code, out, stderr)
 	}
-	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "abandon", c2.ID, "not actionable")
-	if code != 0 || !strings.Contains(out, `"reason":"not actionable"`) {
-		t.Fatalf("abandon: code=%d out=%q stderr=%q", code, out, stderr)
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c1.ID, "   ")
+	if code != 2 || !strings.Contains(stderr, "invalid comments command") {
+		t.Fatalf("blank reply: code=%d stderr=%q", code, stderr)
 	}
 }
 
@@ -147,8 +155,8 @@ func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
 	if _, err := store.MarkDone(ctx, done.ID); err != nil {
 		t.Fatal(err)
 	}
-	// abandoned: submit, claim, then finish with a reason.
-	abandoned, err := store.Create(ctx, comments.Input{Path: "/abandoned", Text: "abandoned"})
+	// review: submit, claim, then mark review.
+	review, err := store.Create(ctx, comments.Input{Path: "/review", Text: "review"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +166,7 @@ func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
 	if _, err := store.NextBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Abandon(ctx, abandoned.ID, "not actionable"); err != nil {
+	if _, err := store.Review(ctx, review.ID, "please check"); err != nil {
 		t.Fatal(err)
 	}
 	// submitted: submit and leave unclaimed.
@@ -185,12 +193,12 @@ func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("default: code=%d stderr=%q", code, stderr)
 	}
-	for _, want := range []string{created.ID, submitted.ID, seen.ID} {
+	for _, want := range []string{created.ID, submitted.ID, seen.ID, review.ID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("default output %q missing %s", out, want)
 		}
 	}
-	for _, unwanted := range []string{done.ID, abandoned.ID} {
+	for _, unwanted := range []string{done.ID} {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("default output %q includes %s", out, unwanted)
 		}
@@ -203,7 +211,7 @@ func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
 	if !strings.Contains(out, seen.ID) {
 		t.Fatalf("pending output %q missing %s", out, seen.ID)
 	}
-	for _, unwanted := range []string{created.ID, submitted.ID, done.ID, abandoned.ID} {
+	for _, unwanted := range []string{created.ID, submitted.ID, done.ID, review.ID} {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("pending output %q includes %s", out, unwanted)
 		}

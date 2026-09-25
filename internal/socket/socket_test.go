@@ -90,9 +90,72 @@ func TestCommentsProtocolAndStateErrors(t *testing.T) {
 	if response["ok"] != false || response["error"] != "invalid_comment_state" {
 		t.Fatalf("done-before-seen response: %v", response)
 	}
-	response = requestJSON(t, server.path, map[string]string{"action": "comments_abandon", "id": "missing", "reason": "x"})
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_review", "id": created.ID, "text": "x"})
+	if response["ok"] != false || response["error"] != "invalid_comment_state" {
+		t.Fatalf("review-from-created response: %v", response)
+	}
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_reply", "id": created.ID, "text": "   "})
+	if response["ok"] != false || response["error"] != "text_required" {
+		t.Fatalf("blank reply response: %v", response)
+	}
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_reply", "id": "missing", "text": "x"})
 	if response["ok"] != false || response["error"] != "comment_not_found" {
 		t.Fatalf("missing comment response: %v", response)
+	}
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_review", "id": "missing", "text": "x"})
+	if response["ok"] != false || response["error"] != "comment_not_found" {
+		t.Fatalf("missing review response: %v", response)
+	}
+}
+
+func TestCommentsReplyAndReviewFlow(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.Create(ctx, comments.Input{Path: "/", Text: "comment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitOne(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	server, err := Start(ctx, config.Config{Root: root}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	response := requestJSON(t, server.path, map[string]string{"action": "comments_reply", "id": created.ID, "text": "working"})
+	if response["ok"] != true {
+		t.Fatalf("reply response: %v", response)
+	}
+	comment, _ := response["comment"].(map[string]any)
+	if comment["state"] != "seen" {
+		t.Fatalf("reply state: %v", comment["state"])
+	}
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_review", "id": created.ID, "text": "please verify"})
+	if response["ok"] != true {
+		t.Fatalf("review response: %v", response)
+	}
+	comment, _ = response["comment"].(map[string]any)
+	if comment["state"] != "review" {
+		t.Fatalf("review state: %v", comment["state"])
+	}
+	response = requestJSON(t, server.path, map[string]string{"action": "comments_done", "id": created.ID})
+	if response["ok"] != true {
+		t.Fatalf("done response: %v", response)
+	}
+	comment, _ = response["comment"].(map[string]any)
+	if comment["state"] != "done" {
+		t.Fatalf("done state: %v", comment["state"])
 	}
 }
 

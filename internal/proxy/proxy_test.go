@@ -930,6 +930,14 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`method:"DELETE"`,
 		`close.addEventListener("click",function(){textarea.value="";result.textContent="";resumeSelection();})`,
 		`seen:"In progress"`,
+		`review:"Review"`,
+		`function threadUnread(c){`,
+		`localStorage.getItem("__gust_thread_seen_"+id)`,
+		`localStorage.setItem("__gust_thread_seen_"+c.id`,
+		`unread.className="__gust_comment_unread"`,
+		`pin.className="__gust_pin __gust_pin_"+c.state+(unread?" __gust_pin_unread":"")`,
+		`.__gust_pin_unread{color:#ef4444;animation:__gust_pin_pulse`,
+		`@media (prefers-reduced-motion:reduce){.__gust_pin_unread{animation:none}}`,
 		`if(c.state==="seen"){const spinner=document.createElement("span")`,
 		`spinner.setAttribute("aria-hidden","true")`,
 		`animation:__gust_comment_spin .9s linear infinite`,
@@ -947,7 +955,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`setInterval(refreshComments,3000)`,
 		`l.confidence!=="high"||l.matches!==1`,
 		`replace(/\s+/g," ");if(!actual.includes(l.text))return null;`,
-		`c.state==="created"||c.state==="submitted"||c.state==="seen"`,
+		`c.state==="created"||c.state==="submitted"||c.state==="seen"||c.state==="review"`,
 		`submitResult.dataset.submitResult`,
 		`missing.textContent="Not found"`,
 	}
@@ -978,8 +986,13 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		`function positionCommentPopover(){`,
 		`function closeCommentPopover(){`,
 		`function removePopoverDraft(){`,
+		`function sendPopoverReply(){`,
+		`function resolvePopoverThread(){`,
+		`function renderPopoverReplies(c){`,
 		`function renderCommentPopover(){`,
 		`function commentStateLabel(state)`,
+		`function threadUnread(c){`,
+		`function markThreadSeen(c){`,
 		`badge.className="__gust_popover_badge __gust_popover_badge_"+c.state`,
 		`pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openCommentPopover(c.id);});`,
 		`if(popoverCommentId===id&&commentPopover&&!commentPopover.hidden){closeCommentPopover();return;}`,
@@ -987,32 +1000,52 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		"renderCommentPopover();\n}\nfunction refreshComments(){",
 		"positionCommentPopover();\n}",
 		`if(!popoverCommentId||!commentPopover||commentPopover.hidden)return;`,
-		// The panel survives created -> submitted -> seen and only closes when
-		// the comment is resolved or abandoned.
-		`if(!c||c.state==="done"||c.state==="abandoned"){closeCommentPopover();return;}`,
+		// The panel survives created -> submitted -> seen -> review and only
+		// closes when the comment is resolved.
+		`if(!c||c.state==="done"){closeCommentPopover();return;}`,
+		// Human replies and resolves post to dedicated routes.
+		`fetch("/__gust/comments/"+encodeURIComponent(id)+"/reply"`,
+		`fetch("/__gust/comments/"+encodeURIComponent(id)+"/resolve"`,
+		// In-flight reply/resolve callbacks are guarded so a late response
+		// never mutates a popover the user has since switched or reopened.
+		`if(token!==popoverDeleteToken)return;`,
+		`const token=++popoverDeleteToken;`,
+		`if(popoverCommentId===id&&(popoverReplyDraft||"").trim()===text){`,
+		// Drafts hide Resolve because the server rejects resolving a created comment.
+		`parts.resolve.hidden=c.state==="created";`,
+		// Comment refreshes are generation-guarded so a slow older GET cannot
+		// overwrite newer state after a reply or resolve.
+		`const generation=++commentFetchGeneration;`,
+		`if(generation!==commentFetchGeneration)return;`,
+		`if(popoverReplyId!==id){popoverReplyId=id;popoverReplyDraft="";}`,
+		`markThreadSeen(commentState.find(function(x){return x.id===id;}));`,
+		`renderPopoverReplies(c);`,
+		`if(parts.reply.value!==popoverReplyDraft)parts.reply.value=popoverReplyDraft;`,
 		// Rebuilding over a detached badge must drop the stale parent so the
 		// floating panel never leaves a duplicate id in the document.
 		`if(commentPopover&&commentPopover.isConnected)commentPopover.remove();`,
 		// A successful DELETE closes the popover before the follow-up refresh,
 		// so a failing refresh cannot leave the deleted draft open.
 		`if(popoverCommentId===c.id)closeCommentPopover();`,
-		`commentState.filter(c=>c.path===location.pathname&&(c.state==="created"||c.state==="submitted"||c.state==="seen"))`,
+		`commentState.filter(c=>c.path===location.pathname&&(c.state==="created"||c.state==="submitted"||c.state==="seen"||c.state==="review"))`,
 		// Existing actions stay available from the panel.
 		`fetch("/__gust/comments/"+encodeURIComponent(c.id),{method:"DELETE"})`,
 		`parts.remove.textContent=popoverDeletePending?"Removing\u2026":"Remove draft"`,
 		`locate.addEventListener("click",function(){locateComment(commentState.find(function(x){return x.id===popoverCommentId;}));})`,
 		`locateComment(commentState.find(function(x){return x.id===id;}))`,
 		// The panel is built once and re-rendered in place so polls are stable.
-		`commentPopover.append(head,text,meta,actions,error)`,
-		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,actions:actions,locate:locate,remove:remove,error:error}`,
+		`commentPopover.append(head,text,meta,replies,replybox,actions,error)`,
+		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,resolve:resolve,remove:remove,error:error}`,
 		`if(key===popoverRenderKey){positionCommentPopover();return;}`,
 		`parts.remove.disabled=popoverDeletePending;`,
-		`parts.error.hidden=!popoverDeleteError;`,
-		`parts.error.textContent=popoverDeleteError||""`,
+		`parts.error.hidden=!popoverActionError;`,
+		`parts.error.textContent=popoverActionError||""`,
 		// Styling for the floating panel.
 		`#__gust_comment_popover{position:fixed;z-index:2147483647;`,
 		`#__gust_comment_popover[hidden]{display:none}`,
 		`#__gust_comment_popover .__gust_popover_badge_created{color:#fbbf24}`,
+		`#__gust_comment_popover .__gust_popover_badge_review{color:#f9a8d4}`,
+		`#__gust_comment_popover .__gust_popover_replybox{`,
 		`#__gust_comment_popover .__gust_popover_error{`,
 	}
 	for _, check := range checks {
@@ -1102,9 +1135,21 @@ let popoverAnchor = null;
 let popoverParts = null;
 let popoverRenderKey = '';
 let popoverDeletePending = false;
-let popoverDeleteError = '';
+let popoverActionError = '';
 let popoverDeleteToken = 0;
+let commentFetchGeneration = 0;
+let popoverReplyDraft = '';
+let popoverReplyId = null;
+let popoverReplyPending = false;
+let popoverResolvePending = false;
 let pinOverlay = null;
+let commentUI = null;
+const localStorage = {
+  store: {},
+  getItem(k) { return Object.prototype.hasOwnProperty.call(this.store, k) ? this.store[k] : null; },
+  setItem(k, v) { this.store[k] = String(v); },
+  removeItem(k) { delete this.store[k]; },
+};
 function matchingElement() { return new El('div'); }
 function setHighlight() {}
 function refreshComments() {}
@@ -1113,36 +1158,60 @@ function pinFor(id) { const p = new El('button'); p.dataset.commentId = id; retu
 `
 
 const popoverHarnessChecks = `
-commentState = [{ id: 'a', path: '/', text: 'first\nsecond', state: 'created' }];
+commentState = [{ id: 'a', path: '/', text: 'first\nsecond', state: 'created', messages: [] }];
 pinOverlay = new El('div');
 pinOverlay.appendChild(pinFor('a'));
 openCommentPopover('a');
 assert(commentPopover && commentPopover.hidden === false, 'pin click opens the floating panel');
 assert(popoverCommentId === 'a', 'panel remembers its comment id');
-assert(commentPopover.children.length === 5, 'panel has header, text, meta, actions, and error');
+assert(commentPopover.children.length === 7, 'panel has header, text, meta, replies, reply box, actions, and error');
 assert(commentPopover.children[0].children[0].textContent === 'Draft', 'created state renders the Draft badge');
 assert(commentPopover.children[1].textContent === 'first\nsecond', 'multi-line text is preserved');
-assert(commentPopover.children[3].children[1].hidden === false, 'drafts expose Remove draft');
-assert(commentPopover.children[3].children[1].textContent === 'Remove draft', 'draft button keeps its label');
-assert(commentPopover.children[3].children[0].hidden === false, 'located comments expose Locate');
+assert(commentPopover.children[3].children[0].textContent === 'No replies yet.', 'empty thread shows a placeholder');
+const createdActions = commentPopover.children[5];
+assert(createdActions.children[2].hidden === false, 'drafts expose Remove draft');
+assert(createdActions.children[2].textContent === 'Remove draft', 'draft button keeps its label');
+assert(createdActions.children[0].hidden === false, 'located comments expose Locate');
+assert(createdActions.children[1].textContent === 'Resolve', 'threads expose Resolve');
+assert(createdActions.children[1].hidden === true, 'drafts hide Resolve because the server rejects it');
+assert(commentPopover.children[4].children[1].textContent === 'Send', 'threads expose a Send button');
 openCommentPopover('a');
 assert(commentPopover.hidden === true, 'clicking the same pin toggles the panel closed');
 openCommentPopover('a');
-commentState[0].state = 'seen';
+commentState[0].state = 'review';
+commentState[0].messages = [{ id: 'm1', author: 'agent', text: 'please check', createdAt: new Date().toISOString() }];
 renderCommentPopover();
 assert(commentPopover.hidden === false, 'panel stays open across a state change');
-assert(commentPopover.children[0].children[0].textContent === 'In progress', 'panel updates the state badge');
-assert(commentPopover.children[3].children[1].hidden === true, 'non-drafts hide Remove draft');
-commentState[0].state = 'abandoned';
+assert(commentPopover.children[0].children[0].textContent === 'Review', 'panel updates the state badge');
+assert(commentPopover.children[3].children[0].children[0].children[0].textContent === 'Agent', 'agent replies are labelled');
+assert(commentPopover.children[3].children[0].children[1].textContent === 'please check', 'reply text is rendered');
+assert(commentPopover.children[5].children[2].hidden === true, 'non-drafts hide Remove draft');
+assert(commentPopover.children[5].children[1].hidden === false, 'review threads expose Resolve');
+commentState[0].state = 'done';
 renderCommentPopover();
-assert(commentPopover.hidden === true, 'abandoning the comment closes the panel');
+assert(commentPopover.hidden === true, 'resolving the comment closes the panel');
 assert(popoverCommentId === null, 'resolution clears the selected comment');
-commentState = [{ id: 'b', path: '/', text: 'x', state: 'submitted' }];
+commentState = [{ id: 'b', path: '/', text: 'x', state: 'submitted', messages: [] }];
 pinOverlay.replaceChildren(pinFor('b'));
 openCommentPopover('b');
 assert(commentPopover.children[0].children[0].textContent === 'Submitted', 'submitted state renders the Submitted badge');
 closeCommentPopover();
 assert(commentPopover.hidden === true, 'close hides the panel');
+// Unread tracking: only a newer agent message counts as unread.
+const agentReply = { id: 'm9', author: 'agent', text: 'new', createdAt: new Date(Date.now() + 1000).toISOString() };
+commentState = [{ id: 'u', path: '/', text: 'u', state: 'review', messages: [agentReply] }];
+assert(threadUnread(commentState[0]) === true, 'newer agent reply is unread');
+markThreadSeen(commentState[0]);
+assert(threadUnread(commentState[0]) === false, 'marking the thread seen clears unread');
+commentState[0].messages.push({ id: 'm10', author: 'human', text: 'mine', createdAt: new Date(Date.now() + 2000).toISOString() });
+assert(threadUnread(commentState[0]) === false, 'a newer human reply is never unread');
+// Clock skew: the seen marker stores the server timestamp, so a later agent
+// reply is still unread even when the client clock runs ahead of the server.
+const skewBase = Date.now();
+commentState = [{ id: 'skew', path: '/', text: 'skew', state: 'review', messages: [{ id: 's1', author: 'agent', text: 'one', createdAt: new Date(skewBase - 5000).toISOString() }] }];
+markThreadSeen(commentState[0]);
+commentState[0].messages.push({ id: 's2', author: 'agent', text: 'two', createdAt: new Date(skewBase - 1000).toISOString() });
+assert(threadUnread(commentState[0]) === true, 'later agent reply survives client clock skew');
 console.log('floating comment panel ok');
 `
 
@@ -1186,9 +1255,9 @@ function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
   pinOverlay = new El('div');
   pinOverlay.appendChild(pinFor('f'));
   openCommentPopover('f');
-  const actions = commentPopover.children[3];
+  const actions = commentPopover.children[5];
   const locate = actions.children[0];
-  const remove = actions.children[1];
+  const remove = actions.children[2];
   assert(remove.hidden === false, 'draft exposes Remove draft');
   assert(locate.hidden === false, 'located draft exposes Locate');
   remove.focus();
@@ -1196,8 +1265,8 @@ function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
 
   // Unchanged poll refresh: same nodes, focus retained, no repaint.
   renderCommentPopover();
-  assert(commentPopover.children[3] === actions, 'refresh keeps the actions container');
-  assert(commentPopover.children[3].children[1] === remove, 'refresh keeps the Remove draft node');
+  assert(commentPopover.children[5] === actions, 'refresh keeps the actions container');
+  assert(commentPopover.children[5].children[2] === remove, 'refresh keeps the Remove draft node');
   assert(document.activeElement === remove, 'refresh keeps focus on Remove draft');
 
   // Failed DELETE stays visible and re-enables the button.
@@ -1205,11 +1274,11 @@ function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
   await tick();
   assert(remove.disabled === false, 'failed delete re-enables Remove draft');
   assert(remove.textContent === 'Remove draft', 'failed delete keeps the button label');
-  assert(commentPopover.children[4].hidden === false, 'failed delete shows the error area');
-  assert(commentPopover.children[4].textContent === 'boom', 'error area carries the message');
+  assert(commentPopover.children[6].hidden === false, 'failed delete shows the error area');
+  assert(commentPopover.children[6].textContent === 'boom', 'error area carries the message');
   renderCommentPopover();
-  assert(commentPopover.children[4].hidden === false, 'poll refresh preserves the visible delete error');
-  assert(commentPopover.children[4].textContent === 'boom', 'poll refresh preserves the error text');
+  assert(commentPopover.children[6].hidden === false, 'poll refresh preserves the visible delete error');
+  assert(commentPopover.children[6].textContent === 'boom', 'poll refresh preserves the error text');
 
   // In-flight DELETE stays disabled, labelled, and cannot be repeated.
   fetchMode = 'pending';
@@ -1288,7 +1357,7 @@ refreshComments = function () {
   pinOverlay = new El('div');
   pinOverlay.appendChild(pinFor('gone'));
   openCommentPopover('gone');
-  const remove = commentPopover.children[3].children[1];
+  const remove = commentPopover.children[5].children[2];
   remove.listeners.click();
   await tick();
   assert(commentPopover.hidden === true, 'successful delete hides the popover');
@@ -1296,6 +1365,181 @@ refreshComments = function () {
   assert(refreshCalls === 1, 'successful delete still triggers a follow-up refresh');
   assert(refreshSawClosed === true, 'popover is already closed when the follow-up refresh runs');
   console.log('floating comment panel hardening ok');
+})().catch(function (e) { console.error(e && e.message ? e.message : e); process.exit(1); });
+`
+
+// TestProxyFloatingCommentPanelStaleCallbacksWhenNodeAvailable locks in the
+// stale-callback guards: an in-flight reply or resolve must not clear another
+// thread's draft, render an error into it, or close it when the user has moved
+// on before the response arrives.
+func TestProxyFloatingCommentPanelStaleCallbacksWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	start := strings.Index(script, "function locateComment(c){")
+	end := strings.Index(script, "function renderCommentState(){")
+	if start < 0 || end < start {
+		t.Fatal("could not extract floating comment panel functions")
+	}
+	harness := popoverHarnessPrelude + script[start:end] + popoverStaleCallbackChecks
+	file := t.TempDir() + "/popover-stale.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("floating comment panel stale callbacks: %v\n%s", err, output)
+	}
+}
+
+const popoverStaleCallbackChecks = `
+const pending = [];
+function fetch(url, opts) {
+  return new Promise(function (resolve, reject) { pending.push({ url: url, opts: opts, resolve: resolve, reject: reject }); });
+}
+function tick() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+(async function () {
+  // Fix 1: text typed while the POST is in flight must survive a success.
+  commentState = [{ id: 'a', path: '/', text: 'A', state: 'seen', messages: [] }];
+  pinOverlay = new El('div');
+  pinOverlay.appendChild(pinFor('a'));
+  openCommentPopover('a');
+  popoverReplyDraft = 'hello';
+  renderCommentPopover();
+  assert(popoverParts.reply.value === 'hello', 'reply textarea shows the draft');
+  pending.length = 0;
+  sendPopoverReply();
+  assert(pending.length === 1, 'Send issues one reply POST');
+  assert(pending[0].url.indexOf('/a/reply') >= 0, 'reply POST targets the open thread');
+  popoverReplyDraft = 'hello world';
+  popoverParts.reply.value = 'hello world';
+  pending[0].resolve({ ok: true, status: 200, json: function () { return Promise.resolve({}); } });
+  await tick();
+  assert(popoverReplyDraft === 'hello world', 'success keeps text typed during the POST');
+  assert(popoverParts.reply.value === 'hello world', 'textarea keeps text typed during the POST');
+  assert(popoverReplyPending === false, 'success re-enables Send');
+
+  // Fix 2: a stale reply success must not clear another thread's draft.
+  commentState = [
+    { id: 'a', path: '/', text: 'A', state: 'seen', messages: [] },
+    { id: 'b', path: '/', text: 'B', state: 'seen', messages: [] }
+  ];
+  pinOverlay = new El('div');
+  pinOverlay.appendChild(pinFor('a'));
+  pinOverlay.appendChild(pinFor('b'));
+  closeCommentPopover();
+  openCommentPopover('a');
+  popoverReplyDraft = 'to A';
+  renderCommentPopover();
+  pending.length = 0;
+  sendPopoverReply();
+  openCommentPopover('b');
+  popoverReplyDraft = 'to B';
+  renderCommentPopover();
+  assert(popoverParts.reply.value === 'to B', 'thread B shows its own draft');
+  pending[0].resolve({ ok: true, status: 200, json: function () { return Promise.resolve({}); } });
+  await tick();
+  assert(popoverCommentId === 'b', 'late reply success leaves thread B open');
+  assert(popoverReplyDraft === 'to B', 'late reply success leaves thread B draft intact');
+  assert(popoverParts.reply.value === 'to B', 'late reply success leaves thread B textarea intact');
+
+  // Fix 2: a stale reply failure must not render into the new thread.
+  closeCommentPopover();
+  openCommentPopover('a');
+  popoverReplyDraft = 'failing';
+  renderCommentPopover();
+  pending.length = 0;
+  sendPopoverReply();
+  openCommentPopover('b');
+  popoverActionError = '';
+  pending[0].reject(new Error('late reply failure'));
+  await tick();
+  assert(popoverCommentId === 'b', 'stale reply failure leaves thread B open');
+  assert(popoverActionError === '', 'stale reply failure does not show on thread B');
+  assert(commentPopover.hidden === false, 'stale reply failure does not close thread B');
+
+  // Fix 2: a stale resolve must not close or error on another thread.
+  closeCommentPopover();
+  openCommentPopover('a');
+  pending.length = 0;
+  resolvePopoverThread();
+  openCommentPopover('b');
+  pending[0].resolve({ ok: true, status: 200, json: function () { return Promise.resolve({}); } });
+  await tick();
+  assert(popoverCommentId === 'b', 'stale resolve success leaves thread B open');
+  assert(commentPopover.hidden === false, 'stale resolve success does not close thread B');
+
+  // Fix 2: a stale resolve failure must not render into the new thread.
+  closeCommentPopover();
+  openCommentPopover('a');
+  pending.length = 0;
+  resolvePopoverThread();
+  openCommentPopover('b');
+  pending[0].reject(new Error('late resolve failure'));
+  await tick();
+  assert(popoverActionError === '', 'stale resolve failure does not show on thread B');
+  assert(popoverCommentId === 'b', 'stale resolve failure leaves thread B open');
+
+  console.log('floating comment panel stale-callback guards ok');
+})().catch(function (e) { console.error(e && e.message ? e.message : e); process.exit(1); });
+`
+
+// TestProxyFloatingCommentPanelRefreshGenerationWhenNodeAvailable ensures a slow
+// older GET cannot overwrite newer comment state after a reply or resolve.
+func TestProxyFloatingCommentPanelRefreshGenerationWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	start := strings.Index(script, "function locateComment(c){")
+	end := strings.Index(script, "function startCommentRefresh(){")
+	if start < 0 || end < start {
+		t.Fatal("could not extract floating comment panel functions")
+	}
+	harness := popoverHarnessPrelude + script[start:end] + popoverGenerationChecks
+	file := t.TempDir() + "/popover-generation.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("floating comment panel refresh generation: %v\n%s", err, output)
+	}
+}
+
+const popoverGenerationChecks = `
+const responses = [];
+function fetch(url, opts) {
+  return new Promise(function (resolve, reject) { responses.push({ url: url, opts: opts, resolve: resolve, reject: reject }); });
+}
+function tick() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+commentUI = { querySelector: function (sel) { return sel === '[data-poll-error]' ? { textContent: '' } : null; } };
+(async function () {
+  commentState = [];
+  refreshComments();
+  refreshComments();
+  assert(responses.length === 2, 'two comment GETs are in flight');
+  // The newer response arrives first.
+  responses[1].resolve({ ok: true, status: 200, json: function () { return Promise.resolve([{ id: 'new' }]); } });
+  await tick();
+  assert(commentState.length === 1 && commentState[0].id === 'new', 'newest response is applied');
+  // A slower older response must not overwrite it.
+  responses[0].resolve({ ok: true, status: 200, json: function () { return Promise.resolve([{ id: 'old' }]); } });
+  await tick();
+  assert(commentState.length === 1 && commentState[0].id === 'new', 'stale response is ignored');
+
+  // A stale failure must not disturb state or surface an error either.
+  commentState = [];
+  refreshComments();
+  refreshComments();
+  responses[3].resolve({ ok: true, status: 200, json: function () { return Promise.resolve([{ id: 'fresh' }]); } });
+  await tick();
+  assert(commentState.length === 1 && commentState[0].id === 'fresh', 'fresh response is applied');
+  responses[2].reject(new Error('old failure'));
+  await tick();
+  assert(commentState.length === 1 && commentState[0].id === 'fresh', 'stale failure leaves fresh state intact');
+  console.log('floating comment panel refresh generation ordering ok');
 })().catch(function (e) { console.error(e && e.message ? e.message : e); process.exit(1); });
 `
 
@@ -1487,6 +1731,123 @@ func TestBrowserCommentsAPI(t *testing.T) {
 	current, err := store.Get(context.Background(), created.ID)
 	if err != nil || current.State != comments.StateSeen {
 		t.Fatalf("stored state=%s err=%v", current.State, err)
+	}
+}
+
+// TestBrowserCommentThreadRoutes covers the human reply and resolve endpoints
+// that turn a comment into a thread: text validation, same-origin enforcement,
+// reply-while-review reopening, and terminal done behavior.
+func TestBrowserCommentThreadRoutes(t *testing.T) {
+	app := httptest.NewServer(http.NotFoundHandler())
+	defer app.Close()
+	proxyURL, server := startProxyForTest(t, appPort(t, app.URL))
+	defer server.Close()
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server.SetCommentStore(store)
+	ctx := context.Background()
+	created, err := store.Create(ctx, comments.Input{Path: "/", Text: "root", Locator: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitOne(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.NextBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(path, body, origin string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, proxyURL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	decode := func(resp *http.Response) comments.Comment {
+		t.Helper()
+		defer resp.Body.Close()
+		var c comments.Comment
+		if err := json.NewDecoder(resp.Body).Decode(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	if got := post("/__gust/comments/"+created.ID+"/reply", `{"text":"hi"}`, "http://attacker.invalid").StatusCode; got != 403 {
+		t.Fatalf("cross-origin reply status=%d", got)
+	}
+	if got := post("/__gust/comments/"+created.ID+"/reply", `{"text":"  "}`, proxyURL).StatusCode; got != 400 {
+		t.Fatalf("empty reply status=%d", got)
+	}
+
+	resp := post("/__gust/comments/"+created.ID+"/reply", `{"text":"human note"}`, proxyURL)
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("reply status=%d: %s", resp.StatusCode, b)
+	}
+	replied := decode(resp)
+	if len(replied.Messages) != 1 || replied.Messages[0].Author != comments.AuthorHuman || replied.Messages[0].Text != "human note" {
+		t.Fatalf("reply messages = %+v", replied.Messages)
+	}
+	if replied.State != comments.StateSeen {
+		t.Fatalf("reply state = %s", replied.State)
+	}
+
+	if _, err := store.Review(ctx, created.ID, "done, please check"); err != nil {
+		t.Fatal(err)
+	}
+	resp = post("/__gust/comments/"+created.ID+"/reply", `{"text":"one more thing"}`, proxyURL)
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("reopen status=%d: %s", resp.StatusCode, b)
+	}
+	reopened := decode(resp)
+	if reopened.State != comments.StateSubmitted || len(reopened.Messages) != 3 {
+		t.Fatalf("reopened = %+v", reopened)
+	}
+
+	resp = post("/__gust/comments/"+created.ID+"/resolve", `{}`, proxyURL)
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("resolve status=%d: %s", resp.StatusCode, b)
+	}
+	if resolved := decode(resp); resolved.State != comments.StateDone {
+		t.Fatalf("resolved state = %s", resolved.State)
+	}
+
+	if got := post("/__gust/comments/"+created.ID+"/reply", `{"text":"late"}`, proxyURL).StatusCode; got != 409 {
+		t.Fatalf("done reply status=%d", got)
+	}
+	if got := post("/__gust/comments/00000000000000000000000000000000/reply", `{"text":"x"}`, proxyURL).StatusCode; got != 404 {
+		t.Fatalf("unknown reply status=%d", got)
+	}
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/__gust/comments/"+created.ID+"/reply", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getResp.Body.Close()
+	if getResp.StatusCode != 405 {
+		t.Fatalf("GET reply status=%d", getResp.StatusCode)
 	}
 }
 

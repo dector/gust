@@ -343,6 +343,22 @@ func (s *Server) handler(target *url.URL) http.Handler {
 			return
 		}
 		commentID := strings.TrimPrefix(r.URL.Path, "/__gust/comments/")
+		if strings.HasPrefix(r.URL.Path, "/__gust/comments/") && commentActionID(r.URL.Path, "reply") != "" {
+			if !s.commentsEnabled {
+				http.NotFound(w, r)
+				return
+			}
+			s.serveCommentReply(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/__gust/comments/") && commentActionID(r.URL.Path, "resolve") != "" {
+			if !s.commentsEnabled {
+				http.NotFound(w, r)
+				return
+			}
+			s.serveCommentResolve(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/__gust/comments/") && len(commentID) == 32 && strings.Trim(commentID, "0123456789abcdef") == "" {
 			if !s.commentsEnabled {
 				http.NotFound(w, r)
@@ -597,8 +613,13 @@ let popoverAnchor = null;
 let popoverParts = null;
 let popoverRenderKey = "";
 let popoverDeletePending = false;
-let popoverDeleteError = "";
+let popoverActionError = "";
 let popoverDeleteToken = 0;
+let commentFetchGeneration = 0;
+let popoverReplyDraft = "";
+let popoverReplyId = null;
+let popoverReplyPending = false;
+let popoverResolvePending = false;
 let pathFrame = 0;
 const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/></svg>';
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
@@ -819,7 +840,28 @@ function focusComment(id){
   if(row){row.scrollIntoView({block:"nearest"});row.focus();}
   locateComment(commentState.find(function(x){return x.id===id;}));
 }
-function commentStateLabel(state){return {created:"Draft",submitted:"Submitted",seen:"In progress"}[state]||state||"Unknown";}
+function threadMessages(c){return c&&Array.isArray(c.messages)?c.messages:[];}
+function threadNewestMessage(c){const m=threadMessages(c);return m.length?m[m.length-1]:null;}
+function threadLastSeen(id){try{const v=parseInt(localStorage.getItem("__gust_thread_seen_"+id),10);return isFinite(v)?v:0;}catch(_){return 0;}}
+function markThreadSeen(c){
+  if(!c)return;
+  const newest=threadNewestMessage(c);
+  const at=newest&&Date.parse(newest.createdAt);
+  if(!at)return;
+  try{localStorage.setItem("__gust_thread_seen_"+c.id,String(at));}catch(_){}
+}
+function threadUnread(c){
+  const newest=threadNewestMessage(c);
+  if(!newest||newest.author!=="agent")return false;
+  return (Date.parse(newest.createdAt)||0)>threadLastSeen(c.id);
+}
+function popoverAuthorLabel(author){return author==="agent"?"Agent":"You";}
+function formatMessageTime(value){
+  const at=Date.parse(value);
+  if(!at)return "";
+  try{return new Date(at).toLocaleString();}catch(_){return "";}
+}
+function commentStateLabel(state){return {created:"Draft",submitted:"Submitted",seen:"In progress",review:"Review"}[state]||state||"Unknown";}
 function commentPopoverEl(){
   if(commentPopover&&commentPopover.isConnected&&popoverParts&&popoverParts.badge&&popoverParts.badge.isConnected)return commentPopover;
   // A stale node can still be attached, for example when its badge was
@@ -843,15 +885,25 @@ function commentPopoverEl(){
   const path=document.createElement("span");path.className="__gust_popover_path";
   const missing=document.createElement("span");missing.className="__gust_popover_missing";missing.textContent="Not found";missing.hidden=true;
   meta.append(path,missing);
+  const replies=document.createElement("div");replies.className="__gust_popover_replies";
+  const replybox=document.createElement("div");replybox.className="__gust_popover_replybox";
+  const reply=document.createElement("textarea");reply.className="__gust_popover_reply";reply.placeholder="Reply\u2026";reply.maxLength=8192;
+  reply.addEventListener("input",function(){popoverReplyId=popoverCommentId;popoverReplyDraft=reply.value;});
+  reply.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.ctrlKey&&!e.isComposing){e.preventDefault();sendPopoverReply();}});
+  const send=document.createElement("button");send.type="button";send.className="__gust_popover_action __gust_popover_send";send.textContent="Send";
+  send.addEventListener("click",sendPopoverReply);
+  replybox.append(reply,send);
   const actions=document.createElement("div");actions.className="__gust_popover_actions";
   const locate=document.createElement("button");locate.type="button";locate.className="__gust_popover_action __gust_popover_locate";locate.textContent="Locate";
   locate.addEventListener("click",function(){locateComment(commentState.find(function(x){return x.id===popoverCommentId;}));});
+  const resolve=document.createElement("button");resolve.type="button";resolve.className="__gust_popover_action __gust_popover_resolve";resolve.textContent="Resolve";
+  resolve.addEventListener("click",resolvePopoverThread);
   const remove=document.createElement("button");remove.type="button";remove.className="__gust_popover_action __gust_popover_remove";remove.textContent="Remove draft";
   remove.addEventListener("click",removePopoverDraft);
-  actions.append(locate,remove);
+  actions.append(locate,resolve,remove);
   const error=document.createElement("p");error.className="__gust_popover_error";error.hidden=true;
-  commentPopover.append(head,text,meta,actions,error);
-  popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,actions:actions,locate:locate,remove:remove,error:error};
+  commentPopover.append(head,text,meta,replies,replybox,actions,error);
+  popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,resolve:resolve,remove:remove,error:error};
   document.documentElement.appendChild(commentPopover);
   return commentPopover;
 }
@@ -870,14 +922,14 @@ function positionCommentPopover(){
   popoverAnchor=anchor;
 }
 function closeCommentPopover(){
-  popoverCommentId=null;popoverAnchor=null;popoverRenderKey="";popoverDeletePending=false;popoverDeleteError="";popoverDeleteToken++;
+  popoverCommentId=null;popoverAnchor=null;popoverRenderKey="";popoverDeletePending=false;popoverActionError="";popoverReplyPending=false;popoverResolvePending=false;popoverDeleteToken++;
   if(commentPopover){commentPopover.hidden=true;}
 }
 function removePopoverDraft(){
   const c=commentState.find(function(x){return x.id===popoverCommentId;});
   if(!c||popoverDeletePending)return;
   const token=++popoverDeleteToken;
-  popoverDeletePending=true;popoverDeleteError="";
+  popoverDeletePending=true;popoverActionError="";
   renderCommentPopover();
   fetch("/__gust/comments/"+encodeURIComponent(c.id),{method:"DELETE"})
     .then(function(r){if(!r.ok)return r.json().catch(function(){return {};}).then(function(data){throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));});})
@@ -889,20 +941,77 @@ function removePopoverDraft(){
       if(popoverCommentId===c.id)closeCommentPopover();
       refreshComments();
     })
-    .catch(function(e){if(token!==popoverDeleteToken)return;popoverDeletePending=false;popoverDeleteError=e.message;renderCommentPopover();});
+    .catch(function(e){if(token!==popoverDeleteToken)return;popoverDeletePending=false;popoverActionError=e.message;renderCommentPopover();});
+}
+function sendPopoverReply(){
+  const c=commentState.find(function(x){return x.id===popoverCommentId;});
+  if(!c||popoverReplyPending)return;
+  const text=(popoverReplyDraft||"").trim();
+  if(!text){popoverActionError="Enter a reply first.";renderCommentPopover();return;}
+  const id=c.id;
+  const token=++popoverDeleteToken;
+  popoverReplyPending=true;popoverActionError="";
+  renderCommentPopover();
+  fetch("/__gust/comments/"+encodeURIComponent(id)+"/reply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:text})})
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
+    .then(function(){
+      if(token!==popoverDeleteToken){refreshComments();return;}
+      popoverReplyPending=false;
+      // Only clear the draft when the popover is still on the thread we sent
+      // to and the textarea still holds exactly what we sent, so text typed
+      // during the POST and other threads' drafts are never clobbered.
+      if(popoverCommentId===id&&(popoverReplyDraft||"").trim()===text){
+        popoverReplyDraft="";
+        popoverReplyId=id;
+        if(popoverParts&&popoverParts.reply)popoverParts.reply.value="";
+      }
+      popoverRenderKey="";
+      renderCommentPopover();
+      refreshComments();
+    })
+    .catch(function(e){if(token!==popoverDeleteToken)return;popoverReplyPending=false;popoverActionError=e.message;renderCommentPopover();});
+}
+function resolvePopoverThread(){
+  const c=commentState.find(function(x){return x.id===popoverCommentId;});
+  if(!c||popoverResolvePending)return;
+  const id=c.id;
+  const token=++popoverDeleteToken;
+  popoverResolvePending=true;popoverActionError="";
+  renderCommentPopover();
+  fetch("/__gust/comments/"+encodeURIComponent(id)+"/resolve",{method:"POST"})
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
+    .then(function(){if(token!==popoverDeleteToken){refreshComments();return;}popoverResolvePending=false;if(popoverCommentId===id)closeCommentPopover();refreshComments();})
+    .catch(function(e){if(token!==popoverDeleteToken)return;popoverResolvePending=false;popoverActionError=e.message;renderCommentPopover();});
+}
+function renderPopoverReplies(c){
+  const parts=popoverParts;if(!parts||!parts.replies)return;
+  const box=parts.replies;box.replaceChildren();
+  const messages=threadMessages(c);
+  if(!messages.length){
+    const empty=document.createElement("div");empty.className="__gust_popover_no_replies";empty.textContent="No replies yet.";box.appendChild(empty);return;
+  }
+  messages.forEach(function(m){
+    const item=document.createElement("div");item.className="__gust_popover_reply_item";
+    const head=document.createElement("div");head.className="__gust_popover_reply_head";
+    const author=document.createElement("span");author.className="__gust_popover_reply_author __gust_popover_reply_author_"+m.author;author.textContent=popoverAuthorLabel(m.author);
+    const time=document.createElement("span");time.className="__gust_popover_reply_time";time.textContent=formatMessageTime(m.createdAt);
+    head.append(author,time);
+    const body=document.createElement("div");body.className="__gust_popover_reply_text";body.textContent=(m.text||"").trim()||"(empty reply)";
+    item.append(head,body);box.appendChild(item);
+  });
 }
 function renderCommentPopover(){
   if(!popoverCommentId)return;
   const c=commentState.find(function(x){return x.id===popoverCommentId;});
-  if(!c||c.state==="done"||c.state==="abandoned"){closeCommentPopover();return;}
+  if(!c||c.state==="done"){closeCommentPopover();return;}
   const pop=commentPopoverEl();
   pop.hidden=false;
   const onPage=c.path===location.pathname;
   const found=onPage&&!!matchingElement(c);
-  const key=[c.id,c.state,c.text||"",c.path||"/",onPage,found,popoverDeletePending,popoverDeleteError].join("\u0000");
+  const key=[c.id,c.state,c.text||"",c.path||"/",onPage,found,popoverDeletePending,popoverReplyPending,popoverResolvePending,popoverActionError,popoverReplyDraft,JSON.stringify(c.messages||[])].join("\u0000");
   // Skip repainting when nothing the panel shows has changed; this is what keeps
-  // focus, scroll, and in-flight Remove draft state stable across polls. The pin
-  // may still have moved, so keep the (cheap) position in sync.
+  // focus, scroll, and in-flight Reply/Resolve/Remove state stable across polls.
+  // The pin may still have moved, so keep the (cheap) position in sync.
   if(key===popoverRenderKey){positionCommentPopover();return;}
   popoverRenderKey=key;
   const parts=popoverParts;
@@ -915,21 +1024,31 @@ function renderCommentPopover(){
   parts.remove.hidden=c.state!=="created";
   parts.remove.disabled=popoverDeletePending;
   parts.remove.textContent=popoverDeletePending?"Removing\u2026":"Remove draft";
-  parts.error.hidden=!popoverDeleteError;
-  parts.error.textContent=popoverDeleteError||"";
+  parts.resolve.hidden=c.state==="created";
+  parts.resolve.disabled=popoverResolvePending;
+  parts.resolve.textContent=popoverResolvePending?"Resolving\u2026":"Resolve";
+  parts.send.disabled=popoverReplyPending;
+  parts.send.textContent=popoverReplyPending?"Sending\u2026":"Send";
+  renderPopoverReplies(c);
+  if(parts.reply.value!==popoverReplyDraft)parts.reply.value=popoverReplyDraft;
+  parts.error.hidden=!popoverActionError;
+  parts.error.textContent=popoverActionError||"";
   positionCommentPopover();
 }
 function openCommentPopover(id){
   if(popoverCommentId===id&&commentPopover&&!commentPopover.hidden){closeCommentPopover();return;}
   const pin=pinOverlay&&Array.from(pinOverlay.children).find(function(p){return p.dataset.commentId===id;});
   if(pin){const r=pin.getBoundingClientRect();popoverAnchor={left:r.left,right:r.right,top:r.top,bottom:r.bottom};}
-  popoverCommentId=id;popoverRenderKey="";popoverDeletePending=false;popoverDeleteError="";popoverDeleteToken++;
-  renderCommentPopover();
+  if(popoverReplyId!==id){popoverReplyId=id;popoverReplyDraft="";}
+  markThreadSeen(commentState.find(function(x){return x.id===id;}));
+  popoverCommentId=id;popoverRenderKey="";popoverDeletePending=false;popoverActionError="";popoverReplyPending=false;popoverResolvePending=false;popoverDeleteToken++;
+  // Re-render the panel so the unread dot/pin class clears immediately.
+  if(commentUI)renderCommentState();else renderCommentPopover();
 }
 function renderCommentState(){
   if(!commentUI)return;
   const list=commentUI.querySelector("[data-comments]"); if(!list)return;list.replaceChildren();
-  const active=commentState.filter(c=>c.state!=="done"&&c.state!=="abandoned");
+  const active=commentState.filter(c=>c.state!=="done");
   const created=active.filter(c=>c.state==="created").length;
   const submit=commentUI.querySelector("[data-submit]");submit.hidden=!created;submit.disabled=submittingComments;
   submit.textContent="Submit "+created;
@@ -939,10 +1058,11 @@ function renderCommentState(){
     const row=document.createElement("div");row.className="__gust_comment_item";row.dataset.commentId=c.id;row.tabIndex=-1;
     const open=document.createElement("button");open.type="button";open.className="__gust_comment_row __gust_comment_row_"+c.state;
     const body=document.createElement("span");body.className="__gust_comment_text";body.textContent=(c.text||"").replace(/\s+/g," ").trim()||"(empty comment)";open.appendChild(body);
-    const stateLabel={created:"Draft",submitted:"Submitted",seen:"In progress"}[c.state]||c.state||"Unknown";
+    const stateLabel={created:"Draft",submitted:"Submitted",seen:"In progress",review:"Review"}[c.state]||c.state||"Unknown";
     const onPage=c.path===location.pathname;
     const locationFound=onPage&&!!matchingElement(c);
     const meta=document.createElement("span");meta.className="__gust_comment_meta";
+    if(threadUnread(c)){const unread=document.createElement("span");unread.className="__gust_comment_unread";unread.title="Unread reply";unread.setAttribute("aria-label","Unread reply");meta.appendChild(unread);}
     const badge=document.createElement("span");badge.className="__gust_comment_badge __gust_comment_badge_"+c.state;badge.textContent=stateLabel;
     if(c.state==="seen"){const spinner=document.createElement("span");spinner.className="__gust_comment_spinner";spinner.setAttribute("aria-hidden","true");meta.appendChild(spinner);}
     meta.appendChild(badge);
@@ -966,16 +1086,18 @@ function renderCommentState(){
   if(!active.length){const empty=document.createElement("div");empty.className="__gust_comments_empty";empty.textContent="No open comments yet.";list.appendChild(empty);}
   if(finished){const summary=document.createElement("div");summary.className="__gust_done_summary";summary.textContent=finished+" finished";list.appendChild(summary);}
   const overlay=ensurePinOverlay();overlay.replaceChildren();if(pinSizeObserver)pinSizeObserver.disconnect();
-  commentState.filter(c=>c.path===location.pathname&&(c.state==="created"||c.state==="submitted"||c.state==="seen")).forEach(function(c){
+  commentState.filter(c=>c.path===location.pathname&&(c.state==="created"||c.state==="submitted"||c.state==="seen"||c.state==="review")).forEach(function(c){
     const el=matchingElement(c);if(!el)return;const pos=pinPosition(c,el);if(pinSizeObserver)pinSizeObserver.observe(el);
-    const pin=document.createElement("button");pin.type="button";pin.dataset.commentId=c.id;pin.className="__gust_pin __gust_pin_"+c.state;pin.innerHTML=commentIconSvg;pin.title=c.state+" comment — click to inspect";pin.setAttribute("aria-label",c.state+" comment");
+    const unread=threadUnread(c);
+    const pin=document.createElement("button");pin.type="button";pin.dataset.commentId=c.id;pin.className="__gust_pin __gust_pin_"+c.state+(unread?" __gust_pin_unread":"");pin.innerHTML=commentIconSvg;pin.title=(unread?"Unread ":"")+c.state+" comment — click to inspect";pin.setAttribute("aria-label",(unread?"Unread ":"")+c.state+" comment");
     pin.style.cssText="position:fixed;left:"+(pos?pos.left:0)+"px;top:"+(pos?pos.top:0)+"px;pointer-events:auto;";pin.style.display=pos?"":"none";
     pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openCommentPopover(c.id);});overlay.appendChild(pin);
   });
   renderCommentPopover();
 }
 function refreshComments(){
-  fetch("/__gust/comments",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("Could not refresh comments ("+r.status+")");return r.json();}).then(function(data){if(!Array.isArray(data))throw new Error("Invalid comments response");commentState=data;commentUI.querySelector("[data-poll-error]").textContent="";renderCommentState();}).catch(function(e){if(commentUI){commentUI.querySelector("[data-poll-error]").textContent="Comment sync failed: "+e.message;}});
+  const generation=++commentFetchGeneration;
+  fetch("/__gust/comments",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("Could not refresh comments ("+r.status+")");return r.json();}).then(function(data){if(!Array.isArray(data))throw new Error("Invalid comments response");if(generation!==commentFetchGeneration)return;commentState=data;commentUI.querySelector("[data-poll-error]").textContent="";renderCommentState();}).catch(function(e){if(generation!==commentFetchGeneration)return;if(commentUI){commentUI.querySelector("[data-poll-error]").textContent="Comment sync failed: "+e.message;}});
 }
 function startCommentRefresh(){if(!commentUI||commentRefreshTimer)return;refreshComments();commentRefreshTimer=setInterval(refreshComments,3000);}
 function updateEditorPosition(){
@@ -1358,7 +1480,7 @@ function mountIcon(){
   if (!style) {
     style = document.createElement("style");
     style.id = "__gust_icon_style";
-    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:8px;max-height:calc(100vh - 16px)}#__gust_icon{width:24px;height:24px;flex:none;color:#a3a3a3;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_icon.__gust_icon_failing{color:#f59e0b;opacity:1}#__gust_panel{display:none;background:#171717;color:#fafafa;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:normal;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 52px);min-height:0;overflow:auto;overflow-wrap:anywhere}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_widget.__gust_wide #__gust_panel{width:min(520px,calc(100vw - 32px));white-space:normal}#__gust_widget.__gust_wide #__gust_comments{width:min(520px,calc(100vw - 32px))}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#a3a3a3}#__gust_panel .__gust_group{margin-top:8px;padding:6px 8px;border:1px solid rgba(245,158,11,.4);border-radius:6px;background:rgba(245,158,11,.08);white-space:normal}#__gust_panel .__gust_group_title{color:#f59e0b;font-weight:600;margin-bottom:2px}#__gust_panel .__gust_notice{display:block;color:#f59e0b;margin-top:2px;white-space:normal;max-width:100%%}#__gust_panel .__gust_log{margin-top:4px;white-space:normal}#__gust_panel .__gust_log summary{cursor:pointer;color:#a3a3a3}#__gust_panel .__gust_log pre{max-height:200px;max-width:100%%;overflow:auto;margin:4px 0 0;padding:6px 8px;background:#262626;border:1px solid rgba(255,255,255,.1);border-radius:4px;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}#__gust_panel .__gust_log code{font:inherit;background:transparent;padding:0;border:0;color:inherit}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}#__gust_comment_toolbar{display:flex;align-items:center;gap:4px;border-top:1px solid #404040;padding-top:6px;margin-top:6px}#__gust_comment_toolbar button{display:grid;place-items:center;width:34px;height:34px;padding:4px;border:1px solid transparent;border-radius:4px;background:transparent;color:#e5e5e5;cursor:pointer}#__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#404040;color:#fafafa}#__gust_comment_toolbar button:focus-visible{outline:2px solid #f59e0b;outline-offset:2px}#__gust_comment_toolbar svg{display:block}#__gust_comment_toolbar [data-mode-title]{font-weight:600;color:#fafafa;padding-left:8px;border-left:1px solid #525252}#__gust_comments{display:none;box-sizing:border-box;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 52px);min-height:0;overflow:auto;background:#171717;color:#fafafa;font:14px/1.6 system-ui,sans-serif;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:normal;overflow-wrap:anywhere}#__gust_widget.__gust_open.__gust_commenting #__gust_comments{display:block}#__gust_comments button{font:inherit;cursor:pointer;margin:2px;padding:3px 7px}#__gust_comments textarea,[data-editor] textarea{box-sizing:border-box;width:100%%;min-height:70px;background:#262626;color:#fafafa;border:1px solid #525252;padding:6px}#__gust_comments .__gust_comment_row{display:block;box-sizing:border-box;width:100%%;text-align:left;padding:5px 6px;color:#e5e5e5;font-size:12px;white-space:normal;overflow-wrap:anywhere;background:#262626;border:1px solid #404040;border-radius:4px}#__gust_comments .__gust_comment_meta{display:block;color:#a3a3a3;font-size:11px}#__gust_comments .__gust_comment_item{display:flex;align-items:stretch;gap:4px;margin:4px 0}#__gust_comments .__gust_comment_row{flex:1;min-width:0;margin:0}#__gust_comments .__gust_remove_draft{align-self:start;flex:none;color:#fca5a5;background:#262626;border:1px solid #525252;border-radius:4px;line-height:1;padding:4px 7px}#__gust_comments .__gust_remove_draft:hover{background:#7f1d1d}#__gust_comments .__gust_comment_row_created{border-left:3px solid #f59e0b}#__gust_comments .__gust_comment_row_submitted{border-left:3px solid #60a5fa}#__gust_comments .__gust_comment_row_seen{border-left:3px solid #a78bfa}#__gust_comments .__gust_comment_badge{display:inline-block;font-size:11px;font-weight:700}#__gust_comments .__gust_comment_badge_created{color:#fbbf24}#__gust_comments .__gust_comment_badge_submitted{color:#93c5fd}#__gust_comments .__gust_comment_badge_seen{color:#c4b5fd}#__gust_comments .__gust_comment_spinner{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid #525252;border-top-color:#c4b5fd;border-radius:50%%;vertical-align:-2px;animation:__gust_comment_spin .9s linear infinite}@keyframes __gust_comment_spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#__gust_comments .__gust_comment_spinner{animation:none;border-color:#c4b5fd}}#__gust_comments .__gust_done_summary{text-align:center;color:#a3a3a3;font-size:12px;padding:8px}#__gust_comments .__gust_autosubmit{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#d4d4d4;margin-top:10px;padding-top:10px;border-top:1px solid #ffffff1f}#__gust_comments .__gust_autosubmit[hidden]{display:none}#__gust_comments .__gust_autosubmit input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:none;box-sizing:border-box;width:30px;height:17px;margin:0;padding:0;border-radius:99px;background:#49301c;border:1px solid #f9bb7155;position:relative;cursor:pointer;transition:background .15s ease,border-color .15s ease}#__gust_comments .__gust_autosubmit input[type=checkbox]::after{content:'';position:absolute;top:1px;left:1px;width:13px;height:13px;border-radius:50%%;background:#e0cfba;transition:transform .15s ease,background .15s ease}#__gust_comments .__gust_autosubmit input[type=checkbox]:checked{background:#a7550b;border-color:#f9bb71}#__gust_comments .__gust_autosubmit input[type=checkbox]:checked::after{transform:translateX(13px);background:#fff7e9}#__gust_comments .__gust_autosubmit input[type=checkbox]:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}#__gust_comments [data-poll-error]{color:#fca5a5;font-size:12px}.__gust_pin{border:0;background:transparent;padding:0;cursor:pointer;width:20px;height:20px;line-height:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}.__gust_pin svg{display:block;width:20px;height:20px}.__gust_pin_created{color:#f59e0b}.__gust_pin_submitted{color:#60a5fa}.__gust_pin_seen{color:#a78bfa}.__gust_highlight{outline:3px solid #f59e0b!important;outline-offset:2px!important}html.__gust_selecting,html.__gust_selecting *{cursor:"+commentCursor+"!important}html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting [data-gust-overlay],html.__gust_selecting [data-gust-overlay] *{cursor:auto!important}html.__gust_selecting #__gust_widget button,html.__gust_selecting [data-gust-overlay] button{cursor:pointer!important}html.__gust_selecting #__gust_widget textarea,html.__gust_selecting [data-gust-overlay] textarea{cursor:text!important}";
+    style.textContent = "#__gust_widget{position:fixed;right:8px;top:8px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:8px;max-height:calc(100vh - 16px)}#__gust_icon{width:24px;height:24px;flex:none;color:#a3a3a3;opacity:.45;transition:color .15s ease,opacity .15s ease;cursor:pointer}#__gust_icon:hover{color:#22c55e;opacity:1}#__gust_icon.__gust_pinned{color:#22c55e;opacity:1}#__gust_icon.__gust_icon_offline{color:#dc2626;opacity:1}#__gust_icon.__gust_icon_failing{color:#f59e0b;opacity:1}#__gust_panel{display:none;background:#171717;color:#fafafa;font:14px/1.6 system-ui,sans-serif;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:normal;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 52px);min-height:0;overflow:auto;overflow-wrap:anywhere}#__gust_widget.__gust_open #__gust_panel{display:block}#__gust_widget.__gust_wide #__gust_panel{width:min(520px,calc(100vw - 32px));white-space:normal}#__gust_widget.__gust_wide #__gust_comments{width:min(520px,calc(100vw - 32px))}#__gust_panel .__gust_row{display:flex;justify-content:space-between;gap:16px}#__gust_panel .__gust_label{color:#a3a3a3}#__gust_panel .__gust_group{margin-top:8px;padding:6px 8px;border:1px solid rgba(245,158,11,.4);border-radius:6px;background:rgba(245,158,11,.08);white-space:normal}#__gust_panel .__gust_group_title{color:#f59e0b;font-weight:600;margin-bottom:2px}#__gust_panel .__gust_notice{display:block;color:#f59e0b;margin-top:2px;white-space:normal;max-width:100%%}#__gust_panel .__gust_log{margin-top:4px;white-space:normal}#__gust_panel .__gust_log summary{cursor:pointer;color:#a3a3a3}#__gust_panel .__gust_log pre{max-height:200px;max-width:100%%;overflow:auto;margin:4px 0 0;padding:6px 8px;background:#262626;border:1px solid rgba(255,255,255,.1);border-radius:4px;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}#__gust_panel .__gust_log code{font:inherit;background:transparent;padding:0;border:0;color:inherit}#__gust_panel .__gust_dot{display:inline-block;width:8px;height:8px;border-radius:50%%;margin-right:6px;vertical-align:middle}#__gust_comment_toolbar{display:flex;align-items:center;gap:4px;border-top:1px solid #404040;padding-top:6px;margin-top:6px}#__gust_comment_toolbar button{display:grid;place-items:center;width:34px;height:34px;padding:4px;border:1px solid transparent;border-radius:4px;background:transparent;color:#e5e5e5;cursor:pointer}#__gust_comment_toolbar button:hover,#__gust_comment_toolbar button[aria-pressed=true]{background:#404040;color:#fafafa}#__gust_comment_toolbar button:focus-visible{outline:2px solid #f59e0b;outline-offset:2px}#__gust_comment_toolbar svg{display:block}#__gust_comment_toolbar [data-mode-title]{font-weight:600;color:#fafafa;padding-left:8px;border-left:1px solid #525252}#__gust_comments{display:none;box-sizing:border-box;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 52px);min-height:0;overflow:auto;background:#171717;color:#fafafa;font:14px/1.6 system-ui,sans-serif;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,.12);box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:normal;overflow-wrap:anywhere}#__gust_widget.__gust_open.__gust_commenting #__gust_comments{display:block}#__gust_comments button{font:inherit;cursor:pointer;margin:2px;padding:3px 7px}#__gust_comments textarea,[data-editor] textarea{box-sizing:border-box;width:100%%;min-height:70px;background:#262626;color:#fafafa;border:1px solid #525252;padding:6px}#__gust_comments .__gust_comment_row{display:block;box-sizing:border-box;width:100%%;text-align:left;padding:5px 6px;color:#e5e5e5;font-size:12px;white-space:normal;overflow-wrap:anywhere;background:#262626;border:1px solid #404040;border-radius:4px}#__gust_comments .__gust_comment_meta{display:block;color:#a3a3a3;font-size:11px}#__gust_comments .__gust_comment_item{display:flex;align-items:stretch;gap:4px;margin:4px 0}#__gust_comments .__gust_comment_row{flex:1;min-width:0;margin:0}#__gust_comments .__gust_remove_draft{align-self:start;flex:none;color:#fca5a5;background:#262626;border:1px solid #525252;border-radius:4px;line-height:1;padding:4px 7px}#__gust_comments .__gust_remove_draft:hover{background:#7f1d1d}#__gust_comments .__gust_comment_row_created{border-left:3px solid #f59e0b}#__gust_comments .__gust_comment_row_submitted{border-left:3px solid #60a5fa}#__gust_comments .__gust_comment_row_seen{border-left:3px solid #a78bfa}#__gust_comments .__gust_comment_badge{display:inline-block;font-size:11px;font-weight:700}#__gust_comments .__gust_comment_badge_created{color:#fbbf24}#__gust_comments .__gust_comment_badge_submitted{color:#93c5fd}#__gust_comments .__gust_comment_badge_seen{color:#c4b5fd}#__gust_comments .__gust_comment_spinner{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid #525252;border-top-color:#c4b5fd;border-radius:50%%;vertical-align:-2px;animation:__gust_comment_spin .9s linear infinite}@keyframes __gust_comment_spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#__gust_comments .__gust_comment_spinner{animation:none;border-color:#c4b5fd}}#__gust_comments .__gust_done_summary{text-align:center;color:#a3a3a3;font-size:12px;padding:8px}#__gust_comments .__gust_autosubmit{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#d4d4d4;margin-top:10px;padding-top:10px;border-top:1px solid #ffffff1f}#__gust_comments .__gust_autosubmit[hidden]{display:none}#__gust_comments .__gust_autosubmit input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:none;box-sizing:border-box;width:30px;height:17px;margin:0;padding:0;border-radius:99px;background:#49301c;border:1px solid #f9bb7155;position:relative;cursor:pointer;transition:background .15s ease,border-color .15s ease}#__gust_comments .__gust_autosubmit input[type=checkbox]::after{content:'';position:absolute;top:1px;left:1px;width:13px;height:13px;border-radius:50%%;background:#e0cfba;transition:transform .15s ease,background .15s ease}#__gust_comments .__gust_autosubmit input[type=checkbox]:checked{background:#a7550b;border-color:#f9bb71}#__gust_comments .__gust_autosubmit input[type=checkbox]:checked::after{transform:translateX(13px);background:#fff7e9}#__gust_comments .__gust_autosubmit input[type=checkbox]:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}#__gust_comments [data-poll-error]{color:#fca5a5;font-size:12px}.__gust_pin{border:0;background:transparent;padding:0;cursor:pointer;width:20px;height:20px;line-height:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}.__gust_pin svg{display:block;width:20px;height:20px}.__gust_pin_created{color:#f59e0b}.__gust_pin_submitted{color:#60a5fa}.__gust_pin_seen{color:#a78bfa}.__gust_pin_review{color:#f472b6}.__gust_pin_unread{color:#ef4444;animation:__gust_pin_pulse 1.4s ease-in-out infinite}@keyframes __gust_pin_pulse{0%%,100%%{opacity:1;transform:scale(1)}50%%{opacity:.55;transform:scale(.82)}}@media (prefers-reduced-motion:reduce){.__gust_pin_unread{animation:none}}#__gust_comments .__gust_comment_row_review{border-left:3px solid #f472b6}#__gust_comments .__gust_comment_badge_review{color:#f9a8d4}#__gust_comments .__gust_comment_unread{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%%;background:#ef4444;box-shadow:0 0 0 2px #ef444433}#__gust_comment_popover .__gust_popover_badge_review{color:#f9a8d4}#__gust_comment_popover .__gust_popover_replies{display:flex;flex-direction:column;gap:6px;margin:0 0 10px;max-height:240px;overflow:auto}#__gust_comment_popover .__gust_popover_no_replies{color:#e0cfba;font-size:11px}#__gust_comment_popover .__gust_popover_reply_item{padding:6px 8px;border-radius:8px;background:#352416;border:1px solid #f9bb7122}#__gust_comment_popover .__gust_popover_reply_head{display:flex;align-items:center;gap:6px;margin-bottom:2px;font-size:10px}#__gust_comment_popover .__gust_popover_reply_author{font-weight:700}#__gust_comment_popover .__gust_popover_reply_author_agent{color:#93c5fd}#__gust_comment_popover .__gust_popover_reply_author_human{color:#ffca81}#__gust_comment_popover .__gust_popover_reply_time{margin-left:auto;color:#e0cfba}#__gust_comment_popover .__gust_popover_reply_text{white-space:pre-wrap;overflow-wrap:anywhere}#__gust_comment_popover .__gust_popover_replybox{display:flex;gap:6px;align-items:flex-end}#__gust_comment_popover .__gust_popover_reply{flex:1;box-sizing:border-box;min-height:52px;max-height:140px;resize:vertical;padding:7px 9px;background:#352416;color:#fff7e9;border:1px solid #f9bb7155;border-radius:8px;outline:none;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}#__gust_comment_popover .__gust_popover_reply:focus{border-color:#f9bb71;box-shadow:0 0 0 2px #f9bb7133}.__gust_highlight{outline:3px solid #f59e0b!important;outline-offset:2px!important}html.__gust_selecting,html.__gust_selecting *{cursor:"+commentCursor+"!important}html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting [data-gust-overlay],html.__gust_selecting [data-gust-overlay] *{cursor:auto!important}html.__gust_selecting #__gust_widget button,html.__gust_selecting [data-gust-overlay] button{cursor:pointer!important}html.__gust_selecting #__gust_widget textarea,html.__gust_selecting [data-gust-overlay] textarea{cursor:text!important}";
     style.textContent += `+"`"+`
 
 #__gust_comments .__gust_comments_header{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#f5f5f5;font-size:12px;font-weight:650;letter-spacing:.01em}

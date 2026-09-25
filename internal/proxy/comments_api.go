@@ -92,7 +92,7 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_path", "path must be a page pathname")
 		return
 	}
-	if strings.TrimSpace(in.Text) == "" || len(in.Text) > 8192 || hasControl(in.Text) {
+	if !validCommentText(in.Text) {
 		writeAPIError(w, 400, "invalid_text", "text must be non-empty, at most 8192 bytes, and free of control characters")
 		return
 	}
@@ -140,6 +140,88 @@ func (s *Server) serveCommentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) serveCommentReply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeAPIError(w, 405, "method_not_allowed", "use POST")
+		return
+	}
+	if !sameOrigin(w, r) {
+		return
+	}
+	if s.comments == nil {
+		writeAPIError(w, 503, "comments_unavailable", "comments are unavailable")
+		return
+	}
+	id := commentActionID(r.URL.Path, "reply")
+	if id == "" {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	var in struct {
+		Text string `json:"text"`
+	}
+	if !decodeComment(w, r, &in) {
+		return
+	}
+	if !validCommentText(in.Text) {
+		writeAPIError(w, 400, "invalid_text", "text must be non-empty, at most 8192 bytes, and free of control characters")
+		return
+	}
+	c, err := s.comments.Reply(r.Context(), id, comments.AuthorHuman, in.Text)
+	if errors.Is(err, comments.ErrNotFound) {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	if errors.Is(err, comments.ErrInvalidState) {
+		writeAPIError(w, 409, "invalid_state", "comment is done and cannot be replied to")
+		return
+	}
+	if errors.Is(err, comments.ErrTextRequired) {
+		writeAPIError(w, 400, "invalid_text", "text must be non-empty, at most 8192 bytes, and free of control characters")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, 500, "internal_error", "could not reply to comment")
+		return
+	}
+	writeJSON(w, 200, c)
+}
+
+func (s *Server) serveCommentResolve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeAPIError(w, 405, "method_not_allowed", "use POST")
+		return
+	}
+	if !sameOrigin(w, r) {
+		return
+	}
+	if s.comments == nil {
+		writeAPIError(w, 503, "comments_unavailable", "comments are unavailable")
+		return
+	}
+	id := commentActionID(r.URL.Path, "resolve")
+	if id == "" {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	c, err := s.comments.MarkDone(r.Context(), id)
+	if errors.Is(err, comments.ErrNotFound) {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	if errors.Is(err, comments.ErrInvalidState) {
+		writeAPIError(w, 409, "invalid_state", "comment cannot be resolved from its current state")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, 500, "internal_error", "could not resolve comment")
+		return
+	}
+	writeJSON(w, 200, c)
 }
 
 func (s *Server) serveCommentSubmit(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +289,27 @@ func sameOrigin(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// commentActionID extracts the 32-hex comment id from a path shaped like
+// /__gust/comments/<id>/<action>. It returns "" when the path does not match.
+func commentActionID(path, action string) string {
+	const prefix = "/__gust/comments/"
+	suffix := "/" + action
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return ""
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		return ""
+	}
+	return id
+}
+
+// validCommentText applies the shared comment/reply text rules: non-empty,
+// at most 8192 bytes, and free of control characters.
+func validCommentText(text string) bool {
+	return strings.TrimSpace(text) != "" && len(text) <= 8192 && !hasControl(text)
 }
 
 func validPath(path string) bool {

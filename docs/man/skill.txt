@@ -11,7 +11,8 @@ for installing as agent skills. The run output is a prompt for direct use in
 an agent conversation. These commands print instructions; they do not start
 a watcher or control a running Gust instance. To handle comments, start Gust with
 --optin comments and follow the printed skill. Use gust ctl comments to
-receive and finish comments.
+receive submitted threads, reply on them, and mark them review; only the human
+resolves a thread from the browser panel.
 
 Samples:
   gust skill comments
