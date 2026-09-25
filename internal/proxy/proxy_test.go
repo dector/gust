@@ -116,6 +116,38 @@ func TestSoundInjectionDisabledWithoutOptIn(t *testing.T) {
 	}
 }
 
+func TestToolboxInjected(t *testing.T) {
+	for _, script := range []string{reloadScript(1, 8765), reloadScript(1, 8765, true, false, true)} {
+		for _, fragment := range []string{
+			`let gustToolbox;`,
+			`let gustToolboxPanel;`,
+			`gustToolbox = document.createElement("div");`,
+			`gustToolbox.id = "__gust_toolbox";`,
+			`gustToolboxPanel = document.createElement("div");`,
+			`gustToolboxPanel.id = "__gust_toolbox_panel";`,
+			`function mountToolbox(){`,
+			`handle.id = "__gust_toolbox_handle";`,
+			`function toggleToolbox(){`,
+			`gustToolbox.addEventListener("click", function(e){ e.stopPropagation(); toggleToolbox(); });`,
+			`/* Toolbox disabled for now.`,
+			`document.body.appendChild(gustToolboxPanel);`,
+			`document.body.appendChild(gustToolbox);`,
+			`#__gust_toolbox{position:fixed;left:50%;bottom:0;transform:translate(-50%,11px);`,
+			`#__gust_toolbox:not(.__gust_toolbox_open):hover{transform:translate(-50%,0)}`,
+			`#__gust_toolbox.__gust_toolbox_open{transform:translate(-50%,calc(-1 * min(340px,42vh)))}`,
+			`#__gust_toolbox_handle{display:grid;place-items:center;width:100%;height:100%;color:#7f776d;`,
+			`#__gust_toolbox_panel{position:fixed;left:0;right:0;bottom:0;`,
+			`transform:translateY(100%);pointer-events:none;`,
+			`#__gust_toolbox_panel.__gust_toolbox_open{transform:translateY(0);pointer-events:auto}`,
+			`width:132px;height:36px`,
+		} {
+			if !strings.Contains(script, fragment) {
+				t.Errorf("toolbox injection missing %q", fragment)
+			}
+		}
+	}
+}
+
 func TestProxyServesSoundsWithHashCache(t *testing.T) {
 	app := httptest.NewServer(http.NotFoundHandler())
 	defer app.Close()
