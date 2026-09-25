@@ -591,6 +591,14 @@ let commentRefreshTimer = null;
 let submittingComments = false;
 let pinOverlay = null;
 let pinSizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedulePinReposition) : null;
+let commentPopover = null;
+let popoverCommentId = null;
+let popoverAnchor = null;
+let popoverParts = null;
+let popoverRenderKey = "";
+let popoverDeletePending = false;
+let popoverDeleteError = "";
+let popoverDeleteToken = 0;
 let pathFrame = 0;
 const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/></svg>';
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
@@ -792,6 +800,7 @@ function repositionPins(){
     pin.style.display=pos?"":"none";
     if(pos){pin.style.left=pos.left+"px";pin.style.top=pos.top+"px";}
   });
+  positionCommentPopover();
 }
 let pinPositionFrame=0;
 function schedulePinReposition(){
@@ -800,11 +809,122 @@ function schedulePinReposition(){
 }
 window.addEventListener("scroll",schedulePinReposition,true);
 window.addEventListener("resize",schedulePinReposition);
+function locateComment(c){
+  if(!c)return;
+  const el=matchingElement(c);
+  if(el){el.scrollIntoView({block:"center",inline:"nearest",behavior:"smooth"});setHighlight(el);setTimeout(function(){if(highlighted===el)setHighlight(null);},1600);}
+}
 function focusComment(id){
   const row=commentUI&&Array.from(commentUI.querySelectorAll("[data-comment-id]")).find(function(r){return r.dataset.commentId===id;});
   if(row){row.scrollIntoView({block:"nearest"});row.focus();}
-  const c=commentState.find(function(x){return x.id===id;});const el=c&&matchingElement(c);
-  if(el){el.scrollIntoView({block:"center",inline:"nearest",behavior:"smooth"});setHighlight(el);setTimeout(function(){if(highlighted===el)setHighlight(null);},1600);}
+  locateComment(commentState.find(function(x){return x.id===id;}));
+}
+function commentStateLabel(state){return {created:"Draft",submitted:"Submitted",seen:"In progress"}[state]||state||"Unknown";}
+function commentPopoverEl(){
+  if(commentPopover&&commentPopover.isConnected&&popoverParts&&popoverParts.badge&&popoverParts.badge.isConnected)return commentPopover;
+  // A stale node can still be attached, for example when its badge was
+  // detached; drop it so the rebuilt panel keeps a single popover id.
+  if(commentPopover&&commentPopover.isConnected)commentPopover.remove();
+  commentPopover=document.createElement("div");
+  commentPopover.id="__gust_comment_popover";
+  commentPopover.dataset.gustOverlay="";
+  commentPopover.setAttribute("role","dialog");
+  commentPopover.setAttribute("aria-label","Comment");
+  commentPopover.hidden=true;
+  // Build the panel once and reuse the same nodes on every refresh, so a poll
+  // cannot rebuild the DOM under the user and drop keyboard focus.
+  const head=document.createElement("div");head.className="__gust_popover_head";
+  const badge=document.createElement("span");badge.className="__gust_popover_badge";
+  const dismiss=document.createElement("button");dismiss.type="button";dismiss.className="__gust_popover_close";dismiss.setAttribute("aria-label","Close comment");dismiss.textContent="\u00d7";
+  dismiss.addEventListener("click",closeCommentPopover);
+  head.append(badge,dismiss);
+  const text=document.createElement("p");text.className="__gust_popover_text";
+  const meta=document.createElement("div");meta.className="__gust_popover_meta";
+  const path=document.createElement("span");path.className="__gust_popover_path";
+  const missing=document.createElement("span");missing.className="__gust_popover_missing";missing.textContent="Not found";missing.hidden=true;
+  meta.append(path,missing);
+  const actions=document.createElement("div");actions.className="__gust_popover_actions";
+  const locate=document.createElement("button");locate.type="button";locate.className="__gust_popover_action __gust_popover_locate";locate.textContent="Locate";
+  locate.addEventListener("click",function(){locateComment(commentState.find(function(x){return x.id===popoverCommentId;}));});
+  const remove=document.createElement("button");remove.type="button";remove.className="__gust_popover_action __gust_popover_remove";remove.textContent="Remove draft";
+  remove.addEventListener("click",removePopoverDraft);
+  actions.append(locate,remove);
+  const error=document.createElement("p");error.className="__gust_popover_error";error.hidden=true;
+  commentPopover.append(head,text,meta,actions,error);
+  popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,actions:actions,locate:locate,remove:remove,error:error};
+  document.documentElement.appendChild(commentPopover);
+  return commentPopover;
+}
+function positionCommentPopover(){
+  const pop=commentPopover;if(!pop||pop.hidden)return;
+  const width=pop.offsetWidth||300,height=pop.offsetHeight||160,margin=12,gap=12;
+  let anchor=popoverAnchor;
+  const pin=pinOverlay&&Array.from(pinOverlay.children).find(function(p){return p.dataset.commentId===popoverCommentId;});
+  if(pin){const r=pin.getBoundingClientRect();if(r.width||r.height)anchor={left:r.left,right:r.right,top:r.top,bottom:r.bottom};}
+  if(!anchor)return;
+  let left=anchor.right+gap;
+  if(left+width>innerWidth-margin)left=anchor.left-width-gap;
+  left=Math.max(margin,Math.min(innerWidth-width-margin,left));
+  const top=Math.max(margin,Math.min(innerHeight-height-margin,anchor.top));
+  pop.style.left=left+"px";pop.style.top=top+"px";
+  popoverAnchor=anchor;
+}
+function closeCommentPopover(){
+  popoverCommentId=null;popoverAnchor=null;popoverRenderKey="";popoverDeletePending=false;popoverDeleteError="";popoverDeleteToken++;
+  if(commentPopover){commentPopover.hidden=true;}
+}
+function removePopoverDraft(){
+  const c=commentState.find(function(x){return x.id===popoverCommentId;});
+  if(!c||popoverDeletePending)return;
+  const token=++popoverDeleteToken;
+  popoverDeletePending=true;popoverDeleteError="";
+  renderCommentPopover();
+  fetch("/__gust/comments/"+encodeURIComponent(c.id),{method:"DELETE"})
+    .then(function(r){if(!r.ok)return r.json().catch(function(){return {};}).then(function(data){throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));});})
+    .then(function(){
+      if(token!==popoverDeleteToken)return;
+      popoverDeletePending=false;
+      // Close now so a failed follow-up refresh cannot leave the deleted draft
+      // popover open on screen.
+      if(popoverCommentId===c.id)closeCommentPopover();
+      refreshComments();
+    })
+    .catch(function(e){if(token!==popoverDeleteToken)return;popoverDeletePending=false;popoverDeleteError=e.message;renderCommentPopover();});
+}
+function renderCommentPopover(){
+  if(!popoverCommentId)return;
+  const c=commentState.find(function(x){return x.id===popoverCommentId;});
+  if(!c||c.state==="done"||c.state==="abandoned"){closeCommentPopover();return;}
+  const pop=commentPopoverEl();
+  pop.hidden=false;
+  const onPage=c.path===location.pathname;
+  const found=onPage&&!!matchingElement(c);
+  const key=[c.id,c.state,c.text||"",c.path||"/",onPage,found,popoverDeletePending,popoverDeleteError].join("\u0000");
+  // Skip repainting when nothing the panel shows has changed; this is what keeps
+  // focus, scroll, and in-flight Remove draft state stable across polls. The pin
+  // may still have moved, so keep the (cheap) position in sync.
+  if(key===popoverRenderKey){positionCommentPopover();return;}
+  popoverRenderKey=key;
+  const parts=popoverParts;
+  parts.badge.className="__gust_popover_badge __gust_popover_badge_"+c.state;
+  parts.badge.textContent=commentStateLabel(c.state);
+  parts.text.textContent=(c.text||"").trim()||"(empty comment)";
+  parts.path.textContent=c.path||"/";
+  parts.missing.hidden=!(onPage&&!found);
+  parts.locate.hidden=!found;
+  parts.remove.hidden=c.state!=="created";
+  parts.remove.disabled=popoverDeletePending;
+  parts.remove.textContent=popoverDeletePending?"Removing\u2026":"Remove draft";
+  parts.error.hidden=!popoverDeleteError;
+  parts.error.textContent=popoverDeleteError||"";
+  positionCommentPopover();
+}
+function openCommentPopover(id){
+  if(popoverCommentId===id&&commentPopover&&!commentPopover.hidden){closeCommentPopover();return;}
+  const pin=pinOverlay&&Array.from(pinOverlay.children).find(function(p){return p.dataset.commentId===id;});
+  if(pin){const r=pin.getBoundingClientRect();popoverAnchor={left:r.left,right:r.right,top:r.top,bottom:r.bottom};}
+  popoverCommentId=id;popoverRenderKey="";popoverDeletePending=false;popoverDeleteError="";popoverDeleteToken++;
+  renderCommentPopover();
 }
 function renderCommentState(){
   if(!commentUI)return;
@@ -850,8 +970,9 @@ function renderCommentState(){
     const el=matchingElement(c);if(!el)return;const pos=pinPosition(c,el);if(pinSizeObserver)pinSizeObserver.observe(el);
     const pin=document.createElement("button");pin.type="button";pin.dataset.commentId=c.id;pin.className="__gust_pin __gust_pin_"+c.state;pin.innerHTML=commentIconSvg;pin.title=c.state+" comment — click to inspect";pin.setAttribute("aria-label",c.state+" comment");
     pin.style.cssText="position:fixed;left:"+(pos?pos.left:0)+"px;top:"+(pos?pos.top:0)+"px;pointer-events:auto;";pin.style.display=pos?"":"none";
-    pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();pinned=true;savePinned();syncPanel();focusComment(c.id);});overlay.appendChild(pin);
+    pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openCommentPopover(c.id);});overlay.appendChild(pin);
   });
+  renderCommentPopover();
 }
 function refreshComments(){
   fetch("/__gust/comments",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("Could not refresh comments ("+r.status+")");return r.json();}).then(function(data){if(!Array.isArray(data))throw new Error("Invalid comments response");commentState=data;commentUI.querySelector("[data-poll-error]").textContent="";renderCommentState();}).catch(function(e){if(commentUI){commentUI.querySelector("[data-poll-error]").textContent="Comment sync failed: "+e.message;}});
@@ -1002,13 +1123,19 @@ document.addEventListener("mousemove",function(e){
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
 window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true);
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
-document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(editorOpen){const box=document.querySelector("[data-editor] textarea");if(box)box.value="";resumeSelection();}else if(selecting)closeCommentMode();}},true);
+document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(editorOpen){const box=document.querySelector("[data-editor] textarea");if(box)box.value="";resumeSelection();}else if(selecting)closeCommentMode();else if(popoverCommentId)closeCommentPopover();}},true);
 document.addEventListener("click",function(e){
   if(!selecting||blockedCommentTarget(e.target)||(isSelfDevPanel(e.target)&&!e.ctrlKey))return;
   if(!updateHoverPath(e.target))return;
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
   chooseSelection(e);
 },true);
+document.addEventListener("click",function(e){
+  if(!popoverCommentId||!commentPopover||commentPopover.hidden)return;
+  if(commentPopover.contains(e.target))return;
+  if(e.target&&e.target.closest&&e.target.closest(".__gust_pin"))return;
+  closeCommentPopover();
+});
 function loadCommentMode(){
   try { return sessionStorage.getItem("__gust_comment_mode") === "1"; } catch (_) { return false; }
 }
@@ -1263,6 +1390,28 @@ function mountIcon(){
 #__gust_comments .__gust_remove_draft:hover{background:#502c2c;color:#ffb4a9}
 #__gust_comments .__gust_comments_empty{padding:14px 4px;color:#929292;font-size:12px;text-align:center}
 #__gust_comments .__gust_done_summary{padding:5px;color:#777;font-size:11px;text-align:center}
+#__gust_comment_popover{position:fixed;z-index:2147483647;box-sizing:border-box;width:min(300px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;color-scheme:dark;background:#24180f;color:#fff7e9;border:1px solid #f9bb7155;border-radius:12px;box-shadow:0 16px 48px #0009;padding:12px;font:13px/1.5 system-ui,sans-serif}
+#__gust_comment_popover[hidden]{display:none}
+#__gust_comment_popover .__gust_popover_head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+#__gust_comment_popover .__gust_popover_badge{flex:none;font-size:11px;font-weight:700}
+#__gust_comment_popover .__gust_popover_badge_created{color:#fbbf24}
+#__gust_comment_popover .__gust_popover_badge_submitted{color:#93c5fd}
+#__gust_comment_popover .__gust_popover_badge_seen{color:#c4b5fd}
+#__gust_comment_popover .__gust_popover_close{margin-left:auto;padding:2px 8px;border:0;border-radius:6px;background:transparent;color:#e0cfba;font:inherit;font-size:18px;line-height:1;cursor:pointer}
+#__gust_comment_popover .__gust_popover_close:hover{color:#fff7e9;background:#49301c}
+#__gust_comment_popover .__gust_popover_close:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}
+#__gust_comment_popover .__gust_popover_text{margin:0 0 8px;white-space:pre-wrap;overflow-wrap:anywhere}
+#__gust_comment_popover .__gust_popover_meta{display:flex;align-items:center;gap:6px;min-width:0;color:#e0cfba;font-size:10px}
+#__gust_comment_popover .__gust_popover_path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+#__gust_comment_popover .__gust_popover_missing{flex:none;color:#d2a174}
+#__gust_comment_popover .__gust_popover_actions{display:flex;gap:6px;margin-top:10px}
+#__gust_comment_popover .__gust_popover_action{padding:5px 9px;border:1px solid #f9bb7180;border-radius:7px;background:#49301c;color:#ffca81;font:inherit;font-size:11px;font-weight:600;cursor:pointer}
+#__gust_comment_popover .__gust_popover_action:hover{background:#704423;border-color:#f9bb71}
+#__gust_comment_popover .__gust_popover_action:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}
+#__gust_comment_popover .__gust_popover_remove{margin-left:auto;border-color:#fca5a555;background:#3a2020;color:#ffb4a9}
+#__gust_comment_popover .__gust_popover_remove:hover{background:#502c2c;border-color:#fca5a5}
+#__gust_comment_popover .__gust_popover_remove:disabled{opacity:.6;cursor:wait}
+#__gust_comment_popover .__gust_popover_error{margin:8px 0 0;color:#ffb4a9;font-size:11px;overflow-wrap:anywhere}
 #__gust_selected_path{position:fixed;bottom:16px;left:50%%;transform:translateX(-50%%);z-index:2147483646;box-sizing:border-box;width:max-content;max-width:calc(100vw - 24px);pointer-events:none;color:#fff;text-align:center;text-shadow:0 1px 3px #000,0 0 9px #000;font:12px/1.4 system-ui,sans-serif}
 #__gust_selected_path[hidden]{display:none}
 #__gust_selected_path .__gust_path_trail{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:5px;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}

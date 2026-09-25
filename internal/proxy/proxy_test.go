@@ -963,6 +963,342 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 	}
 }
 
+// TestProxyPinOpensFloatingCommentPanel checks that clicking a comment pin
+// opens a floating panel anchored to the pin instead of the side panel, that
+// the panel tracks comment state changes until the comment is resolved, and
+// that the existing lifecycle actions are still wired up.
+func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
+	script := reloadScript(12, 8765)
+	checks := []string{
+		`function openCommentPopover(id){`,
+		`commentPopover.id="__gust_comment_popover"`,
+		`commentPopover.dataset.gustOverlay=""`,
+		`commentPopover.setAttribute("role","dialog")`,
+		`function commentPopoverEl(){`,
+		`function positionCommentPopover(){`,
+		`function closeCommentPopover(){`,
+		`function removePopoverDraft(){`,
+		`function renderCommentPopover(){`,
+		`function commentStateLabel(state)`,
+		`badge.className="__gust_popover_badge __gust_popover_badge_"+c.state`,
+		`pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openCommentPopover(c.id);});`,
+		`if(popoverCommentId===id&&commentPopover&&!commentPopover.hidden){closeCommentPopover();return;}`,
+		`else if(popoverCommentId)closeCommentPopover();`,
+		"renderCommentPopover();\n}\nfunction refreshComments(){",
+		"positionCommentPopover();\n}",
+		`if(!popoverCommentId||!commentPopover||commentPopover.hidden)return;`,
+		// The panel survives created -> submitted -> seen and only closes when
+		// the comment is resolved or abandoned.
+		`if(!c||c.state==="done"||c.state==="abandoned"){closeCommentPopover();return;}`,
+		// Rebuilding over a detached badge must drop the stale parent so the
+		// floating panel never leaves a duplicate id in the document.
+		`if(commentPopover&&commentPopover.isConnected)commentPopover.remove();`,
+		// A successful DELETE closes the popover before the follow-up refresh,
+		// so a failing refresh cannot leave the deleted draft open.
+		`if(popoverCommentId===c.id)closeCommentPopover();`,
+		`commentState.filter(c=>c.path===location.pathname&&(c.state==="created"||c.state==="submitted"||c.state==="seen"))`,
+		// Existing actions stay available from the panel.
+		`fetch("/__gust/comments/"+encodeURIComponent(c.id),{method:"DELETE"})`,
+		`parts.remove.textContent=popoverDeletePending?"Removing\u2026":"Remove draft"`,
+		`locate.addEventListener("click",function(){locateComment(commentState.find(function(x){return x.id===popoverCommentId;}));})`,
+		`locateComment(commentState.find(function(x){return x.id===id;}))`,
+		// The panel is built once and re-rendered in place so polls are stable.
+		`commentPopover.append(head,text,meta,actions,error)`,
+		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,actions:actions,locate:locate,remove:remove,error:error}`,
+		`if(key===popoverRenderKey){positionCommentPopover();return;}`,
+		`parts.remove.disabled=popoverDeletePending;`,
+		`parts.error.hidden=!popoverDeleteError;`,
+		`parts.error.textContent=popoverDeleteError||""`,
+		// Styling for the floating panel.
+		`#__gust_comment_popover{position:fixed;z-index:2147483647;`,
+		`#__gust_comment_popover[hidden]{display:none}`,
+		`#__gust_comment_popover .__gust_popover_badge_created{color:#fbbf24}`,
+		`#__gust_comment_popover .__gust_popover_error{`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(script, check) {
+			t.Errorf("floating comment panel missing %q", check)
+		}
+	}
+	if strings.Contains(script, `syncPanel();focusComment(c.id)`) {
+		t.Error("pin click still opens the side panel")
+	}
+	if strings.Contains(script, `commentPopover.replaceChildren()`) {
+		t.Error("popover refresh still tears down its DOM")
+	}
+	if !strings.Contains(script, `open.addEventListener("click",function(){focusComment(c.id);});row.appendChild(open);`) {
+		t.Error("side panel rows should still focus their comment")
+	}
+}
+
+// TestProxyFloatingCommentPanelBehaviorWhenNodeAvailable runs the extracted
+// popover functions against a tiny DOM stub, so the pin-to-panel interaction is
+// exercised at runtime rather than only checked as source text.
+func TestProxyFloatingCommentPanelBehaviorWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	start := strings.Index(script, "function locateComment(c){")
+	end := strings.Index(script, "function renderCommentState(){")
+	if start < 0 || end < start {
+		t.Fatal("could not extract floating comment panel functions")
+	}
+	harness := popoverHarnessPrelude + script[start:end] + popoverHarnessChecks
+	file := t.TempDir() + "/popover.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("floating comment panel behavior: %v\n%s", err, output)
+	}
+}
+
+const popoverHarnessPrelude = `class El {
+  constructor(tag) {
+    this.tagName = String(tag).toUpperCase();
+    this.children = [];
+    this.attrs = {};
+    this.dataset = {};
+    this.style = {};
+    this.listeners = {};
+    this.hidden = false;
+    this.className = '';
+    this.textContent = '';
+    this.type = '';
+    this.isConnected = true;
+    this.parentNode = null;
+    this.removed = false;
+    this.offsetWidth = 300;
+    this.offsetHeight = 160;
+  }
+  appendChild(c) { this.children.push(c); if (c) c.parentNode = this; return c; }
+  append(...cs) { for (const c of cs) if (c && typeof c === 'object') { this.children.push(c); c.parentNode = this; } }
+  replaceChildren() { for (const c of this.children) if (c) c.parentNode = null; this.children = []; }
+  remove() {
+    if (this.parentNode) {
+      const i = this.parentNode.children.indexOf(this);
+      if (i >= 0) this.parentNode.children.splice(i, 1);
+      this.parentNode = null;
+    }
+    this.isConnected = false;
+    this.removed = true;
+  }
+  setAttribute(k, v) { this.attrs[k] = v; }
+  addEventListener(t, f) { this.listeners[t] = f; }
+  focus() { document.activeElement = this; }
+  contains(el) { if (el === this) return true; return this.children.some(c => c && c.contains && c.contains(el)); }
+  getBoundingClientRect() { return { left: 100, right: 120, top: 100, bottom: 120, width: 20, height: 20 }; }
+}
+const document = { createElement: t => new El(t), documentElement: new El('html'), activeElement: null };
+const location = { pathname: '/' };
+const innerWidth = 1000;
+const innerHeight = 800;
+let commentState = [];
+let commentPopover = null;
+let popoverCommentId = null;
+let popoverAnchor = null;
+let popoverParts = null;
+let popoverRenderKey = '';
+let popoverDeletePending = false;
+let popoverDeleteError = '';
+let popoverDeleteToken = 0;
+let pinOverlay = null;
+function matchingElement() { return new El('div'); }
+function setHighlight() {}
+function refreshComments() {}
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function pinFor(id) { const p = new El('button'); p.dataset.commentId = id; return p; }
+`
+
+const popoverHarnessChecks = `
+commentState = [{ id: 'a', path: '/', text: 'first\nsecond', state: 'created' }];
+pinOverlay = new El('div');
+pinOverlay.appendChild(pinFor('a'));
+openCommentPopover('a');
+assert(commentPopover && commentPopover.hidden === false, 'pin click opens the floating panel');
+assert(popoverCommentId === 'a', 'panel remembers its comment id');
+assert(commentPopover.children.length === 5, 'panel has header, text, meta, actions, and error');
+assert(commentPopover.children[0].children[0].textContent === 'Draft', 'created state renders the Draft badge');
+assert(commentPopover.children[1].textContent === 'first\nsecond', 'multi-line text is preserved');
+assert(commentPopover.children[3].children[1].hidden === false, 'drafts expose Remove draft');
+assert(commentPopover.children[3].children[1].textContent === 'Remove draft', 'draft button keeps its label');
+assert(commentPopover.children[3].children[0].hidden === false, 'located comments expose Locate');
+openCommentPopover('a');
+assert(commentPopover.hidden === true, 'clicking the same pin toggles the panel closed');
+openCommentPopover('a');
+commentState[0].state = 'seen';
+renderCommentPopover();
+assert(commentPopover.hidden === false, 'panel stays open across a state change');
+assert(commentPopover.children[0].children[0].textContent === 'In progress', 'panel updates the state badge');
+assert(commentPopover.children[3].children[1].hidden === true, 'non-drafts hide Remove draft');
+commentState[0].state = 'abandoned';
+renderCommentPopover();
+assert(commentPopover.hidden === true, 'abandoning the comment closes the panel');
+assert(popoverCommentId === null, 'resolution clears the selected comment');
+commentState = [{ id: 'b', path: '/', text: 'x', state: 'submitted' }];
+pinOverlay.replaceChildren(pinFor('b'));
+openCommentPopover('b');
+assert(commentPopover.children[0].children[0].textContent === 'Submitted', 'submitted state renders the Submitted badge');
+closeCommentPopover();
+assert(commentPopover.hidden === true, 'close hides the panel');
+console.log('floating comment panel ok');
+`
+
+// TestProxyFloatingCommentPanelRefreshStabilityWhenNodeAvailable exercises the
+// floating panel across repeated refreshes: unchanged polls must reuse the same
+// nodes and keep focus, DELETE failures must stay visible, and an in-flight
+// remove must stay disabled and un-repeatable.
+func TestProxyFloatingCommentPanelRefreshStabilityWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	start := strings.Index(script, "function locateComment(c){")
+	end := strings.Index(script, "function renderCommentState(){")
+	if start < 0 || end < start {
+		t.Fatal("could not extract floating comment panel functions")
+	}
+	harness := popoverHarnessPrelude + script[start:end] + popoverStabilityChecks
+	file := t.TempDir() + "/popover-stability.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("floating comment panel refresh stability: %v\n%s", err, output)
+	}
+}
+
+const popoverStabilityChecks = `
+const fetchCalls = [];
+let fetchMode = 'error';
+let pendingResolve = null;
+function fetch(url, opts) {
+  fetchCalls.push({ url, opts });
+  if (fetchMode === 'pending') return new Promise(resolve => { pendingResolve = resolve; });
+  return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'boom' } }) });
+}
+function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
+(async function () {
+  commentState = [{ id: 'f', path: '/', text: 'draft focus', state: 'created' }];
+  pinOverlay = new El('div');
+  pinOverlay.appendChild(pinFor('f'));
+  openCommentPopover('f');
+  const actions = commentPopover.children[3];
+  const locate = actions.children[0];
+  const remove = actions.children[1];
+  assert(remove.hidden === false, 'draft exposes Remove draft');
+  assert(locate.hidden === false, 'located draft exposes Locate');
+  remove.focus();
+  assert(document.activeElement === remove, 'Remove draft can take focus');
+
+  // Unchanged poll refresh: same nodes, focus retained, no repaint.
+  renderCommentPopover();
+  assert(commentPopover.children[3] === actions, 'refresh keeps the actions container');
+  assert(commentPopover.children[3].children[1] === remove, 'refresh keeps the Remove draft node');
+  assert(document.activeElement === remove, 'refresh keeps focus on Remove draft');
+
+  // Failed DELETE stays visible and re-enables the button.
+  remove.listeners.click();
+  await tick();
+  assert(remove.disabled === false, 'failed delete re-enables Remove draft');
+  assert(remove.textContent === 'Remove draft', 'failed delete keeps the button label');
+  assert(commentPopover.children[4].hidden === false, 'failed delete shows the error area');
+  assert(commentPopover.children[4].textContent === 'boom', 'error area carries the message');
+  renderCommentPopover();
+  assert(commentPopover.children[4].hidden === false, 'poll refresh preserves the visible delete error');
+  assert(commentPopover.children[4].textContent === 'boom', 'poll refresh preserves the error text');
+
+  // In-flight DELETE stays disabled, labelled, and cannot be repeated.
+  fetchMode = 'pending';
+  fetchCalls.length = 0;
+  remove.listeners.click();
+  assert(fetchCalls.length === 1, 'pending delete issues one request');
+  assert(remove.disabled === true, 'pending delete disables Remove draft');
+  const pendingLabel = remove.textContent;
+  renderCommentPopover();
+  assert(remove.disabled === true, 'refresh keeps pending delete disabled');
+  assert(remove.textContent === pendingLabel, 'refresh keeps the pending label');
+  remove.listeners.click();
+  assert(fetchCalls.length === 1, 'pending delete cannot be repeated');
+  pendingResolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  await tick();
+  console.log('floating comment panel refresh stability ok');
+})().catch(function (e) { console.error(e && e.message ? e.message : e); process.exit(1); });
+`
+
+// TestProxyFloatingCommentPanelHardeningWhenNodeAvailable locks in two
+// resilience fixes: rebuilding after the badge detached must remove the stale
+// parent, and a successful DELETE must close the popover before the follow-up
+// refresh so a failing refresh cannot leave the deleted draft open.
+func TestProxyFloatingCommentPanelHardeningWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(12, 8765)
+	start := strings.Index(script, "function locateComment(c){")
+	end := strings.Index(script, "function renderCommentState(){")
+	if start < 0 || end < start {
+		t.Fatal("could not extract floating comment panel functions")
+	}
+	harness := popoverHarnessPrelude + script[start:end] + popoverHardeningChecks
+	file := t.TempDir() + "/popover-hardening.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("floating comment panel hardening: %v\n%s", err, output)
+	}
+}
+
+const popoverHardeningChecks = `
+function fetch(url, opts) {
+  return Promise.resolve({ ok: true, status: 204, json: function () { return Promise.resolve({}); } });
+}
+function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
+let refreshCalls = 0;
+let refreshSawClosed = null;
+refreshComments = function () {
+  refreshCalls++;
+  refreshSawClosed = commentPopover.hidden === true && popoverCommentId === null;
+};
+(async function () {
+  // Rebuilding after the badge detaches must remove the stale parent so the
+  // document keeps exactly one __gust_comment_popover node.
+  commentState = [{ id: 'stale', path: '/', text: 'stale', state: 'created' }];
+  pinOverlay = new El('div');
+  pinOverlay.appendChild(pinFor('stale'));
+  openCommentPopover('stale');
+  const stale = commentPopover;
+  assert(document.documentElement.children.indexOf(stale) >= 0, 'popover attaches to the document');
+  popoverParts.badge.isConnected = false;
+  const rebuilt = commentPopoverEl();
+  assert(rebuilt !== stale, 'detached badge rebuilds the popover');
+  assert(stale.removed === true && stale.isConnected === false, 'rebuild detaches the stale parent');
+  assert(document.documentElement.children.indexOf(stale) === -1, 'stale parent is removed from the document');
+  assert(document.documentElement.children.length === 1, 'only one popover stays attached');
+  assert(rebuilt.id === '__gust_comment_popover', 'rebuilt popover keeps its id');
+
+  // A successful DELETE must close the popover before the follow-up refresh
+  // runs, so a failing refresh cannot leave the deleted draft open.
+  commentState = [{ id: 'gone', path: '/', text: 'delete me', state: 'created' }];
+  pinOverlay = new El('div');
+  pinOverlay.appendChild(pinFor('gone'));
+  openCommentPopover('gone');
+  const remove = commentPopover.children[3].children[1];
+  remove.listeners.click();
+  await tick();
+  assert(commentPopover.hidden === true, 'successful delete hides the popover');
+  assert(popoverCommentId === null, 'successful delete clears the selected comment');
+  assert(refreshCalls === 1, 'successful delete still triggers a follow-up refresh');
+  assert(refreshSawClosed === true, 'popover is already closed when the follow-up refresh runs');
+  console.log('floating comment panel hardening ok');
+})().catch(function (e) { console.error(e && e.message ? e.message : e); process.exit(1); });
+`
+
 func TestProxyForwardsWebSocketUpgrades(t *testing.T) {
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {

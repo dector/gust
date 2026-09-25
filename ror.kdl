@@ -7,3 +7,9 @@ task dev:self {
 
     cmd "tools/dev-self.sh"
 }
+
+task demo:gust {
+    description "Run Gust against the docs/demo instance with the given arguments"
+
+    cmd "cd docs/demo && go tool gust"
+}
