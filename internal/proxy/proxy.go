@@ -574,12 +574,14 @@ let gustWidget;
 let gustPanel;
 let pinned = false;
 let hovering = false;
+let commentHovering = false;
 let reloadedAt = 0;
 let gustInfo = null;
 let gustProcess = null;
 let infoTimer = null;
 let commentUI = null;
 let commentToolbar = null;
+let commentToggle = null;
 let windButton = null;
 let windEnabled = false;
 let windTimer = null;
@@ -622,6 +624,7 @@ let popoverReplyPending = false;
 let popoverResolvePending = false;
 let pathFrame = 0;
 const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/></svg>';
+const commentAddIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M12 9v6"/><path d="M9 12h6"/></svg>';
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
 const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))+"') 2 21, pointer";
 const gustAppPort = %d;
@@ -709,7 +712,7 @@ function stopInfo(){
 function syncPanel(){
   if (!gustWidget) return;
   if (gustIcon) gustIcon.classList.toggle("__gust_pinned", pinned);
-  if (pinned || hovering) {
+  if (pinned || (hovering && !commentHovering)) {
     gustWidget.classList.add("__gust_open");
     startInfo();
     renderPanel();
@@ -1116,12 +1119,13 @@ function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPa
 function updateCommentUI(){
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
-  const toggle=commentToolbar.querySelector("button:not(#__gust_wind_button)"),active=selecting||editorOpen;gustWidget.classList.toggle("__gust_commenting",active);toggle.setAttribute("aria-pressed",String(active));toggle.setAttribute("aria-label",active?"Exit comment mode":"Add comment");toggle.title=active?(selfDev?"Exit comment mode (Ctrl+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click to select Gust panel elements)":"Add comment");const title=commentToolbar.querySelector("[data-mode-title]");if(title)title.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
+  const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click to select Gust panel elements)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click to select Gust panel elements)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);[commentToolbar.querySelector("button:not(#__gust_wind_button)"),commentToggle].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle)modeTitle.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
   scheduleRenderPath();
 }
 function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
 function beginSelection(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();pinned=true;savePinned();syncPanel();updateCommentUI();}
+function beginCommentTool(){if(selecting||editorOpen){closeCommentMode();return;}selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
 function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;editorAnchor=null;hoverPath=[];setHighlight(null);updateCommentUI();}
 function chooseSelection(e){if(!hoverPath.length)return;selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
   const r=selectedElement.getBoundingClientRect();
@@ -1162,6 +1166,7 @@ function createCommentUI(){
   const add=document.createElement("button");add.type="button";add.title="Add comment";add.setAttribute("aria-label","Add comment");add.setAttribute("aria-pressed","false");
   add.innerHTML=commentIconSvg;
   add.addEventListener("click",beginSelection);commentToolbar.insertBefore(add,windButton);
+  const commentToggleButton=document.createElement("button");commentToggleButton.type="button";commentToggleButton.id="__gust_comment_toggle";commentToggleButton.title="Add comment";commentToggleButton.setAttribute("aria-label","Add comment");commentToggleButton.setAttribute("aria-pressed","false");commentToggleButton.innerHTML=commentAddIconSvg;commentToggleButton.addEventListener("click",beginCommentTool);commentToggle=commentToggleButton;gustIcon.parentNode.insertBefore(commentToggleButton,gustIcon);commentToggleButton.addEventListener("mouseenter",function(){commentHovering=true;syncPanel();});commentToggleButton.addEventListener("mouseleave",function(){commentHovering=false;syncPanel();});
   const modeTitle=document.createElement("span");modeTitle.dataset.modeTitle="";modeTitle.textContent="Comment Mode";modeTitle.hidden=true;commentToolbar.insertBefore(modeTitle,windButton);
   const autoLabel=document.createElement("label");autoLabel.dataset.autosubmitLabel="";autoLabel.className="__gust_autosubmit";autoLabel.hidden=true;
   const auto=document.createElement("input");auto.type="checkbox";auto.checked=true;auto.dataset.autosubmit="";autoLabel.append(auto,document.createTextNode("Autosubmit"));
@@ -1544,15 +1549,21 @@ function mountIcon(){
 /* Warm demo palette; keep status and comment-state colors distinct. */
 #__gust_widget{right:16px;top:16px}
 #__gust_icons{display:flex;align-items:center;gap:4px}
+#__gust_comment_toggle{display:grid;place-items:center;width:28px;height:28px;padding:2px;border:1px solid transparent;border-radius:10px;background:transparent;color:#e0cfba;cursor:pointer}
+#__gust_comment_toggle svg{display:block;width:20px;height:20px}
+#__gust_comment_toggle[aria-pressed=true]{background:#49301c;color:#fff7e9}
+#__gust_comment_toggle:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}
+@media (hover:hover){#__gust_comment_toggle:hover{background:#49301c;color:#fff7e9}}
 #__gust_sound_icon{position:relative;width:16px;height:16px;color:#f9bb71;opacity:1;cursor:pointer;display:grid;place-items:center}
 #__gust_sound_icon[hidden]{display:none}
 #__gust_sound_icon svg{display:block;width:16px;height:16px}
 #__gust_sound_icon:hover{color:#ffd9a8}
 #__gust_sound_icon:focus-visible{outline:2px solid #f9bb71;outline-offset:2px;border-radius:8px}
 #__gust_sound_button svg{width:20px;height:20px}
-#__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1}
+#__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1;border-radius:10px;transition:background .15s ease,color .15s ease,opacity .15s ease}
 #__gust_icon svg{display:block;width:28px;height:28px}
-#__gust_icon:hover,#__gust_icon.__gust_pinned,#__gust_icon.__gust_icon_offline,#__gust_icon.__gust_icon_failing{color:#f9bb71;opacity:1}
+#__gust_icon:hover,#__gust_icon.__gust_icon_offline,#__gust_icon.__gust_icon_failing{color:#f9bb71;opacity:1}
+#__gust_icon.__gust_pinned{background:#49301c;color:#fff7e9}
 #__gust_icon::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border:2px solid #f9bb71;border-radius:50%%;background:#24180f;box-shadow:0 0 0 1px #24180f;pointer-events:none}
 #__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}
 #__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
@@ -1615,9 +1626,9 @@ function mountIcon(){
     soundIcon.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setSound(!soundEnabled); } });
   }
   createToolbar();
-  if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
   iconRow.appendChild(gustIcon);
   if (soundsOn) iconRow.appendChild(soundIcon);
+  if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
   widget.appendChild(iconRow);
   widget.appendChild(gustPanel);
   applySoundIcon();
