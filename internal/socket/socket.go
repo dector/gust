@@ -314,7 +314,11 @@ func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol
 			resp = protocol.Response{OK: true, Comments: cs}
 		}
 	case protocol.ActionCommentsReply:
-		c, err := store.Reply(ctx, req.ID, comments.AuthorAgent, req.Text)
+		author := comments.AuthorAgent
+		if req.Human {
+			author = comments.AuthorHuman
+		}
+		c, err := store.Reply(ctx, req.ID, author, req.Text)
 		resp = commentMutationResponse(c, err)
 	case protocol.ActionCommentsReview:
 		c, err := store.Review(ctx, req.ID, req.Text)

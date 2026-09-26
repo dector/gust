@@ -149,6 +149,22 @@ func TestCommentsReplyAndReviewFlow(t *testing.T) {
 	if comment["state"] != "review" {
 		t.Fatalf("review state: %v", comment["state"])
 	}
+	response = requestJSON(t, server.path, map[string]any{"action": "comments_reply", "id": created.ID, "text": "one more", "human": true})
+	if response["ok"] != true {
+		t.Fatalf("human reply response: %v", response)
+	}
+	comment, _ = response["comment"].(map[string]any)
+	if comment["state"] != "submitted" {
+		t.Fatalf("human reply state: %v", comment["state"])
+	}
+	messages, _ := comment["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("human reply messages: %v", comment["messages"])
+	}
+	last, _ := messages[len(messages)-1].(map[string]any)
+	if last["author"] != "human" {
+		t.Fatalf("human reply author: %v", last["author"])
+	}
 	response = requestJSON(t, server.path, map[string]string{"action": "comments_done", "id": created.ID})
 	if response["ok"] != true {
 		t.Fatalf("done response: %v", response)

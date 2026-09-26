@@ -44,6 +44,8 @@ type Request struct {
 	ID     string `json:"id,omitempty"`
 	Text   string `json:"text,omitempty"`
 	One    bool   `json:"one,omitempty"`
+	// Human records a comments_reply as a human reply instead of an agent one.
+	Human bool `json:"human,omitempty"`
 }
 
 // ExitSummary describes the most recent application process exit.

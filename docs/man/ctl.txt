@@ -26,6 +26,7 @@ Samples:
   gust ctl comments --wait --one
   gust ctl comments --pending
   gust ctl comments reply <id> <text>
+  gust ctl comments reply <id> <text> --human
   gust ctl comments review <id> <text>
   gust ctl comments done <id>
   gust ctl -S /tmp/gust-1000/abc.sock status
@@ -39,6 +40,8 @@ Comment handoff:
   unfinished comments for recovery after an interrupted agent. The agent
   posts a reply on a seen thread with reply, or posts a reply and marks the
   thread review with review. Only the human resolves a thread, with done.
+  reply --human records the reply as a human reply; a human reply to a review
+  thread reopens it as submitted for the agent.
   Comments exist only while the Gust process runs.
 
 Typical agent flow:

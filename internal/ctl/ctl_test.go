@@ -144,6 +144,10 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	if code != 0 || !strings.Contains(out, `"state":"review"`) || !strings.Contains(out, "please verify") {
 		t.Fatalf("review: code=%d out=%q stderr=%q", code, out, stderr)
 	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c2.ID, "make it blue", "--human")
+	if code != 0 || !strings.Contains(out, `"author":"human"`) || !strings.Contains(out, `"state":"submitted"`) {
+		t.Fatalf("human reply: code=%d out=%q stderr=%q", code, out, stderr)
+	}
 	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "done", c1.ID)
 	if code != 0 || !strings.Contains(out, `"state":"done"`) {
 		t.Fatalf("done: code=%d out=%q stderr=%q", code, out, stderr)
@@ -151,6 +155,10 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c1.ID, "   ")
 	if code != 2 || !strings.Contains(stderr, "invalid comments command") {
 		t.Fatalf("blank reply: code=%d stderr=%q", code, stderr)
+	}
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "done", c1.ID, "--human")
+	if code != 2 || !strings.Contains(stderr, "--human is only valid") {
+		t.Fatalf("human done: code=%d stderr=%q", code, stderr)
 	}
 }
 

@@ -238,9 +238,12 @@ func printResponse(w io.Writer, verb string, resp protocol.Response) {
 func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (int, bool) {
 	var positional []string
 	socketPath := ""
+	human := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case a == "--human":
+			human = true
 		case a == "-S" || a == "--socket":
 			if i+1 >= len(args) || args[i+1] == "" {
 				fmt.Fprintf(stderr, "gust ctl: %s requires a path\n", a)
@@ -262,7 +265,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--pending|--wait [--one]|reply <id> <text>|review <id> <text>|done <id>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--pending|--wait [--one]|reply <id> <text> [--human]|review <id> <text>|done <id>]")
 	}
 	var req protocol.Request
 	if len(positional) == 1 {
@@ -285,6 +288,12 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		usage()
 		return 2, true
 	}
+	if human && req.Action != protocol.ActionCommentsReply {
+		fmt.Fprintln(stderr, "gust ctl: --human is only valid with comments reply")
+		usage()
+		return 2, true
+	}
+	req.Human = human
 	if socketPath == "" {
 		var err error
 		socketPath, err = socket.Path("")
@@ -347,6 +356,9 @@ Comments:
   comments --wait             wait for oldest batch; marks comments seen
   comments --wait --one       claim one comment from oldest submitted batch
   comments reply <id> <text>  post an agent reply on a seen thread
+  comments reply <id> <text> --human
+                              post a human reply; a human reply to a review
+                              thread reopens it as submitted for the agent
   comments review <id> <text> post an agent reply and mark the thread review
   comments done <id>          resolve a submitted, seen, or review thread
 
