@@ -23,11 +23,11 @@ const probeTimeout = 500 * time.Millisecond
 // Run scans the per-user socket directory and prints responsive instances.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
-		fmt.Fprintln(stderr, "Usage: gust probe")
+		fmt.Fprintln(stderr, "Usage: gust ctl probe")
 		return 2
 	}
 	if err := run(ctx, socket.Dir(), stdout); err != nil {
-		fmt.Fprintf(stderr, "gust probe: %v\n", err)
+		fmt.Fprintf(stderr, "gust ctl probe: %v\n", err)
 		return 1
 	}
 	return 0

@@ -15,7 +15,6 @@ import (
 	"github.com/dector/gust/internal/exposure"
 	"github.com/dector/gust/internal/logger"
 	"github.com/dector/gust/internal/man"
-	"github.com/dector/gust/internal/probe"
 	"github.com/dector/gust/internal/proxy"
 	"github.com/dector/gust/internal/skill"
 	"github.com/dector/gust/internal/socket"
@@ -31,9 +30,6 @@ func Main() {
 func MainArgs(args []string) int {
 	if len(args) > 0 && args[0] == "ctl" {
 		return ctl.Run(context.Background(), args[1:], os.Stdout, os.Stderr)
-	}
-	if len(args) > 0 && args[0] == "probe" {
-		return probe.Run(context.Background(), args[1:], os.Stdout, os.Stderr)
 	}
 	if len(args) > 0 && args[0] == "man" {
 		return man.Run(args[1:], os.Stdout, os.Stderr)

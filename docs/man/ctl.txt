@@ -5,6 +5,7 @@ Usage:
 
 Commands:
   status    show instance state and last exit
+  probe     list running instances and their URLs (no -S)
   pause     pause filesystem auto-reload
   resume    resume filesystem auto-reload
   rerun     reload now (works while paused)
@@ -14,9 +15,11 @@ Commands:
 
 Discovery:
   Without -S, the socket path is derived from the current directory.
+  probe instead scans all sockets in the per-user directory, from any directory.
 
 Samples:
   gust ctl status
+  gust ctl probe
   gust ctl pause
   gust ctl rerun
   gust ctl resume

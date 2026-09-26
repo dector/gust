@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dector/gust/internal/probe"
 	"github.com/dector/gust/internal/protocol"
 	"github.com/dector/gust/internal/socket"
 )
@@ -46,6 +47,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if verb == "" || verb == "help" {
 		printHelp(stdout)
 		return 0
+	}
+	if verb == "probe" {
+		if socketPath != "" {
+			fmt.Fprintln(stderr, "gust ctl probe: -S is not supported; probe scans all local Gust sockets")
+			return 2
+		}
+		return probe.Run(ctx, nil, stdout, stderr)
 	}
 	action, ok := actions[verb]
 	if !ok {
@@ -415,6 +423,7 @@ Usage:
 
 Commands:
   status    show instance state and last exit
+  probe     list running instances and their URLs (no -S)
   pause     pause filesystem auto-reload
   resume    resume filesystem auto-reload
   rerun     reload now (works while paused)

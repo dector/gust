@@ -62,6 +62,19 @@ func runCtl(t *testing.T, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+func TestProbeCommand(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	path := startServer(t, &fakeControl{status: coordinator.Status{State: coordinator.ExternalRunning, AppPort: 8080}})
+	code, out, stderr := runCtl(t, "probe")
+	if code != 0 || !strings.Contains(out, "(running)\n  local: http://127.0.0.1:8080/") || stderr != "" {
+		t.Fatalf("probe: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, _, stderr = runCtl(t, "probe", "-S", path)
+	if code != 2 || !strings.Contains(stderr, "-S is not supported") {
+		t.Fatalf("probe -S: code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestCommentsWaitOne(t *testing.T) {
 	store, err := comments.Open()
 	if err != nil {

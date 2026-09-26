@@ -114,7 +114,7 @@ When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload fr
 
 ## Find running instances
 
-Run `gust probe` (or `go tool gust probe`) from any directory to find running
+Run `gust ctl probe` (or `go tool gust ctl probe`) from any directory to find running
 Gust instances for your user. It scans the shared control-socket directory and
 prints each responsive instance's workdir, state, local URL (proxy URL when
 available), and Tailscale URL when exposure is active. Instances without `-p`
@@ -128,6 +128,7 @@ Agents and scripts control a running Gust instance with `gust ctl` (or
 
 ```sh
 gust ctl status   # state, ports, version, auto-reload, last exit
+gust ctl probe    # all running instances, local and Tailscale URLs
 gust ctl pause    # pause filesystem auto-reload
 gust ctl rerun    # reload now (works while paused)
 gust ctl resume   # resume auto-reload
@@ -147,7 +148,7 @@ gust ctl comments done <id>           # resolve a thread (human only)
 gust ctl help
 ```
 
-Both invocations find the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
+Other `ctl` commands find the instance through the socket derived from the current directory (`/tmp/gust-<uid>/<hash>.sock`). Use `-S <socket>` to target an explicit socket; `probe` instead scans all sockets and does not accept `-S`. Commands print compact text and exit `0` on success, `1` when the instance cannot be reached or the request fails, and `2` on usage errors.
 
 Comment commands emit stable JSON when Gust is launched with `--optin comments`. Without that opt-in, comment socket commands return `comments_disabled`, browser comment API paths return 404, and the injected widget contains only reload/status controls. Opt-in works without proxy mode too, allowing ctl comment workflows without browser submission. `comments --wait` blocks until the oldest submitted batch arrives and atomically marks its comments seen. `comments` lists all unfinished threads (created, submitted, seen, and review), and `comments --filter <states>` limits the list to the given states (`all`, or a comma-separated list of `created`, `submitted`, `seen`, `review`, `done`); `all` includes resolved threads. `comments --pending` lists only seen-but-unfinished threads for recovery after an interrupted agent. The agent posts a reply with `comments reply`, or posts a reply and marks the thread review with `comments review`; only the human resolves a thread with `comments done`. Add `--human` to `comments reply` to record the reply as a human reply: a human reply to a review thread reopens it as submitted and creates a fresh batch for the agent inbox. Comment data is in-memory and is lost when Gust exits. In proxy mode, the injected browser panel lets viewers select page elements, add comments, and inspect thread history. Ctrl+Enter saves a comment. Comment mode stays active after a reload in the same tab (an open editor returns to selection mode; unsaved text is not retained). Autosubmit is on by default in comment mode and submits each saved comment individually; turn it off to keep drafts, then use Submit to send all drafts as a batch. The newest threads appear first, with drafts, submitted threads, in-progress threads, and review threads clearly labeled. Drafts can be removed with the × beside each one. Resolved threads are counted at the bottom instead of shown individually. Pins distinguish created, submitted, seen, and review threads; resolved threads have no pins. Clicking a pin opens a floating thread panel beside it with the root comment, its state, its replies, a reply box, and Resolve (plus Remove draft for drafts and Locate when the comment's element is found on the current page), instead of opening the side panel; review threads with unread agent replies are highlighted, and the panel follows the pin, updates as the thread changes, and closes when it is resolved, removed, or dismissed. Escape clears an open editor or exits comment selection mode before it dismisses the floating panel. New pins track the clicked point relative to the selected element, including when it moves or resizes. Pin placement requires a confident element match, otherwise the panel reports that the location was not found. The panel displays comments from other paths as pending. Page backgrounds (body/html) can also be selected; closing the floating editor returns to selection mode. The browser does not start an agent; use the CLI commands above to receive submitted threads, reply, and mark them review.
 

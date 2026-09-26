@@ -73,7 +73,7 @@ func TestProbeMissingDirectoryAndBadArguments(t *testing.T) {
 	if err := run(context.Background(), filepath.Join(t.TempDir(), "missing"), &out); err != nil || out.String() != "No running Gust instances found.\n" {
 		t.Fatalf("empty probe: %q, %v", out.String(), err)
 	}
-	if code := Run(context.Background(), []string{"extra"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "Usage: gust probe") {
+	if code := Run(context.Background(), []string{"extra"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "Usage: gust ctl probe") {
 		t.Fatalf("unexpected usage: code=%d stderr=%q", code, errOut.String())
 	}
 }
