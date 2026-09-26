@@ -315,6 +315,7 @@ func (s *Store) Create(ctx context.Context, in Input) (Comment, error) {
 	if err != nil {
 		return Comment{}, err
 	}
+	s.signalLocked()
 	return s.getLocked(ctx, in.ID)
 }
 
@@ -400,7 +401,11 @@ func (s *Store) DeleteDraft(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE comment_id=?`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.signalLocked()
+	return nil
 }
 
 // SubmitCreated atomically groups all created comments into a newly submitted batch.
@@ -539,6 +544,7 @@ func (s *Store) finish(ctx context.Context, id string) (Comment, error) {
 	if n == 0 {
 		return Comment{}, s.stateError(ctx, id)
 	}
+	s.signalLocked()
 	return s.getLocked(ctx, id)
 }
 
@@ -570,6 +576,42 @@ func (s *Store) MarkSeen(ctx context.Context, id string) (Comment, error) {
 	}
 	s.signalLocked()
 	return s.getLocked(ctx, id)
+}
+
+// Watch blocks until any comment changes after since, then returns the full
+// comment snapshot and the newest updated_at cursor. It never consumes or marks
+// comments, so callers can observe threads without claiming them.
+func (s *Store) Watch(ctx context.Context, since int64) ([]Comment, int64, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		s.mu.Lock()
+		if err := s.checkOpen(); err != nil {
+			s.mu.Unlock()
+			return nil, 0, err
+		}
+		var cursor int64
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(updated_at),0) FROM comments`).Scan(&cursor); err != nil {
+			s.mu.Unlock()
+			return nil, 0, err
+		}
+		if cursor > since {
+			cs, err := s.queryComments(ctx, `SELECT `+columns+` FROM comments ORDER BY created_at,id`)
+			s.mu.Unlock()
+			if err != nil {
+				return nil, 0, err
+			}
+			return cs, cursor, nil
+		}
+		wait := s.changed
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		case <-wait:
+		}
+	}
 }
 
 // Reply appends a message from author to the thread. A human reply to a review
@@ -619,9 +661,7 @@ func (s *Store) Reply(ctx context.Context, id string, author Author, text string
 	if err = tx.Commit(); err != nil {
 		return Comment{}, err
 	}
-	if reopened {
-		s.signalLocked()
-	}
+	s.signalLocked()
 	return s.getLocked(ctx, id)
 }
 
@@ -661,6 +701,7 @@ func (s *Store) Review(ctx context.Context, id, text string) (Comment, error) {
 	if err = tx.Commit(); err != nil {
 		return Comment{}, err
 	}
+	s.signalLocked()
 	return s.getLocked(ctx, id)
 }
 
@@ -703,6 +744,7 @@ func (s *Store) claimOldest(ctx context.Context, one bool) (Batch, bool, error) 
 	if err = tx.Commit(); err != nil {
 		return Batch{}, false, err
 	}
+	s.signalLocked()
 	return b, true, nil
 }
 

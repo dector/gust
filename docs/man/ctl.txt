@@ -30,6 +30,7 @@ Samples:
   gust ctl comments --wait
   gust ctl comments --wait --one
   gust ctl comments --pending
+  gust ctl comments watch --since 0
   gust ctl comments seen <id>
   gust ctl comments reply <id> <text>
   gust ctl comments reply <id> <text> --human
@@ -42,7 +43,10 @@ Comment handoff:
   comments seen. With --one it claims only the oldest submitted comment
   from that batch; repeat to consume remaining comments at your own pace.
   Output keeps the batch JSON shape with one comment. comments seen <id>
-  claims one submitted thread without waiting for a batch. comments lists all
+  claims one submitted thread without waiting for a batch. comments watch
+  blocks until any thread changes and prints the full snapshot plus a cursor
+  without claiming anything; pass the previous cursor with --since. comments
+  lists all
   unfinished comments (created, submitted, seen, and review). comments
   --pending lists only seen, unfinished comments for recovery after an
   interrupted agent. comments --filter <states> limits the list to the given

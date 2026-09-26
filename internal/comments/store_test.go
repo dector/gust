@@ -118,6 +118,52 @@ func TestDurablePathIsStablePerRoot(t *testing.T) {
 	}
 }
 
+func TestWatchReturnsSnapshotOnChange(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	c := create(t, s, "one")
+	cs, cursor, err := s.Watch(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 1 || cursor == 0 {
+		t.Fatalf("initial watch: %d comments, cursor %d", len(cs), cursor)
+	}
+
+	type result struct {
+		cs     []Comment
+		cursor int64
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		cs, cur, err := s.Watch(ctx, cursor)
+		done <- result{cs, cur, err}
+	}()
+	select {
+	case <-done:
+		t.Fatal("watch returned before a change")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, err := s.SubmitOne(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.cursor <= cursor {
+			t.Fatalf("cursor did not advance: %d -> %d", cursor, got.cursor)
+		}
+		if len(got.cs) != 1 || got.cs[0].State != StateSubmitted {
+			t.Fatalf("snapshot after submit = %+v", got.cs)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watch did not wake on change")
+	}
+}
+
 func TestMarkSeenClaimsSubmittedThread(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

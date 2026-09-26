@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -292,6 +293,8 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 	socketPath := ""
 	human := false
 	filterValue := ""
+	since := int64(0)
+	sinceSet := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -310,6 +313,27 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 				fmt.Fprintln(stderr, "gust ctl: --filter requires a value")
 				return 2, true
 			}
+		case a == "--since":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "gust ctl: --since requires a value")
+				return 2, true
+			}
+			v, err := strconv.ParseInt(args[i+1], 10, 64)
+			if err != nil || v < 0 {
+				fmt.Fprintln(stderr, "gust ctl: --since requires a non-negative integer")
+				return 2, true
+			}
+			since = v
+			sinceSet = true
+			i++
+		case strings.HasPrefix(a, "--since="):
+			v, err := strconv.ParseInt(strings.TrimPrefix(a, "--since="), 10, 64)
+			if err != nil || v < 0 {
+				fmt.Fprintln(stderr, "gust ctl: --since requires a non-negative integer")
+				return 2, true
+			}
+			since = v
+			sinceSet = true
 		case a == "-S" || a == "--socket":
 			if i+1 >= len(args) || args[i+1] == "" {
 				fmt.Fprintf(stderr, "gust ctl: %s requires a path\n", a)
@@ -331,7 +355,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--filter <states>|--pending|--wait [--one]|seen <id>|reply <id> <text> [--human]|review <id> <text>|done <id>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--filter <states>|--pending|--wait [--one]|watch [--since <n>]|seen <id>|reply <id> <text> [--human]|review <id> <text>|done <id>]")
 	}
 	var req protocol.Request
 	if len(positional) == 1 {
@@ -340,6 +364,9 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		req.Action = protocol.ActionCommentsPending
 	} else if len(positional) == 2 && positional[1] == "--wait" {
 		req.Action = protocol.ActionCommentsWait
+	} else if len(positional) == 2 && positional[1] == "watch" {
+		req.Action = protocol.ActionCommentsWatch
+		req.Since = since
 	} else if len(positional) == 3 && ((positional[1] == "--wait" && positional[2] == "--one") || (positional[1] == "--one" && positional[2] == "--wait")) {
 		req.Action = protocol.ActionCommentsWait
 		req.One = true
@@ -366,6 +393,11 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		usage()
 		return 2, true
 	}
+	if sinceSet && req.Action != protocol.ActionCommentsWatch {
+		fmt.Fprintln(stderr, "gust ctl: --since is only valid with comments watch")
+		usage()
+		return 2, true
+	}
 	if filterValue != "" {
 		states, err := parseCommentFilter(filterValue)
 		if err != nil {
@@ -386,7 +418,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 	}
 	var resp protocol.Response
 	var err error
-	if req.Action == protocol.ActionCommentsWait {
+	if req.Action == protocol.ActionCommentsWait || req.Action == protocol.ActionCommentsWatch {
 		resp, err = callWait(ctx, socketPath, req)
 	} else {
 		resp, err = call(ctx, socketPath, req, dialTimeout)
@@ -405,6 +437,8 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		value = resp.Batch
 	case protocol.ActionCommentsPending, protocol.ActionCommentsList:
 		value = resp.Comments
+	case protocol.ActionCommentsWatch:
+		value = map[string]any{"cursor": resp.Cursor, "comments": resp.Comments}
 	default:
 		value = resp.Comment
 	}
@@ -440,6 +474,9 @@ Comments:
   comments --pending          list seen unfinished comments as JSON
   comments --wait             wait for oldest batch; marks comments seen
   comments --wait --one       claim one comment from oldest submitted batch
+  comments watch [--since <n>]
+                              block until a thread changes, then print the
+                              full snapshot and cursor as JSON (no claim)
   comments seen <id>          mark a submitted thread seen (claim it)
   comments reply <id> <text>  post an agent reply on a seen thread
   comments reply <id> <text> --human

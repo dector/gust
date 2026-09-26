@@ -28,6 +28,7 @@ type commentStore interface {
 	NextOne(context.Context) (comments.Batch, error)
 	ListUnfinished(context.Context) ([]comments.Comment, error)
 	ListStates(context.Context, []comments.State) ([]comments.Comment, error)
+	Watch(context.Context, int64) ([]comments.Comment, int64, error)
 	ListSeenUnfinished(context.Context) ([]comments.Comment, error)
 	MarkSeen(context.Context, string) (comments.Comment, error)
 	MarkDone(context.Context, string) (comments.Comment, error)
@@ -233,7 +234,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store c
 		s.log.Verbosef("socket request: %s", req.Action)
 	}
 	switch req.Action {
-	case protocol.ActionCommentsWait, protocol.ActionCommentsList, protocol.ActionCommentsPending, protocol.ActionCommentsSeen, protocol.ActionCommentsReply, protocol.ActionCommentsReview, protocol.ActionCommentsDone:
+	case protocol.ActionCommentsWait, protocol.ActionCommentsWatch, protocol.ActionCommentsList, protocol.ActionCommentsPending, protocol.ActionCommentsSeen, protocol.ActionCommentsReply, protocol.ActionCommentsReview, protocol.ActionCommentsDone:
 		if store == nil {
 			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrCommentsDisabled})
 			return
@@ -333,6 +334,24 @@ func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol
 			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
 		} else {
 			resp = protocol.Response{OK: true, Batch: batch}
+		}
+	case protocol.ActionCommentsWatch:
+		watchCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// Detect a disconnected client while Watch is blocked.
+		go func() {
+			var b [1]byte
+			_, _ = conn.Read(b[:])
+			cancel()
+		}()
+		cs, cursor, err := store.Watch(watchCtx, req.Since)
+		if err != nil {
+			if watchCtx.Err() != nil {
+				return
+			}
+			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
+		} else {
+			resp = protocol.Response{OK: true, Comments: cs, Cursor: cursor}
 		}
 	case protocol.ActionCommentsList:
 		var cs []comments.Comment

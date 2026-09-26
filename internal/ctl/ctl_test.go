@@ -175,6 +175,42 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	}
 }
 
+func TestCommentsWatchSnapshot(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	c, err := store.Create(ctx, comments.Input{Path: "/", Text: "fix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitOne(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	serverCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	server, err := socket.Start(serverCtx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "watch", "--since", "0")
+	if code != 0 || !strings.Contains(out, `"cursor":`) || !strings.Contains(out, c.ID) || !strings.Contains(out, `"state":"submitted"`) {
+		t.Fatalf("watch: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "watch", "--since", "nope")
+	if code != 2 || !strings.Contains(stderr, "non-negative integer") {
+		t.Fatalf("bad since: code=%d stderr=%q", code, stderr)
+	}
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "--since", "5")
+	if code != 2 || !strings.Contains(stderr, "--since is only valid") {
+		t.Fatalf("since without watch: code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestCommentsSeenClaimsSubmittedThread(t *testing.T) {
 	store, err := comments.Open()
 	if err != nil {

@@ -13,6 +13,7 @@ const (
 	ActionResume          Action = "resume"
 	ActionLogs            Action = "logs"
 	ActionCommentsWait    Action = "comments_wait"
+	ActionCommentsWatch   Action = "comments_watch"
 	ActionCommentsList    Action = "comments_list"
 	ActionCommentsPending Action = "comments_pending"
 	ActionCommentsSeen    Action = "comments_seen"
@@ -50,6 +51,9 @@ type Request struct {
 	// Filter restricts comments_list to these states; empty keeps the default
 	// unfinished set.
 	Filter []string `json:"filter,omitempty"`
+	// Since is the watch cursor: comments_watch returns once a comment changes
+	// after this updated_at value.
+	Since int64 `json:"since,omitempty"`
 }
 
 // ExitSummary describes the most recent application process exit.
@@ -84,7 +88,8 @@ type Response struct {
 	Stderr  string `json:"stderr,omitempty"`
 
 	// Fields for comment handoff actions.
-	Batch    any `json:"batch,omitempty"`
-	Comments any `json:"comments,omitempty"`
-	Comment  any `json:"comment,omitempty"`
+	Batch    any   `json:"batch,omitempty"`
+	Comments any   `json:"comments,omitempty"`
+	Comment  any   `json:"comment,omitempty"`
+	Cursor   int64 `json:"cursor,omitempty"`
 }
