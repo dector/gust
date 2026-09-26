@@ -46,6 +46,9 @@ type Request struct {
 	One    bool   `json:"one,omitempty"`
 	// Human records a comments_reply as a human reply instead of an agent one.
 	Human bool `json:"human,omitempty"`
+	// Filter restricts comments_list to these states; empty keeps the default
+	// unfinished set.
+	Filter []string `json:"filter,omitempty"`
 }
 
 // ExitSummary describes the most recent application process exit.

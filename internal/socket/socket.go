@@ -27,6 +27,7 @@ type commentStore interface {
 	NextBatch(context.Context) (comments.Batch, error)
 	NextOne(context.Context) (comments.Batch, error)
 	ListUnfinished(context.Context) ([]comments.Comment, error)
+	ListStates(context.Context, []comments.State) ([]comments.Comment, error)
 	ListSeenUnfinished(context.Context) ([]comments.Comment, error)
 	MarkDone(context.Context, string) (comments.Comment, error)
 	Reply(context.Context, string, comments.Author, string) (comments.Comment, error)
@@ -300,7 +301,17 @@ func (s *Server) handleComments(ctx context.Context, conn net.Conn, req protocol
 			resp = protocol.Response{OK: true, Batch: batch}
 		}
 	case protocol.ActionCommentsList:
-		cs, err := store.ListUnfinished(ctx)
+		var cs []comments.Comment
+		var err error
+		if len(req.Filter) > 0 {
+			states := make([]comments.State, len(req.Filter))
+			for i, state := range req.Filter {
+				states[i] = comments.State(state)
+			}
+			cs, err = store.ListStates(ctx, states)
+		} else {
+			cs, err = store.ListUnfinished(ctx)
+		}
 		if err != nil {
 			resp = protocol.Response{OK: false, Error: protocol.ErrCommentStore}
 		} else {

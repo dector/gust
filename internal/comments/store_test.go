@@ -701,3 +701,54 @@ func TestListAndMissing(t *testing.T) {
 		t.Fatalf("list: %v %v", cs, err)
 	}
 }
+
+func TestListStates(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "c")
+	create(t, s, "a")
+	create(t, s, "b")
+	if _, err := s.SubmitOne(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SubmitOne(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil { // claims a
+		t.Fatal(err)
+	}
+	if _, err := s.Review(ctx, "a", "looks good"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NextBatch(ctx); err != nil { // claims b
+		t.Fatal(err)
+	}
+	if _, err := s.MarkDone(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := func(cs []Comment) []string {
+		out := make([]string, len(cs))
+		for i, c := range cs {
+			out[i] = c.ID
+		}
+		return out
+	}
+
+	got, err := s.ListStates(ctx, []State{StateReview, StateDone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Fatalf("review+done = %v", ids(got))
+	}
+	if got, err = s.ListStates(ctx, []State{StateCreated}); err != nil || len(got) != 1 || got[0].ID != "c" {
+		t.Fatalf("created = %v err=%v", ids(got), err)
+	}
+	if got, err = s.ListStates(ctx, []State{StateSubmitted, StateSeen}); err != nil || len(got) != 0 {
+		t.Fatalf("submitted+seen = %v err=%v", ids(got), err)
+	}
+	if got, err = s.ListStates(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty = %v err=%v", ids(got), err)
+	}
+}

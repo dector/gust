@@ -310,6 +310,27 @@ func (s *Store) List(ctx context.Context, state State) ([]Comment, error) {
 	return s.queryComments(ctx, query, args...)
 }
 
+// ListStates returns comments in creation order restricted to the given
+// states. An empty list returns no comments. "all" is expanded by the caller.
+func (s *Store) ListStates(ctx context.Context, states []State) ([]Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	if len(states) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(states))
+	args := make([]any, len(states))
+	for i, state := range states {
+		placeholders[i] = "?"
+		args[i] = state
+	}
+	query := `SELECT ` + columns + ` FROM comments WHERE state IN (` + strings.Join(placeholders, ",") + `) ORDER BY created_at,id`
+	return s.queryComments(ctx, query, args...)
+}
+
 // DeleteDraft removes only a created comment. Submitted work cannot be deleted here.
 func (s *Store) DeleteDraft(ctx context.Context, id string) error {
 	s.mu.Lock()

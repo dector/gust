@@ -22,6 +22,8 @@ Samples:
   gust ctl resume
   gust ctl logs
   gust ctl comments
+  gust ctl comments --filter all
+  gust ctl comments --filter done,review
   gust ctl comments --wait
   gust ctl comments --wait --one
   gust ctl comments --pending
@@ -37,7 +39,10 @@ Comment handoff:
   from that batch; repeat to consume remaining comments at your own pace.
   Output keeps the batch JSON shape with one comment. comments lists all unfinished comments
   (created, submitted, seen, and review). comments --pending lists only seen,
-  unfinished comments for recovery after an interrupted agent. The agent
+  unfinished comments for recovery after an interrupted agent. comments
+  --filter <states> limits the list to the given states (all, or a
+  comma-separated list of created, submitted, seen, review, done); "all"
+  includes resolved threads. The agent
   posts a reply on a seen thread with reply, or posts a reply and marks the
   thread review with review. Only the human resolves a thread, with done.
   reply --human records the reply as a human reply; a human reply to a review

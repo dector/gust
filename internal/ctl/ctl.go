@@ -235,15 +235,73 @@ func printResponse(w io.Writer, verb string, resp protocol.Response) {
 	}
 }
 
+var commentStateNames = []string{"created", "submitted", "seen", "review", "done"}
+
+// parseCommentFilter turns "all" or a comma-separated state list into the
+// concrete states sent to Gust, preserving order and dropping duplicates.
+func parseCommentFilter(value string) ([]string, error) {
+	var states []string
+	added := map[string]bool{}
+	add := func(state string) {
+		if !added[state] {
+			added[state] = true
+			states = append(states, state)
+		}
+	}
+	for _, part := range strings.Split(value, ",") {
+		token := strings.TrimSpace(part)
+		if token == "" {
+			continue
+		}
+		if token == "all" {
+			for _, state := range commentStateNames {
+				add(state)
+			}
+			continue
+		}
+		if !validCommentState(token) {
+			return nil, fmt.Errorf("unknown state %q (valid: all, %s)", token, strings.Join(commentStateNames, ", "))
+		}
+		add(token)
+	}
+	if len(states) == 0 {
+		return nil, fmt.Errorf("--filter needs at least one state")
+	}
+	return states, nil
+}
+
+func validCommentState(state string) bool {
+	for _, name := range commentStateNames {
+		if name == state {
+			return true
+		}
+	}
+	return false
+}
+
 func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (int, bool) {
 	var positional []string
 	socketPath := ""
 	human := false
+	filterValue := ""
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--human":
 			human = true
+		case a == "--filter":
+			if i+1 >= len(args) || args[i+1] == "" {
+				fmt.Fprintln(stderr, "gust ctl: --filter requires a value")
+				return 2, true
+			}
+			filterValue = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--filter="):
+			filterValue = strings.TrimPrefix(a, "--filter=")
+			if filterValue == "" {
+				fmt.Fprintln(stderr, "gust ctl: --filter requires a value")
+				return 2, true
+			}
 		case a == "-S" || a == "--socket":
 			if i+1 >= len(args) || args[i+1] == "" {
 				fmt.Fprintf(stderr, "gust ctl: %s requires a path\n", a)
@@ -265,7 +323,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--pending|--wait [--one]|reply <id> <text> [--human]|review <id> <text>|done <id>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--filter <states>|--pending|--wait [--one]|reply <id> <text> [--human]|review <id> <text>|done <id>]")
 	}
 	var req protocol.Request
 	if len(positional) == 1 {
@@ -292,6 +350,20 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		fmt.Fprintln(stderr, "gust ctl: --human is only valid with comments reply")
 		usage()
 		return 2, true
+	}
+	if filterValue != "" && req.Action != protocol.ActionCommentsList {
+		fmt.Fprintln(stderr, "gust ctl: --filter is only valid with comments")
+		usage()
+		return 2, true
+	}
+	if filterValue != "" {
+		states, err := parseCommentFilter(filterValue)
+		if err != nil {
+			fmt.Fprintf(stderr, "gust ctl: %v\n", err)
+			usage()
+			return 2, true
+		}
+		req.Filter = states
 	}
 	req.Human = human
 	if socketPath == "" {
@@ -352,6 +424,8 @@ Commands:
 
 Comments:
   comments                    list all unfinished comments as JSON
+  comments --filter <states>  list only these states: all or a comma-separated
+                              list of created, submitted, seen, review, done
   comments --pending          list seen unfinished comments as JSON
   comments --wait             wait for oldest batch; marks comments seen
   comments --wait --one       claim one comment from oldest submitted batch

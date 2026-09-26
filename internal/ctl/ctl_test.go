@@ -256,6 +256,54 @@ func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
 			t.Fatalf("pending output %q includes %s", out, unwanted)
 		}
 	}
+
+	// --filter selects explicit states; "all" includes resolved threads.
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--filter", "done")
+	if code != 0 {
+		t.Fatalf("filter done: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(out, done.ID) {
+		t.Fatalf("filter done output %q missing %s", out, done.ID)
+	}
+	for _, unwanted := range []string{created.ID, submitted.ID, seen.ID, review.ID} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("filter done output %q includes %s", out, unwanted)
+		}
+	}
+
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--filter=all")
+	if code != 0 {
+		t.Fatalf("filter all: code=%d stderr=%q", code, stderr)
+	}
+	for _, want := range []string{created.ID, submitted.ID, seen.ID, review.ID, done.ID} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("filter all output %q missing %s", out, want)
+		}
+	}
+
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--filter", "review,done")
+	if code != 0 {
+		t.Fatalf("filter multi: code=%d stderr=%q", code, stderr)
+	}
+	for _, want := range []string{review.ID, done.ID} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("filter multi output %q missing %s", out, want)
+		}
+	}
+	for _, unwanted := range []string{created.ID, submitted.ID, seen.ID} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("filter multi output %q includes %s", out, unwanted)
+		}
+	}
+
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "--filter", "bogus")
+	if code != 2 || !strings.Contains(stderr, "unknown state") {
+		t.Fatalf("filter bogus: code=%d stderr=%q", code, stderr)
+	}
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "--pending", "--filter", "done")
+	if code != 2 || !strings.Contains(stderr, "--filter is only valid") {
+		t.Fatalf("filter pending: code=%d stderr=%q", code, stderr)
+	}
 }
 
 func TestCommentsWaitCancellationDoesNotClaim(t *testing.T) {
