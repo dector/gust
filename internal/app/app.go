@@ -84,16 +84,17 @@ func Run(ctx context.Context, args []string) error {
 
 	var commentStore *comments.Store
 	if cfg.CommentsEnabled {
+		// Comments persist across restarts. dev:self keeps them on tmpfs so its
+		// own rebuilds do not lose them; normal runs use the durable state dir.
+		pathFunc := comments.DurablePath
 		if cfg.SelfDev {
-			// dev:self survives its own rebuilds by keeping comments on tmpfs.
-			path, pathErr := comments.SelfDevPath(cfg.Root)
-			if pathErr != nil {
-				return pathErr
-			}
-			commentStore, err = comments.OpenAt(path)
-		} else {
-			commentStore, err = comments.Open()
+			pathFunc = comments.SelfDevPath
 		}
+		path, pathErr := pathFunc(cfg.Root)
+		if pathErr != nil {
+			return pathErr
+		}
+		commentStore, err = comments.OpenAt(path)
 		if err != nil {
 			return err
 		}

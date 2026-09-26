@@ -1,5 +1,6 @@
-// Package comments provides a store for element comments. It is in-memory by
-// default; dev:self can back it with a tmpfs file so comments survive restarts.
+// Package comments provides a store for element comments. File-backed stores
+// keep comments across restarts: normal runs use a durable per-user state file,
+// while dev:self uses tmpfs so its own rebuilds do not lose comments.
 package comments
 
 import (
@@ -238,6 +239,40 @@ func SelfDevPath(root string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(abs))
 	return filepath.Join(dir, hex.EncodeToString(sum[:])[:32]+".db"), nil
+}
+
+// DurablePath returns the on-disk SQLite path for a project root. It lives in
+// the user's state directory so comments survive reboots, and is keyed by root
+// so each project keeps its own threads.
+func DurablePath(root string) (string, error) {
+	dir, err := durableStateDir()
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return filepath.Join(dir, hex.EncodeToString(sum[:])[:32]+".db"), nil
+}
+
+// durableStateDir returns the per-user directory for persistent Gust state,
+// following XDG_STATE_HOME and defaulting to ~/.local/state/gust.
+func durableStateDir() (string, error) {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	dir := filepath.Join(base, "gust")
+	if err := os.MkdirAll(dir, stateDirMode); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // stateDir returns a per-user directory on RAM-backed storage, preferring

@@ -87,6 +87,37 @@ func TestSelfDevPathIsStablePerRoot(t *testing.T) {
 	}
 }
 
+func TestDurablePathIsStablePerRoot(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	root := t.TempDir()
+	other := t.TempDir()
+	first, err := DurablePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := DurablePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	different, err := DurablePath(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Fatalf("path not stable: %q vs %q", first, again)
+	}
+	if first == different {
+		t.Fatalf("different roots share path %q", first)
+	}
+	if !strings.HasSuffix(first, ".db") {
+		t.Fatalf("path %q lacks .db suffix", first)
+	}
+	if !strings.HasPrefix(first, filepath.Join(state, "gust")) {
+		t.Fatalf("path %q is not under XDG state dir", first)
+	}
+}
+
 func TestCreateSubmitAndTransitions(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

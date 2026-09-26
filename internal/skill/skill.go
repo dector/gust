@@ -16,7 +16,7 @@ description: Process submitted Gust element comments by inspecting the reference
 
 # Work on Gust element comments
 
-Use this workflow when asked to handle comments submitted through Gust's browser panel. Each comment is a thread: a root request plus replies. The CLI posts replies and marks threads review; only the human resolves a thread from the browser. Browser comment creation is available through the injected proxy UI. Comments are held in memory and are lost when the Gust process exits.
+Use this workflow when asked to handle comments submitted through Gust's browser panel. Each comment is a thread: a root request plus replies. The CLI posts replies and marks threads review; only the human resolves a thread from the browser. Browser comment creation is available through the injected proxy UI. Comments persist across restarts in a per-project state file.
 
 ## CLI and recovery
 
@@ -60,7 +60,7 @@ description: Continuously receive and handle submitted Gust element comments unt
 
 In a Go project using Gust as a Go tool, use go tool gust instead of gust for every command below (for example, go tool gust ctl comments --wait). Otherwise use gust on PATH. Run control commands from the directory where Gust was launched; its socket is derived from that directory. Use the same invocation consistently.
 
-Use this when asked to watch or monitor comments. Start immediately; do not ask for setup instructions if the Gust instance is reachable. Only submitted comments reach the wait command. Browser autosubmit is on by default; drafts saved with it off need a manual **Submit**. Comments are lost when Gust exits. Each comment is a thread; only the human resolves a thread.
+Use this when asked to watch or monitor comments. Start immediately; do not ask for setup instructions if the Gust instance is reachable. Only submitted comments reach the wait command. Browser autosubmit is on by default; drafts saved with it off need a manual **Submit**. Comments persist across restarts. Each comment is a thread; only the human resolves a thread.
 
 ## Foreground receive/process loop
 

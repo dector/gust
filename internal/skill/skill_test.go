@@ -18,7 +18,7 @@ description: Process submitted Gust element comments by inspecting the reference
 
 # Work on Gust element comments
 
-Use this workflow when asked to handle comments submitted through Gust's browser panel. Each comment is a thread: a root request plus replies. The CLI posts replies and marks threads review; only the human resolves a thread from the browser. Browser comment creation is available through the injected proxy UI. Comments are held in memory and are lost when the Gust process exits.
+Use this workflow when asked to handle comments submitted through Gust's browser panel. Each comment is a thread: a root request plus replies. The CLI posts replies and marks threads review; only the human resolves a thread from the browser. Browser comment creation is available through the injected proxy UI. Comments persist across restarts in a per-project state file.
 
 ## CLI and recovery
 
@@ -110,7 +110,7 @@ func TestRunCommentsRun(t *testing.T) {
 		"1800-second (30-minute) tool timeout",
 		"exit code 124 is an idle cycle",
 		"A previous child may already have changed the source before interruption",
-		"comments are in Gust's memory and are lost if the Gust process exits or restarts",
+		"Comments persist across restarts in a per-project state file",
 		"Dispatch one worker subagent per thread",
 		"gust ctl comments review <id> <text>",
 		"never call gust ctl comments done",
