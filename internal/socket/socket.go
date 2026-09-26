@@ -44,11 +44,14 @@ type control interface {
 // Server accepts local JSON control requests over a Unix socket.
 type Server struct {
 	path string
+	root string
 	ln   net.Listener
 	log  *logger.Logger
 
-	acceptOnce sync.Once
-	removeOnce sync.Once
+	urlMu        sync.RWMutex
+	tailscaleURL string
+	acceptOnce   sync.Once
+	removeOnce   sync.Once
 }
 
 // Start creates and serves Gust's local control socket.
@@ -64,7 +67,20 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl contr
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{path: path, ln: ln, log: log}
+	root := cfg.Root
+	if root == "" {
+		root, err = os.Getwd()
+		if err != nil {
+			ln.Close()
+			return nil, err
+		}
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	s := &Server{path: path, root: root, ln: ln, log: log}
 	go func() {
 		<-ctx.Done()
 		s.Close()
@@ -92,7 +108,19 @@ func Path(root string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(abs))
 	hash := hex.EncodeToString(sum[:])[:32]
-	return filepath.Join(os.TempDir(), fmt.Sprintf("gust-%d", os.Getuid()), hash+".sock"), nil
+	return filepath.Join(Dir(), hash+".sock"), nil
+}
+
+// Dir is the per-user directory containing Gust control sockets.
+func Dir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("gust-%d", os.Getuid()))
+}
+
+// SetTailscaleURL publishes the URL reported by Tailscale Serve.
+func (s *Server) SetTailscaleURL(url string) {
+	s.urlMu.Lock()
+	s.tailscaleURL = url
+	s.urlMu.Unlock()
 }
 
 // Path returns the socket filesystem path.
@@ -230,14 +258,19 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, ctl control, store c
 			_ = enc.Encode(protocol.Response{OK: false, Error: protocol.ErrShuttingDown})
 			return
 		}
+		s.urlMu.RLock()
+		url := s.tailscaleURL
+		s.urlMu.RUnlock()
 		resp := protocol.Response{
-			OK:         true,
-			State:      string(status.State),
-			PID:        status.PID,
-			AppPort:    status.AppPort,
-			ProxyPort:  status.ProxyPort,
-			Version:    status.Version,
-			AutoReload: autoReloadValue(status.AutoReloadPaused),
+			OK:           true,
+			Root:         s.root,
+			TailscaleURL: url,
+			State:        string(status.State),
+			PID:          status.PID,
+			AppPort:      status.AppPort,
+			ProxyPort:    status.ProxyPort,
+			Version:      status.Version,
+			AutoReload:   autoReloadValue(status.AutoReloadPaused),
 		}
 		if exit := status.Process.LastExit; exit != nil {
 			resp.LastExit = &protocol.ExitSummary{

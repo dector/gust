@@ -200,12 +200,13 @@ func TestStatusRequest(t *testing.T) {
 	defer cancel()
 	server := startTestServer(t, ctx, root, ctl)
 	defer server.Close()
+	server.SetTailscaleURL("https://dev.example.ts.net/")
 
 	resp := requestJSON(t, server.path, map[string]string{"action": "status"})
 	if resp["ok"] != true {
 		t.Fatalf("ok = %v, want true; resp=%v", resp["ok"], resp)
 	}
-	if resp["state"] != "running" || resp["pid"] != float64(123) || resp["app_port"] != float64(8080) || resp["proxy_port"] != float64(5000) || resp["version"] != float64(12) {
+	if resp["state"] != "running" || resp["pid"] != float64(123) || resp["app_port"] != float64(8080) || resp["proxy_port"] != float64(5000) || resp["version"] != float64(12) || resp["root"] != root || resp["tailscale_url"] != "https://dev.example.ts.net/" {
 		t.Fatalf("unexpected status response: %v", resp)
 	}
 }

@@ -61,16 +61,18 @@ type ExitSummary struct {
 // Response is a single control response sent over the socket. Not every field
 // applies to every action; unused fields are omitted.
 type Response struct {
-	OK         bool         `json:"ok"`
-	Error      string       `json:"error,omitempty"`
-	Status     string       `json:"status,omitempty"`
-	State      string       `json:"state,omitempty"`
-	PID        int          `json:"pid,omitempty"`
-	AppPort    int          `json:"app_port,omitempty"`
-	ProxyPort  int          `json:"proxy_port,omitempty"`
-	Version    int          `json:"version,omitempty"`
-	AutoReload string       `json:"auto_reload,omitempty"`
-	LastExit   *ExitSummary `json:"last_exit,omitempty"`
+	OK           bool         `json:"ok"`
+	Error        string       `json:"error,omitempty"`
+	Root         string       `json:"root,omitempty"`
+	TailscaleURL string       `json:"tailscale_url,omitempty"`
+	Status       string       `json:"status,omitempty"`
+	State        string       `json:"state,omitempty"`
+	PID          int          `json:"pid,omitempty"`
+	AppPort      int          `json:"app_port,omitempty"`
+	ProxyPort    int          `json:"proxy_port,omitempty"`
+	Version      int          `json:"version,omitempty"`
+	AutoReload   string       `json:"auto_reload,omitempty"`
+	LastExit     *ExitSummary `json:"last_exit,omitempty"`
 
 	// Fields for the logs action.
 	Code    int    `json:"code,omitempty"`

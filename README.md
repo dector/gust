@@ -112,6 +112,15 @@ does not trigger another rerun. See `docs/before-after.md` for details.
 
 When stdin is a terminal, press `r` to rerun, `s` to pause/resume auto-reload from file watching, `i` to toggle info logs, `D` to toggle browser debug outlines (proxy mode), and `q` or Ctrl-C to quit. Info logs are disabled by default and show the file or directory that triggered a reload. Manual `r` reruns still work while auto-reload is paused. Resuming runs one reload if file changes were missed. Gust also prints its Unix socket path on startup. Agents can send `{"action":"status"}` or `{"action":"rerun"}` as one JSON request per connection.
 
+## Find running instances
+
+Run `gust probe` (or `go tool gust probe`) from any directory to find running
+Gust instances for your user. It scans the shared control-socket directory and
+prints each responsive instance's workdir, state, local URL (proxy URL when
+available), and Tailscale URL when exposure is active. Instances without `-p`
+appear with an unknown local URL. Unreachable/stale sockets are ignored, not
+deleted.
+
 ## Control
 
 Agents and scripts control a running Gust instance with `gust ctl` (or
