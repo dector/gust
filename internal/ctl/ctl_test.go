@@ -175,6 +175,47 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	}
 }
 
+func TestCommentsSeenClaimsSubmittedThread(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	c, err := store.Create(ctx, comments.Input{Path: "/", Text: "fix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitOne(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	serverCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	server, err := socket.Start(serverCtx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "seen", c.ID)
+	if code != 0 || !strings.Contains(out, `"state":"seen"`) || !strings.Contains(out, `"id":"`+c.ID+`"`) {
+		t.Fatalf("seen: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", c.ID)
+	if code != 0 || !strings.Contains(out, `"state":"seen"`) {
+		t.Fatalf("seen again: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	draft, _ := store.Create(ctx, comments.Input{Path: "/", Text: "draft"})
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", draft.ID)
+	if code != 1 || !strings.Contains(stderr, "invalid_comment_state") {
+		t.Fatalf("draft seen: code=%d stderr=%q", code, stderr)
+	}
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", "missing")
+	if code != 1 || !strings.Contains(stderr, "comment_not_found") {
+		t.Fatalf("missing seen: code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestCommentsDefaultListsAllUnfinishedAndPendingOnlySeen(t *testing.T) {
 	store, err := comments.Open()
 	if err != nil {

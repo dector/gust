@@ -29,6 +29,7 @@ Use the actual control CLI:
 - §gust ctl comments§ lists all unfinished comments (created, submitted, seen, and review) as JSON. Use --filter <states> to list specific states (all, or a comma-separated list of created, submitted, seen, review, done; all includes resolved threads).
 - §gust ctl comments --pending§ lists only seen, unfinished comments for recovery after an interrupted agent.
 - §gust ctl comments --wait§ waits for the oldest submitted batch. It returns that batch and atomically marks its comments seen. It does not merge batches.
+- §gust ctl comments seen <id>§ claims one submitted thread seen without waiting for a batch.
 - §gust ctl comments reply <id> <text>§ posts an agent reply on a seen thread and keeps it seen. Add --human to record the reply as a human reply; a human reply to a review thread reopens it as submitted.
 - §gust ctl comments review <id> <text>§ posts an agent reply and marks the thread review.
 - §gust ctl comments done <id>§ resolves a thread. This is a human action; agents must not call it.

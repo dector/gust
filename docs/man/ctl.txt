@@ -30,6 +30,7 @@ Samples:
   gust ctl comments --wait
   gust ctl comments --wait --one
   gust ctl comments --pending
+  gust ctl comments seen <id>
   gust ctl comments reply <id> <text>
   gust ctl comments reply <id> <text> --human
   gust ctl comments review <id> <text>
@@ -40,17 +41,18 @@ Comment handoff:
   comments --wait blocks for the oldest submitted batch and marks its
   comments seen. With --one it claims only the oldest submitted comment
   from that batch; repeat to consume remaining comments at your own pace.
-  Output keeps the batch JSON shape with one comment. comments lists all unfinished comments
-  (created, submitted, seen, and review). comments --pending lists only seen,
-  unfinished comments for recovery after an interrupted agent. comments
-  --filter <states> limits the list to the given states (all, or a
-  comma-separated list of created, submitted, seen, review, done); "all"
-  includes resolved threads. The agent
+  Output keeps the batch JSON shape with one comment. comments seen <id>
+  claims one submitted thread without waiting for a batch. comments lists all
+  unfinished comments (created, submitted, seen, and review). comments
+  --pending lists only seen, unfinished comments for recovery after an
+  interrupted agent. comments --filter <states> limits the list to the given
+  states (all, or a comma-separated list of created, submitted, seen, review,
+  done); "all" includes resolved threads. The agent
   posts a reply on a seen thread with reply, or posts a reply and marks the
   thread review with review. Only the human resolves a thread, with done.
   reply --human records the reply as a human reply; a human reply to a review
   thread reopens it as submitted for the agent.
-  Comments exist only while the Gust process runs.
+  Comments persist across restarts in a per-project state file.
 
 Typical agent flow:
   gust ctl pause        # stop filesystem-triggered reloads

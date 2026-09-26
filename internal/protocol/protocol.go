@@ -15,6 +15,7 @@ const (
 	ActionCommentsWait    Action = "comments_wait"
 	ActionCommentsList    Action = "comments_list"
 	ActionCommentsPending Action = "comments_pending"
+	ActionCommentsSeen    Action = "comments_seen"
 	ActionCommentsReply   Action = "comments_reply"
 	ActionCommentsReview  Action = "comments_review"
 	ActionCommentsDone    Action = "comments_done"

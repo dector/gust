@@ -331,7 +331,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--filter <states>|--pending|--wait [--one]|reply <id> <text> [--human]|review <id> <text>|done <id>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--filter <states>|--pending|--wait [--one]|seen <id>|reply <id> <text> [--human]|review <id> <text>|done <id>]")
 	}
 	var req protocol.Request
 	if len(positional) == 1 {
@@ -343,6 +343,8 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 	} else if len(positional) == 3 && ((positional[1] == "--wait" && positional[2] == "--one") || (positional[1] == "--one" && positional[2] == "--wait")) {
 		req.Action = protocol.ActionCommentsWait
 		req.One = true
+	} else if len(positional) == 3 && positional[1] == "seen" && positional[2] != "" {
+		req.Action, req.ID = protocol.ActionCommentsSeen, positional[2]
 	} else if len(positional) == 3 && positional[1] == "done" && positional[2] != "" {
 		req.Action, req.ID = protocol.ActionCommentsDone, positional[2]
 	} else if len(positional) == 4 && positional[1] == "reply" && positional[2] != "" && strings.TrimSpace(positional[3]) != "" {
@@ -438,6 +440,7 @@ Comments:
   comments --pending          list seen unfinished comments as JSON
   comments --wait             wait for oldest batch; marks comments seen
   comments --wait --one       claim one comment from oldest submitted batch
+  comments seen <id>          mark a submitted thread seen (claim it)
   comments reply <id> <text>  post an agent reply on a seen thread
   comments reply <id> <text> --human
                               post a human reply; a human reply to a review

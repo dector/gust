@@ -542,6 +542,36 @@ func (s *Store) finish(ctx context.Context, id string) (Comment, error) {
 	return s.getLocked(ctx, id)
 }
 
+// MarkSeen claims a submitted thread for an agent. Claiming an already seen
+// thread is a no-op; other states are rejected.
+func (s *Store) MarkSeen(ctx context.Context, id string) (Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return Comment{}, err
+	}
+	var state State
+	if err := s.db.QueryRowContext(ctx, `SELECT state FROM comments WHERE id=?`, id).Scan(&state); err != nil {
+		if err == sql.ErrNoRows {
+			return Comment{}, ErrNotFound
+		}
+		return Comment{}, err
+	}
+	switch state {
+	case StateSeen:
+		return s.getLocked(ctx, id)
+	case StateSubmitted:
+	default:
+		return Comment{}, fmt.Errorf("%w: cannot mark comment in %q seen", ErrInvalidState, state)
+	}
+	now := stamp(time.Now().UTC())
+	if _, err := s.db.ExecContext(ctx, `UPDATE comments SET state='seen',seen_at=?,updated_at=? WHERE id=? AND state='submitted'`, now, now, id); err != nil {
+		return Comment{}, err
+	}
+	s.signalLocked()
+	return s.getLocked(ctx, id)
+}
+
 // Reply appends a message from author to the thread. A human reply to a review
 // thread reopens it as submitted and creates a fresh batch for the agent inbox.
 func (s *Store) Reply(ctx context.Context, id string, author Author, text string) (Comment, error) {

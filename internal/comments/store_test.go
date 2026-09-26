@@ -118,6 +118,33 @@ func TestDurablePathIsStablePerRoot(t *testing.T) {
 	}
 }
 
+func TestMarkSeenClaimsSubmittedThread(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	c := create(t, s, "one")
+	if _, err := s.SubmitOne(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MarkSeen(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateSeen || got.SeenAt.IsZero() {
+		t.Fatalf("seen comment = %+v", got)
+	}
+	again, err := s.MarkSeen(ctx, c.ID)
+	if err != nil || again.State != StateSeen {
+		t.Fatalf("second MarkSeen = %+v, err = %v", again, err)
+	}
+	draft := create(t, s, "draft")
+	if _, err := s.MarkSeen(ctx, draft.ID); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("draft MarkSeen error = %v, want ErrInvalidState", err)
+	}
+	if _, err := s.MarkSeen(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing MarkSeen error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreateSubmitAndTransitions(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
