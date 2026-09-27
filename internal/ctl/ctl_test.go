@@ -3,6 +3,7 @@ package ctl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/dector/gust/internal/config"
 	"github.com/dector/gust/internal/coordinator"
 	"github.com/dector/gust/internal/socket"
+	"gopkg.in/yaml.v3"
 )
 
 type fakeControl struct {
@@ -75,6 +77,100 @@ func TestProbeCommand(t *testing.T) {
 	}
 }
 
+func TestCommentOutputFormats(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	c, err := store.Create(ctx, comments.Input{Path: "/", Text: "yes: no\nsecond line", HTML: "<b>hi</b>"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := socket.Start(ctx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments")
+	if code != 0 || stderr != "" || strings.HasPrefix(out, "[") {
+		t.Fatalf("default: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	var list []map[string]any
+	if err := yaml.Unmarshal([]byte(out), &list); err != nil || len(list) != 1 || list[0]["text"] != c.Text || list[0]["html"] != c.HTML {
+		t.Fatalf("YAML list: %q, parsed=%v err=%v", out, list, err)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--json")
+	if code != 0 || stderr != "" || json.Unmarshal([]byte(out), &list) != nil || !strings.HasPrefix(out, "[") {
+		t.Fatalf("JSON list: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", c.ID)
+	if code != 1 || !strings.Contains(stderr, "invalid_comment_state") {
+		t.Fatalf("seen draft: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	if _, err := store.SubmitOne(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", c.ID)
+	var item map[string]any
+	if code != 0 || yaml.Unmarshal([]byte(out), &item) != nil || item["state"] != "seen" {
+		t.Fatalf("YAML mutation: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "watch", "--since=0")
+	if code != 0 || yaml.Unmarshal([]byte(out), &item) != nil || item["comments"] == nil || item["cursor"] == nil {
+		t.Fatalf("YAML watch: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	var buf bytes.Buffer
+	if err := printCommentValue(&buf, map[string]any{"cursor": int64(9007199254740993)}, false); err != nil || !strings.Contains(buf.String(), "9007199254740993") {
+		t.Fatalf("large cursor: %q err=%v", buf.String(), err)
+	}
+}
+
+func TestCommentsWaitPeekDoesNotClaim(t *testing.T) {
+	store, err := comments.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	first, _ := store.Create(ctx, comments.Input{Path: "/", Text: "first"})
+	second, _ := store.Create(ctx, comments.Input{Path: "/", Text: "second"})
+	_, err = store.SubmitCreated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := socket.Start(ctx, config.Config{Root: t.TempDir()}, nil, &fakeControl{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	for i := 0; i < 2; i++ {
+		code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait", "--peek", "--one", "--json")
+		if code != 0 || stderr != "" || !strings.Contains(out, `"id":"`+first.ID+`"`) || strings.Contains(out, second.ID) || !strings.Contains(out, `"state":"submitted"`) {
+			t.Fatalf("peek one: code=%d out=%q stderr=%q", code, out, stderr)
+		}
+	}
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait", "--peek", "--json")
+	if code != 0 || !strings.Contains(out, first.ID) || !strings.Contains(out, second.ID) || !strings.Contains(out, `"state":"submitted"`) {
+		t.Fatalf("peek batch: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--pending", "--json")
+	if code != 0 || out != "[]\n" {
+		t.Fatalf("pending after peek: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "--wait", "--json")
+	if code != 0 || !strings.Contains(out, first.ID) || !strings.Contains(out, second.ID) || !strings.Contains(out, `"state":"seen"`) {
+		t.Fatalf("claim after peek: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+	code, _, stderr = runCtl(t, "-S", server.Path(), "comments", "--peek")
+	if code != 2 || !strings.Contains(stderr, "--peek is only valid") {
+		t.Fatalf("bare peek: code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestCommentsWaitOne(t *testing.T) {
 	store, err := comments.Open()
 	if err != nil {
@@ -96,7 +192,7 @@ func TestCommentsWaitOne(t *testing.T) {
 	}
 	defer server.Close()
 	for _, id := range []string{first.ID, second.ID} {
-		code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait", "--one")
+		code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait", "--one", "--json")
 		if code != 0 || !strings.Contains(out, `"id":"`+batch.ID+`"`) || !strings.Contains(out, `"id":"`+id+`"`) || strings.Contains(out, `"id":"`+map[string]string{first.ID: second.ID, second.ID: first.ID}[id]+`"`) {
 			t.Fatalf("one: code=%d out=%q stderr=%q", code, out, stderr)
 		}
@@ -135,7 +231,7 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	}
 	defer server.Close()
 
-	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait")
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "--wait", "--json")
 	if code != 0 {
 		t.Fatalf("wait: code=%d stderr=%q", code, stderr)
 	}
@@ -149,19 +245,19 @@ func TestCommentsCommandsAndRecovery(t *testing.T) {
 	if !strings.Contains(out, c1.ID) || !strings.Contains(out, c2.ID) {
 		t.Fatalf("pending output: %s", out)
 	}
-	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c1.ID, "working on it")
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c1.ID, "working on it", "--json")
 	if code != 0 || !strings.Contains(out, `"state":"seen"`) || !strings.Contains(out, `"author":"agent"`) {
 		t.Fatalf("reply: code=%d out=%q stderr=%q", code, out, stderr)
 	}
-	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "review", c2.ID, "please verify")
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "review", c2.ID, "please verify", "--json")
 	if code != 0 || !strings.Contains(out, `"state":"review"`) || !strings.Contains(out, "please verify") {
 		t.Fatalf("review: code=%d out=%q stderr=%q", code, out, stderr)
 	}
-	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c2.ID, "make it blue", "--human")
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "reply", c2.ID, "make it blue", "--human", "--json")
 	if code != 0 || !strings.Contains(out, `"author":"human"`) || !strings.Contains(out, `"state":"submitted"`) {
 		t.Fatalf("human reply: code=%d out=%q stderr=%q", code, out, stderr)
 	}
-	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "done", c1.ID)
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "done", c1.ID, "--json")
 	if code != 0 || !strings.Contains(out, `"state":"done"`) {
 		t.Fatalf("done: code=%d out=%q stderr=%q", code, out, stderr)
 	}
@@ -197,7 +293,7 @@ func TestCommentsWatchSnapshot(t *testing.T) {
 	}
 	defer server.Close()
 
-	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "watch", "--since", "0")
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "watch", "--since", "0", "--json")
 	if code != 0 || !strings.Contains(out, `"cursor":`) || !strings.Contains(out, c.ID) || !strings.Contains(out, `"state":"submitted"`) {
 		t.Fatalf("watch: code=%d out=%q stderr=%q", code, out, stderr)
 	}
@@ -233,11 +329,11 @@ func TestCommentsSeenClaimsSubmittedThread(t *testing.T) {
 	}
 	defer server.Close()
 
-	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "seen", c.ID)
+	code, out, stderr := runCtl(t, "-S", server.Path(), "comments", "seen", c.ID, "--json")
 	if code != 0 || !strings.Contains(out, `"state":"seen"`) || !strings.Contains(out, `"id":"`+c.ID+`"`) {
 		t.Fatalf("seen: code=%d out=%q stderr=%q", code, out, stderr)
 	}
-	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", c.ID)
+	code, out, stderr = runCtl(t, "-S", server.Path(), "comments", "seen", c.ID, "--json")
 	if code != 0 || !strings.Contains(out, `"state":"seen"`) {
 		t.Fatalf("seen again: code=%d out=%q stderr=%q", code, out, stderr)
 	}

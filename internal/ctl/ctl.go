@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/dector/gust/internal/probe"
 	"github.com/dector/gust/internal/protocol"
@@ -292,6 +295,8 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 	var positional []string
 	socketPath := ""
 	human := false
+	jsonOutput := false
+	peek := false
 	filterValue := ""
 	since := int64(0)
 	sinceSet := false
@@ -300,6 +305,10 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		switch {
 		case a == "--human":
 			human = true
+		case a == "--json":
+			jsonOutput = true
+		case a == "--peek":
+			peek = true
 		case a == "--filter":
 			if i+1 >= len(args) || args[i+1] == "" {
 				fmt.Fprintln(stderr, "gust ctl: --filter requires a value")
@@ -355,7 +364,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		return 0, false
 	}
 	usage := func() {
-		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--filter <states>|--pending|--wait [--one]|watch [--since <n>]|seen <id>|reply <id> <text> [--human]|review <id> <text>|done <id>]")
+		fmt.Fprintln(stderr, "Usage: gust ctl [-S <socket>] comments [--json] [--filter <states>|--pending|--wait [--one] [--peek]|watch [--since <n>]|seen <id>|reply <id> <text> [--human]|review <id> <text>|done <id>]")
 	}
 	var req protocol.Request
 	if len(positional) == 1 {
@@ -380,6 +389,11 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		req.Action, req.ID, req.Text = protocol.ActionCommentsReview, positional[2], positional[3]
 	} else {
 		fmt.Fprintln(stderr, "gust ctl: invalid comments command")
+		usage()
+		return 2, true
+	}
+	if peek && req.Action != protocol.ActionCommentsWait {
+		fmt.Fprintln(stderr, "gust ctl: --peek is only valid with comments --wait")
 		usage()
 		return 2, true
 	}
@@ -408,6 +422,7 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 		req.Filter = states
 	}
 	req.Human = human
+	req.Peek = peek
 	if socketPath == "" {
 		var err error
 		socketPath, err = socket.Path("")
@@ -442,13 +457,68 @@ func runComments(ctx context.Context, args []string, stdout, stderr io.Writer) (
 	default:
 		value = resp.Comment
 	}
-	enc := json.NewEncoder(stdout)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value); err != nil {
+	if err := printCommentValue(stdout, value, jsonOutput); err != nil {
 		fmt.Fprintf(stderr, "gust ctl: %v\n", err)
 		return 1, true
 	}
 	return 0, true
+}
+
+// printCommentValue uses the JSON representation as the source of truth for
+// field names and omitempty behavior in both output formats.
+func printCommentValue(w io.Writer, value any, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		return enc.Encode(value)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	var decoded any
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	return yaml.NewEncoder(w).Encode(yamlValue(decoded))
+}
+
+// yamlValue preserves integer values (including watch cursors) and treats
+// user-authored strings as strings, even when they resemble YAML scalars.
+func yamlValue(v any) *yaml.Node {
+	switch x := v.(type) {
+	case map[string]any:
+		n := &yaml.Node{Kind: yaml.MappingNode}
+		keys := make([]string, 0, len(x))
+		for key := range x {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			n.Content = append(n.Content, yamlValue(key), yamlValue(x[key]))
+		}
+		return n
+	case []any:
+		n := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, item := range x {
+			n.Content = append(n.Content, yamlValue(item))
+		}
+		return n
+	case json.Number:
+		tag := "!!int"
+		if strings.ContainsAny(string(x), ".eE") {
+			tag = "!!float"
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: string(x)}
+	case string:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: x}
+	case bool:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(x)}
+	default:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}
+	}
 }
 
 func printHelp(w io.Writer) {
@@ -468,15 +538,19 @@ Commands:
   help      show this help
 
 Comments:
-  comments                    list all unfinished comments as JSON
+  comments                    list all unfinished comments (YAML-like by default)
+  comments --json             output JSON instead (works with all comments commands)
   comments --filter <states>  list only these states: all or a comma-separated
                               list of created, submitted, seen, review, done
-  comments --pending          list seen unfinished comments as JSON
+  comments --pending          list seen unfinished comments
   comments --wait             wait for oldest batch; marks comments seen
   comments --wait --one       claim one comment from oldest submitted batch
+  comments --wait --peek      view oldest submitted batch without marking seen
+  comments --wait --one --peek
+                              view only its oldest submitted comment
   comments watch [--since <n>]
                               block until a thread changes, then print the
-                              full snapshot and cursor as JSON (no claim)
+                              full snapshot and cursor (no claim)
   comments seen <id>          mark a submitted thread seen (claim it)
   comments reply <id> <text>  post an agent reply on a seen thread
   comments reply <id> <text> --human

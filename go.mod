@@ -8,6 +8,7 @@ require (
 	github.com/dector/serv v0.8.4-0.20260923002515-7a5ec94db582
 	github.com/fsnotify/fsnotify v1.9.0
 	golang.org/x/sys v0.47.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
 )
 

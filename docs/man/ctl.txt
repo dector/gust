@@ -25,10 +25,13 @@ Samples:
   gust ctl resume
   gust ctl logs
   gust ctl comments
+  gust ctl comments --json
   gust ctl comments --filter all
   gust ctl comments --filter done,review
   gust ctl comments --wait
   gust ctl comments --wait --one
+  gust ctl comments --wait --peek
+  gust ctl comments --wait --one --peek
   gust ctl comments --pending
   gust ctl comments watch --since 0
   gust ctl comments seen <id>
@@ -42,7 +45,9 @@ Comment handoff:
   comments --wait blocks for the oldest submitted batch and marks its
   comments seen. With --one it claims only the oldest submitted comment
   from that batch; repeat to consume remaining comments at your own pace.
-  Output keeps the batch JSON shape with one comment. comments seen <id>
+  Add --peek to --wait (with or without --one) to read without marking seen.
+  Output keeps the batch shape with one comment. Comment commands print
+  YAML-like output by default; pass --json for JSON. comments seen <id>
   claims one submitted thread without waiting for a batch. comments watch
   blocks until any thread changes and prints the full snapshot plus a cursor
   without claiming anything; pass the previous cursor with --since. comments

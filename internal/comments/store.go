@@ -464,16 +464,26 @@ func (s *Store) submit(ctx context.Context, id string) (Batch, error) {
 // NextBatch waits for and atomically claims the oldest submitted batch. Claiming
 // changes its comments to seen; cancellation does not change any state.
 func (s *Store) NextBatch(ctx context.Context) (Batch, error) {
-	return s.next(ctx, false)
+	return s.next(ctx, false, false)
 }
 
 // NextOne waits for and atomically claims one submitted comment from the oldest
 // batch with pending work. Other comments in that batch stay submitted.
 func (s *Store) NextOne(ctx context.Context) (Batch, error) {
-	return s.next(ctx, true)
+	return s.next(ctx, true, false)
 }
 
-func (s *Store) next(ctx context.Context, one bool) (Batch, error) {
+// PeekBatch waits for the oldest submitted batch without claiming its comments.
+func (s *Store) PeekBatch(ctx context.Context) (Batch, error) {
+	return s.next(ctx, false, true)
+}
+
+// PeekOne waits for the oldest submitted comment without claiming it.
+func (s *Store) PeekOne(ctx context.Context) (Batch, error) {
+	return s.next(ctx, true, true)
+}
+
+func (s *Store) next(ctx context.Context, one, peek bool) (Batch, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return Batch{}, err
@@ -483,7 +493,7 @@ func (s *Store) next(ctx context.Context, one bool) (Batch, error) {
 			s.mu.Unlock()
 			return Batch{}, err
 		}
-		batch, found, err := s.claimOldest(ctx, one)
+		batch, found, err := s.claimOldest(ctx, one, peek)
 		wait := s.changed
 		s.mu.Unlock()
 		if err != nil {
@@ -705,7 +715,7 @@ func (s *Store) Review(ctx context.Context, id, text string) (Comment, error) {
 	return s.getLocked(ctx, id)
 }
 
-func (s *Store) claimOldest(ctx context.Context, one bool) (Batch, bool, error) {
+func (s *Store) claimOldest(ctx context.Context, one, peek bool) (Batch, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Batch{}, false, err
@@ -721,6 +731,14 @@ func (s *Store) claimOldest(ctx context.Context, one bool) (Batch, bool, error) 
 		return Batch{}, false, err
 	}
 	b.SubmittedAt = fromStamp(ts)
+	if peek {
+		query := `SELECT ` + columns + ` FROM comments WHERE batch_id=? AND state='submitted' ORDER BY created_at,id`
+		if one {
+			query += ` LIMIT 1`
+		}
+		b.Comments, err = queryClaimed(ctx, tx, query, b.ID)
+		return b, err == nil, err
+	}
 	now := stamp(time.Now().UTC())
 	if one {
 		var id string

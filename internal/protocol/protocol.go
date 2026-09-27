@@ -46,6 +46,8 @@ type Request struct {
 	ID     string `json:"id,omitempty"`
 	Text   string `json:"text,omitempty"`
 	One    bool   `json:"one,omitempty"`
+	// Peek reads a waiting batch without claiming its submitted comments.
+	Peek bool `json:"peek,omitempty"`
 	// Human records a comments_reply as a human reply instead of an agent one.
 	Human bool `json:"human,omitempty"`
 	// Filter restricts comments_list to these states; empty keeps the default
