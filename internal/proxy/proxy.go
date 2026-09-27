@@ -632,6 +632,7 @@ const gustMarkSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"
 const commentIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/></svg>';
 const commentAddIconSvg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M12 9v6"/><path d="M9 12h6"/></svg>';
 const commentTargetIconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><line x1="128" y1="128" x2="224" y2="32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M195.88,60.12a95.88,95.88,0,1,0,18.77,26.49" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M161.94,94.06a48,48,0,1,0,14,31.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
+const commentOtherURLIconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><path d="M141.38,64.68l11-11a46.62,46.62,0,0,1,65.94,0h0a46.62,46.62,0,0,1,0,65.94L193.94,144,183.6,154.34a46.63,46.63,0,0,1-66-.05h0A46.48,46.48,0,0,1,104,120.06" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M114.62,191.32l-11,11a46.63,46.63,0,0,1-66-.05h0a46.63,46.63,0,0,1,.06-65.89L72.4,101.66a46.62,46.62,0,0,1,65.94,0h0A46.45,46.45,0,0,1,152,135.94" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>'; 
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
 const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))+"') 2 21, pointer";
 const gustAppPort = %d;
@@ -811,6 +812,7 @@ function renderPath(){
 }
 function scheduleRenderPath(){if(pathFrame)return;pathFrame=requestAnimationFrame(renderPath);}
 function parseLocator(c){ try { return JSON.parse(c.locator); } catch (_) { return null; } }
+function commentSelector(c){const locator=parseLocator(c);return locator&&locator.selector||"(selector unavailable)";}
 function matchingElement(c){
   const l=parseLocator(c); if(!l||!l.selector||l.confidence!=="high"||l.matches!==1)return null;
   let matches; try{matches=document.querySelectorAll(l.selector);}catch(_){return null;}
@@ -912,7 +914,7 @@ function formatMessageTime(value){
 function commentStateLabel(state){return {created:"Draft",submitted:"Submitted",seen:"In progress",review:"Review"}[state]||state||"Unknown";}
 function renderCommentTarget(container,target){
   const icon=document.createElement("span");icon.className="__gust_popover_path_icon";icon.setAttribute("aria-hidden","true");icon.innerHTML=commentTargetIconSvg;
-  const text=document.createElement("span");text.className="__gust_popover_path_text";text.textContent=target||"/";
+  const text=document.createElement("span");text.className="__gust_popover_path_text";text.textContent=target||"(selector unavailable)";
   container.replaceChildren(icon,text);
 }
 function commentPopoverEl(){
@@ -1056,12 +1058,12 @@ function renderPopoverReplies(c){
 function renderCommentPopover(){
   if(!popoverCommentId)return;
   const c=commentState.find(function(x){return x.id===popoverCommentId;});
-  if(!c||c.state==="done"){closeCommentPopover();return;}
+  if(!c||c.state==="done"||c.path!==location.pathname){closeCommentPopover();return;}
   const pop=commentPopoverEl();
   pop.hidden=false;
   const onPage=c.path===location.pathname;
   const found=onPage&&!!matchingElement(c);
-  const key=[c.id,c.state,c.text||"",c.path||"/",onPage,found,popoverDeletePending,popoverReplyPending,popoverResolvePending,popoverActionError,popoverReplyDraft,JSON.stringify(c.messages||[])].join("\u0000");
+  const key=[c.id,c.state,c.text||"",c.path||"/",c.locator||"",onPage,found,popoverDeletePending,popoverReplyPending,popoverResolvePending,popoverActionError,popoverReplyDraft,JSON.stringify(c.messages||[])].join("\u0000");
   // Skip repainting when nothing the panel shows has changed; this is what keeps
   // focus, scroll, and in-flight Reply/Resolve/Remove state stable across polls.
   // The pin may still have moved, so keep the (cheap) position in sync.
@@ -1071,7 +1073,7 @@ function renderCommentPopover(){
   parts.badge.className="__gust_popover_badge __gust_popover_badge_"+c.state;
   parts.badge.textContent=commentStateLabel(c.state);
   parts.text.textContent=(c.text||"").trim()||"(empty comment)";
-  renderCommentTarget(parts.path,c.path||"/");
+  renderCommentTarget(parts.path,commentSelector(c));parts.path.title=commentSelector(c);
   parts.missing.hidden=!(onPage&&!found);
   parts.locate.hidden=!found;
   parts.remove.hidden=c.state!=="created";
@@ -1089,6 +1091,7 @@ function renderCommentPopover(){
   positionCommentPopover();
 }
 function openCommentPopover(id){
+  if(!commentState.some(function(c){return c.id===id&&c.path===location.pathname;}))return;
   if(popoverCommentId===id&&commentPopover&&!commentPopover.hidden){closeCommentPopover();return;}
   const pin=pinOverlay&&Array.from(pinOverlay.children).find(function(p){return p.dataset.commentId===id;});
   if(pin){const r=pin.getBoundingClientRect();popoverAnchor={left:r.left,right:r.right,top:r.top,bottom:r.bottom};}
@@ -1120,7 +1123,10 @@ function renderCommentState(){
     const badge=document.createElement("span");badge.className="__gust_comment_badge __gust_comment_badge_"+c.state;badge.textContent=stateLabel;
     if(c.state==="seen"){const spinner=document.createElement("span");spinner.className="__gust_comment_spinner";spinner.setAttribute("aria-hidden","true");meta.appendChild(spinner);}
     meta.appendChild(badge);
-    const path=document.createElement("span");path.className="__gust_comment_path";path.textContent=c.path||"/";meta.appendChild(path);
+    const path=document.createElement("span");path.className="__gust_comment_path";
+    if(onPage){path.textContent=commentSelector(c);path.title=commentSelector(c);}
+    else {path.classList.add("__gust_comment_other_url");const icon=document.createElement("span");icon.className="__gust_comment_url_icon";icon.setAttribute("aria-hidden","true");icon.innerHTML=commentOtherURLIconSvg;path.append(icon,document.createTextNode("Another URL: "+(c.path||"/")));path.title="Another URL: "+(c.path||"/");}
+    meta.appendChild(path);
     if(onPage&&!locationFound){const missing=document.createElement("span");missing.className="__gust_comment_missing";missing.textContent="Not found";meta.appendChild(missing);}
     open.title=onPage?(locationFound?"Show on page":"Location not found on this page"):"Comment on another page";
     open.appendChild(meta);
@@ -1178,7 +1184,7 @@ function updateCommentUI(){
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
   const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click selects any element, Gust's own UI included)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click selects any element, Gust's own UI included)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);[commentBubble].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle)modeTitle.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
-  const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen)updateEditorPosition();}
+  const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen){const target=editor.querySelector("[data-editor-target]");if(target){const selector=locatorFor(selectedElement,selectedPoint);const locator=JSON.parse(selector);renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";}updateEditorPosition();}}
   scheduleRenderPath();
 }
 function closeCommentMode(){selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
@@ -1280,6 +1286,7 @@ function createCommentUI(){
   const pollError=document.createElement("div");pollError.dataset.pollError="";
   const list=document.createElement("div");list.dataset.comments="";
   const editor=document.createElement("div");editor.id="__gust_comment_editor";editor.dataset.editor="";editor.dataset.gustOverlay="";editor.hidden=true;
+  const target=document.createElement("div");target.className="__gust_popover_path __gust_editor_target";target.dataset.editorTarget="";
   const textarea=document.createElement("textarea");textarea.placeholder="Describe this element";textarea.maxLength=8192;
   const close=document.createElement("button");close.type="button";close.textContent="×";close.setAttribute("aria-label","Close comment editor");close.addEventListener("click",function(){textarea.value="";result.textContent="";resumeSelection();});
   const save=document.createElement("button");save.type="button";save.textContent="Save comment";
@@ -1304,10 +1311,14 @@ function createCommentUI(){
   });
   const title=document.createElement("strong");title.textContent="Add a comment";
   const hint=document.createElement("small");hint.textContent="Ctrl+Enter to save";
-  editor.append(close,title,textarea,save,hint,result);
+  editor.append(close,title,target,textarea,save,hint,result);
   const editorStyle=document.createElement("style");editorStyle.textContent=
     '#__gust_comment_editor{position:fixed;display:none;z-index:2147483647;width:min(320px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:16px;background:#1c1c1c;color:#fafafa;border:1px solid #555;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:13px/1.5 system-ui,sans-serif}'+
     '#__gust_comment_editor strong{display:block;margin:0 28px 12px 0;font-size:14px;font-weight:600}'+
+    '#__gust_comment_editor .__gust_editor_target{display:flex;align-items:center;gap:5px;min-width:0;margin:0 0 12px;color:#e0cfba;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;direction:ltr;text-align:left}'+
+    '#__gust_comment_editor .__gust_popover_path_icon{display:inline-flex;flex:none;width:14px;height:14px}'+
+    '#__gust_comment_editor .__gust_popover_path_icon svg{display:block;width:100%%;height:100%%}'+
+    '#__gust_comment_editor .__gust_popover_path_text{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}'+
     '#__gust_comment_editor textarea{display:block;box-sizing:border-box;width:100%%;min-height:100px;resize:vertical;margin:0 0 12px;padding:10px 12px;background:#262626;color:#fafafa;border:1px solid #555;border-radius:8px;outline:none;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}'+
     '#__gust_comment_editor textarea:focus{border-color:#f59e0b;box-shadow:0 0 0 2px #f59e0b33}'+
     '#__gust_comment_editor button{cursor:pointer;font:inherit}'+
@@ -1607,8 +1618,11 @@ function mountIcon(){
 #__gust_comments .__gust_comment_row_seen{border-left-color:#a38ac8}
 #__gust_comments .__gust_comment_text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;white-space:normal}
 #__gust_comments .__gust_comment_meta{display:flex;align-items:center;gap:6px;min-width:0;margin-top:6px;color:#888;font-size:10px;line-height:1.3}
+#__gust_comments .__gust_comment_url_icon{display:inline-flex;vertical-align:middle;width:14px;height:14px;margin-right:4px;color:#e0cfba}
+#__gust_comments .__gust_comment_url_icon svg{display:block;width:100%%;height:100%%}
 #__gust_comments .__gust_comment_badge{flex:none;font-size:10px;font-weight:600}
 #__gust_comments .__gust_comment_path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+#__gust_comments .__gust_comment_other_url{direction:ltr}
 #__gust_comments .__gust_comment_missing{flex:none;color:#d2a174}
 #__gust_comments .__gust_comment_spinner{flex:none;width:7px;height:7px;margin:0;border-width:1.5px;vertical-align:middle}
 #__gust_comments .__gust_remove_draft{align-self:center;margin:0 8px 0 0;padding:2px 5px;border:0;border-radius:5px;background:transparent;color:#888;font-size:18px;line-height:1}

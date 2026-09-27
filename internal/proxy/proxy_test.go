@@ -1823,7 +1823,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`spinner.setAttribute("aria-hidden","true")`,
 		`animation:__gust_comment_spin .9s linear infinite`,
 		`prefers-reduced-motion:reduce`,
-		`editor.append(close,title,textarea,save,hint,result)`,
+		`editor.append(close,title,target,textarea,save,hint,result)`,
 		`replace(/\s+/g," ")`,
 		`Comment sync failed: `,
 		`open.title=onPage?`,
@@ -1894,7 +1894,7 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		`if(!popoverCommentId||!commentPopover||commentPopover.hidden)return;`,
 		// The panel survives created -> submitted -> seen -> review and only
 		// closes when the comment is resolved.
-		`if(!c||c.state==="done"){closeCommentPopover();return;}`,
+		`if(!c||c.state==="done"||c.path!==location.pathname){closeCommentPopover();return;}`,
 		// Human replies and resolves post to dedicated routes.
 		`fetch("/__gust/comments/"+encodeURIComponent(id)+"/reply"`,
 		`fetch("/__gust/comments/"+encodeURIComponent(id)+"/resolve"`,
@@ -2067,6 +2067,36 @@ assert(pinOverlay.children.length === 0, 'no threads means no pins and no stray 
 console.log('pin message count ok');
 `
 
+func TestCommentOtherURLInSidebar(t *testing.T) {
+	script := reloadScript(12, 8765)
+	for _, fragment := range []string{
+		`const commentOtherURLIconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">`,
+		`if(onPage){path.textContent=commentSelector(c);path.title=commentSelector(c);}`,
+		`icon.innerHTML=commentOtherURLIconSvg;path.append(icon,document.createTextNode("Another URL: "+(c.path||"/")))`,
+		`commentState.filter(c=>c.path===location.pathname`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("sidebar URL labeling missing %q", fragment)
+		}
+	}
+}
+
+func TestCommentTargetInNewThreadEditor(t *testing.T) {
+	script := reloadScript(12, 8765)
+	for _, fragment := range []string{
+		`target.className="__gust_popover_path __gust_editor_target";target.dataset.editorTarget="";`,
+		`editor.append(close,title,target,textarea,save,hint,result);`,
+		`renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";`,
+		`#__gust_comment_editor .__gust_editor_target{display:flex;`,
+		`#__gust_comment_editor .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
+		`#__gust_comment_editor .__gust_popover_path_text{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("new thread editor target missing %q", fragment)
+		}
+	}
+}
+
 func TestCommentTargetIconInFloatingThreadPanel(t *testing.T) {
 	script := reloadScript(12, 8765)
 	const targetIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><line x1="128" y1="128" x2="224" y2="32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M195.88,60.12a95.88,95.88,0,1,0,18.77,26.49" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M161.94,94.06a48,48,0,1,0,14,31.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>`
@@ -2074,9 +2104,9 @@ func TestCommentTargetIconInFloatingThreadPanel(t *testing.T) {
 		`const commentTargetIconSvg='` + targetIcon + `';`,
 		`function renderCommentTarget(container,target){`,
 		`icon.className="__gust_popover_path_icon";icon.setAttribute("aria-hidden","true");icon.innerHTML=commentTargetIconSvg;`,
-		`text.className="__gust_popover_path_text";text.textContent=target||"/";`,
+		`text.className="__gust_popover_path_text";text.textContent=target||"(selector unavailable)";`,
 		`container.replaceChildren(icon,text);`,
-		`renderCommentTarget(parts.path,c.path||"/");`,
+		`renderCommentTarget(parts.path,commentSelector(c));`,
 		`#__gust_comment_popover .__gust_popover_path{display:flex;align-items:center;gap:5px;flex:1 1 auto;min-width:0;overflow:hidden;direction:ltr;text-align:left}`,
 		`#__gust_comment_popover .__gust_popover_path_icon{display:inline-flex;flex:none;width:14px;height:14px;color:#e0cfba}`,
 		`#__gust_comment_popover .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
@@ -2154,6 +2184,7 @@ const popoverHarnessPrelude = `class El {
 }
 const document = { createElement: t => new El(t), documentElement: new El('html'), activeElement: null };
 const commentTargetIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><line x1="128" y1="128" x2="224" y2="32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M195.88,60.12a95.88,95.88,0,1,0,18.77,26.49" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M161.94,94.06a48,48,0,1,0,14,31.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
+function commentSelector(c) { try { return JSON.parse(c.locator).selector || '(selector unavailable)'; } catch (_) { return '(selector unavailable)'; } }
 const location = { pathname: '/' };
 const innerWidth = 1000;
 const innerHeight = 800;
@@ -2194,7 +2225,7 @@ function pinFor(id) { const p = new El('button'); p.dataset.commentId = id; retu
 `
 
 const popoverHarnessChecks = `
-commentState = [{ id: 'a', path: '/', text: 'first\nsecond', state: 'created', messages: [] }];
+commentState = [{ id: 'a', path: '/', locator: JSON.stringify({selector:'#selected'}), text: 'first\nsecond', state: 'created', messages: [] }];
 pinOverlay = new El('div');
 pinOverlay.appendChild(pinFor('a'));
 openCommentPopover('a');
@@ -2209,7 +2240,11 @@ assert(targetPath.children[0].className === '__gust_popover_path_icon', 'target 
 assert(targetPath.children[0].attrs['aria-hidden'] === 'true', 'decorative target icon is hidden from assistive technology');
 assert(targetPath.children[0].innerHTML === commentTargetIconSvg, 'target uses the requested second SVG');
 assert(targetPath.children[1].className === '__gust_popover_path_text', 'target text has a dedicated truncation wrapper');
-assert(targetPath.children[1].textContent === '/', 'target text remains the original path');
+assert(targetPath.children[1].textContent === '#selected', 'target text is the component selector');
+commentState.push({ id: 'elsewhere', path: '/elsewhere', locator: JSON.stringify({selector:'.other'}) });
+openCommentPopover('elsewhere');
+assert(popoverCommentId === 'a', 'a thread on another URL cannot open a page popover');
+commentState.pop();
 assert(commentPopover.children[3].children[0].textContent === 'No replies yet.', 'empty thread shows a placeholder');
 const createdActions = commentPopover.children[5];
 assert(createdActions.children[2].hidden === false, 'drafts expose Remove draft');
