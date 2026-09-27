@@ -319,6 +319,34 @@ func (s *Store) Create(ctx context.Context, in Input) (Comment, error) {
 	return s.getLocked(ctx, in.ID)
 }
 
+// Reattach updates only the target context of an unfinished thread. Replies and
+// lifecycle state are intentionally left intact.
+func (s *Store) Reattach(ctx context.Context, id, path, html, locator string) (Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return Comment{}, err
+	}
+	c, err := s.getLocked(ctx, id)
+	if err != nil {
+		return Comment{}, err
+	}
+	if c.State == StateDone {
+		return Comment{}, ErrInvalidState
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE comments SET path=?,html=?,locator=?,updated_at=? WHERE id=? AND state!='done'`, path, html, locator, stamp(time.Now().UTC()), id)
+	if err != nil {
+		return Comment{}, err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return Comment{}, err
+	} else if n == 0 {
+		return Comment{}, ErrInvalidState
+	}
+	s.signalLocked()
+	return s.getLocked(ctx, id)
+}
+
 // Get returns a comment by ID.
 func (s *Store) Get(ctx context.Context, id string) (Comment, error) {
 	s.mu.Lock()

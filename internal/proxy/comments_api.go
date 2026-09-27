@@ -190,6 +190,56 @@ func (s *Server) serveCommentReply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, c)
 }
 
+func (s *Server) serveCommentReattach(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeAPIError(w, 405, "method_not_allowed", "use POST")
+		return
+	}
+	if !sameOrigin(w, r) {
+		return
+	}
+	if s.comments == nil {
+		writeAPIError(w, 503, "comments_unavailable", "comments are unavailable")
+		return
+	}
+	id := commentActionID(r.URL.Path, "reattach")
+	if id == "" {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	var in struct {
+		Path    string `json:"path"`
+		HTML    string `json:"html"`
+		Locator string `json:"locator"`
+	}
+	if !decodeComment(w, r, &in) {
+		return
+	}
+	if !validPath(in.Path) {
+		writeAPIError(w, 400, "invalid_path", "path must be a page pathname")
+		return
+	}
+	if len(in.HTML) > 32768 || len(in.Locator) == 0 || len(in.Locator) > 8192 {
+		writeAPIError(w, 400, "invalid_context", "html or locator exceeds its allowed size")
+		return
+	}
+	c, err := s.comments.Reattach(r.Context(), id, in.Path, scrubCommentHTML(in.HTML), in.Locator)
+	if errors.Is(err, comments.ErrNotFound) {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	if errors.Is(err, comments.ErrInvalidState) {
+		writeAPIError(w, 409, "invalid_state", "finished comments cannot be reattached")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, 500, "internal_error", "could not reattach comment")
+		return
+	}
+	writeJSON(w, 200, c)
+}
+
 func (s *Server) serveCommentResolve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")

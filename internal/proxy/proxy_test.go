@@ -1773,7 +1773,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`const x=p&&Number.isFinite(p.x)`,
 		`const y=p&&Number.isFinite(p.y)`,
 		`new ResizeObserver(schedulePinReposition)`,
-		`if(pinSizeObserver)pinSizeObserver.observe(el)`,
+		`if(el&&pinSizeObserver)pinSizeObserver.observe(el)`,
 		`window.addEventListener("scroll",schedulePinReposition,true)`,
 		`window.addEventListener("resize",schedulePinReposition)`,
 		`requestAnimationFrame(function(){pinPositionFrame=0;repositionPins();})`,
@@ -1806,7 +1806,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`summary.textContent=finished+" finished"`,
 		`remove.setAttribute("aria-label","Remove draft")`,
 		`method:"DELETE"`,
-		`close.addEventListener("click",function(){textarea.value="";result.textContent="";resumeSelection();})`,
+		`close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else resumeSelection();})`,
 		`seen:"In progress"`,
 		`review:"Review"`,
 		`function threadUnread(c){`,
@@ -1927,7 +1927,7 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		`locateComment(commentState.find(function(x){return x.id===id;}))`,
 		// The panel is built once and re-rendered in place so polls are stable.
 		`commentPopover.append(head,text,meta,replies,replybox,actions,error)`,
-		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,resolve:resolve,remove:remove,error:error}`,
+		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,reattach:reattach,resolve:resolve,remove:remove,error:error}`,
 		`if(key===popoverRenderKey){positionCommentPopover();return;}`,
 		`parts.remove.disabled=popoverDeletePending;`,
 		`parts.error.hidden=!popoverActionError;`,
@@ -1951,8 +1951,8 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 	if strings.Contains(script, `commentPopover.replaceChildren()`) {
 		t.Error("popover refresh still tears down its DOM")
 	}
-	if !strings.Contains(script, `open.addEventListener("click",function(){focusComment(c.id);});row.appendChild(open);`) {
-		t.Error("side panel rows should still focus their comment")
+	if !strings.Contains(script, `focusComment(c.id);`) || !strings.Contains(script, `openCommentPopover(c.id);`) {
+		t.Error("side panel rows should open their comment even without an anchor")
 	}
 }
 
@@ -1960,6 +1960,25 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 // against a tiny DOM stub. The count is the thread's own messages, drawn inside
 // the pin dot, and it must be there with the popover closed and stay the same
 // when the popover opens or closes.
+func TestMissingCommentAnchorFallbackAndReattach(t *testing.T) {
+	script := reloadScript(12, 8765)
+	for _, snippet := range []string{
+		`pagePoint:pagePoint`,
+		`function missingPinPosition(c){`,
+		`const pos=el?pinPosition(c,el):missingPinPosition(c);`,
+		`__gust_pin_missing`,
+		`e.stopPropagation();focusComment(c.id);`,
+		`openCommentPopover(c.id);`,
+		`parts.reattach.hidden=found;`,
+		`function startReattach(id){`,
+		`fetch("/__gust/comments/"+encodeURIComponent(id)+"/reattach"`,
+	} {
+		if !strings.Contains(script, snippet) {
+			t.Errorf("missing anchor recovery missing %q", snippet)
+		}
+	}
+}
+
 func TestCommentPinShowsMessageCountWhenNodeAvailable(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -2008,6 +2027,7 @@ const document = { createElement: t => new El(t), documentElement: new El('html'
 const location = { pathname: '/' };
 let commentState = [];
 let popoverCommentId = null;
+const lastPinPoints = new Map();
 let pinSizeObserver = null;
 let pinOverlay = new El('div');
 let unread = false;
@@ -2899,6 +2919,21 @@ func TestBrowserCommentThreadRoutes(t *testing.T) {
 		t.Fatalf("reopened = %+v", reopened)
 	}
 
+	if got := post("/__gust/comments/"+created.ID+"/reattach", `{"path":"/new","locator":"#target","html":"<div onclick='bad()'>safe</div>"}`, "http://attacker.invalid").StatusCode; got != 403 {
+		t.Fatalf("cross-origin reattach status=%d", got)
+	}
+	if got := post("/__gust/comments/"+created.ID+"/reattach", `{"path":"/new","locator":""}`, proxyURL).StatusCode; got != 400 {
+		t.Fatalf("invalid reattach status=%d", got)
+	}
+	resp = post("/__gust/comments/"+created.ID+"/reattach", `{"path":"/new","locator":"#target","html":"<div onclick='bad()'>safe</div>"}`, proxyURL)
+	if resp.StatusCode != 200 {
+		t.Fatalf("reattach status=%d", resp.StatusCode)
+	}
+	moved := decode(resp)
+	if moved.Path != "/new" || moved.Locator != "#target" || strings.Contains(moved.HTML, "onclick") || moved.State != reopened.State || len(moved.Messages) != len(reopened.Messages) {
+		t.Fatalf("reattached thread = %+v", moved)
+	}
+
 	resp = post("/__gust/comments/"+created.ID+"/resolve", `{}`, proxyURL)
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
@@ -2909,6 +2944,9 @@ func TestBrowserCommentThreadRoutes(t *testing.T) {
 		t.Fatalf("resolved state = %s", resolved.State)
 	}
 
+	if got := post("/__gust/comments/"+created.ID+"/reattach", `{"path":"/","locator":"body"}`, proxyURL).StatusCode; got != 409 {
+		t.Fatalf("done reattach status=%d", got)
+	}
 	if got := post("/__gust/comments/"+created.ID+"/reply", `{"text":"late"}`, proxyURL).StatusCode; got != 409 {
 		t.Fatalf("done reply status=%d", got)
 	}
