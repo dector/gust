@@ -2055,7 +2055,8 @@ function mountIcon(){
 #__gust_comment_bubble{position:fixed;right:14px;bottom:14px;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#252525;border:1px solid #484848;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}
 #__gust_comment_bubble svg{display:block;width:22px;height:22px}
 #__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}
-#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}
+#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;color:#f9bb71;box-shadow:0 8px 24px #0008,inset 0 1px #ffffff24}
+#__gust_comment_bubble[aria-pressed=true]:hover{background:#583820;border-color:#ffd9a8;color:#ffd9a8}
 #__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}
 /* New-reply count is a separate action, so only this badge gets the red pulse. */

@@ -254,7 +254,8 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		`color:#f9bb71;background:#252525;border:1px solid #484848`,
 		`cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}`,
 		`#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}`,
-		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;color:#f9bb71;`,
+		`#__gust_comment_bubble[aria-pressed=true]:hover{background:#583820;border-color:#ffd9a8;color:#ffd9a8}`,
 		`@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`,
 		`#__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
 		`html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting #__gust_comment_bubble,`,
@@ -313,10 +314,10 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 			t.Errorf("comment mode bubble must not use unread count treatment %q", attentionTreatment)
 		}
 	}
-	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`
+	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;color:#f9bb71;box-shadow:0 8px 24px #0008,inset 0 1px #ffffff24}`
 	hoverRule := `#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}`
 	if !strings.Contains(style, activeRule) {
-		t.Error("comment mode bubble on state must use its warm high-contrast treatment")
+		t.Error("comment mode bubble on state must use its restrained warm treatment")
 	}
 	if !strings.Contains(style, `color:#f9bb71;background:#252525;border:1px solid #484848`) {
 		t.Error("comment mode bubble must use the charcoal surface")
@@ -324,8 +325,8 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 	if !strings.Contains(style, `@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`) {
 		t.Error("comment mode bubble transitions must respect reduced motion")
 	}
-	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) {
-		t.Error("comment mode bubble on state must remain filled when hovered")
+	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) || !strings.Contains(style, `#__gust_comment_bubble[aria-pressed=true]:hover{background:#583820;border-color:#ffd9a8;color:#ffd9a8}`) {
+		t.Error("comment mode bubble on state must keep its warm treatment when hovered")
 	}
 }
 
@@ -2230,7 +2231,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`commentBubble.id="__gust_comment_bubble";`,
 		`commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});`,
 		`#__gust_comment_bubble{position:fixed;right:14px;bottom:14px;`,
-		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;`,
 		`#__gust_icon.__gust_pinned{background:#49301c;color:#fff7e9}`,
 		`const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=`,
 		`function beginCommentTool(oneShot){if(selecting||editorOpen){closeCommentMode();return;}`,
