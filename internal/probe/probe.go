@@ -63,6 +63,9 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 			fmt.Fprintln(out)
 		}
 		fmt.Fprintf(out, "%s (%s)\n", instance.Root, instance.State)
+		if (i > 0 && instances[i-1].Root == instance.Root) || (i+1 < len(instances) && instances[i+1].Root == instance.Root) {
+			fmt.Fprintf(out, "  socket: %s\n", instance.SocketPath)
+		}
 		port := instance.ProxyPort
 		if port == 0 {
 			port = instance.AppPort
@@ -132,7 +135,12 @@ func scan(ctx context.Context, dir string) ([]Instance, error) {
 	for instance := range results {
 		instances = append(instances, instance)
 	}
-	sort.Slice(instances, func(i, j int) bool { return instances[i].Root < instances[j].Root })
+	sort.Slice(instances, func(i, j int) bool {
+		if instances[i].Root == instances[j].Root {
+			return instances[i].SocketPath < instances[j].SocketPath
+		}
+		return instances[i].Root < instances[j].Root
+	})
 	return instances, nil
 }
 

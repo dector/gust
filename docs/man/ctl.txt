@@ -14,8 +14,10 @@ Commands:
   help      show the ctl help
 
 Discovery:
-  Without -S, the socket path is derived from the current directory.
+  Without -S, the primary socket path is derived from the current directory.
   probe instead scans all sockets in the per-user directory, from any directory.
+  Multiple instances in one workdir get distinct sockets; probe shows their
+  socket paths. Use -S to target a non-primary instance.
 
 Samples:
   gust ctl status

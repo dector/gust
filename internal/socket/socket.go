@@ -2,6 +2,7 @@ package socket
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -47,10 +49,12 @@ type control interface {
 
 // Server accepts local JSON control requests over a Unix socket.
 type Server struct {
-	path string
-	root string
-	ln   net.Listener
-	log  *logger.Logger
+	path        string
+	primaryPath string
+	root        string
+	ln          net.Listener
+	file        os.FileInfo
+	log         *logger.Logger
 
 	urlMu        sync.RWMutex
 	tailscaleURL string
@@ -60,14 +64,7 @@ type Server struct {
 
 // Start creates and serves Gust's local control socket.
 func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl control, stores ...commentStore) (*Server, error) {
-	path, err := Path(cfg.Root)
-	if err != nil {
-		return nil, err
-	}
-	if err := prepareSocket(path); err != nil {
-		return nil, err
-	}
-	ln, err := net.Listen("unix", path)
+	primaryPath, err := Path(cfg.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -75,16 +72,23 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger, ctl contr
 	if root == "" {
 		root, err = os.Getwd()
 		if err != nil {
-			ln.Close()
 			return nil, err
 		}
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		ln.Close()
 		return nil, err
 	}
-	s := &Server{path: path, root: root, ln: ln, log: log}
+	lock, err := lockSocket(primaryPath)
+	if err != nil {
+		return nil, err
+	}
+	path, ln, file, err := listen(primaryPath)
+	unlockSocket(lock)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{path: path, primaryPath: primaryPath, root: root, ln: ln, file: file, log: log}
 	go func() {
 		<-ctx.Done()
 		s.Close()
@@ -156,8 +160,20 @@ func (s *Server) Remove() error {
 	}
 	var err error
 	s.removeOnce.Do(func() {
-		if removeErr := os.Remove(s.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			err = removeErr
+		var lock *os.File
+		lock, err = lockSocket(s.primaryPath)
+		if err != nil {
+			return
+		}
+		defer unlockSocket(lock)
+		var current os.FileInfo
+		current, err = os.Lstat(s.path)
+		if errors.Is(err, os.ErrNotExist) {
+			err = nil
+			return
+		}
+		if err == nil && os.SameFile(s.file, current) {
+			err = os.Remove(s.path)
 		}
 	})
 	return err
@@ -175,7 +191,7 @@ func (s *Server) Close() error {
 	return err
 }
 
-func prepareSocket(path string) error {
+func prepareSocketDir(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, socketDirMode); err != nil {
 		return err
@@ -197,10 +213,76 @@ func prepareSocket(path string) error {
 	if int(stat.Uid) != os.Getuid() {
 		return fmt.Errorf("socket directory %s is not owned by current user", dir)
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	return nil
+}
+
+// The lock serializes path allocation and ownership-checked removal across processes.
+func lockSocket(primaryPath string) (*os.File, error) {
+	if err := prepareSocketDir(primaryPath); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(strings.TrimSuffix(primaryPath, ".sock")+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	return lock, nil
+}
+
+func unlockSocket(lock *os.File) {
+	_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	_ = lock.Close()
+}
+
+func listen(primaryPath string) (string, net.Listener, os.FileInfo, error) {
+	path := primaryPath
+	if _, err := os.Lstat(path); err == nil {
+		// A connectable socket belongs to a live instance. Never unlink it.
+		conn, dialErr := net.DialTimeout("unix", path, 100*time.Millisecond)
+		if dialErr == nil {
+			conn.Close()
+		} else if errors.Is(dialErr, syscall.ECONNREFUSED) || errors.Is(dialErr, syscall.ENOTSOCK) {
+			if err := os.Remove(path); err != nil {
+				return "", nil, nil, err
+			}
+		} else {
+			// A timed-out or inaccessible socket might still be live.
+			path = ""
+		}
+		if dialErr == nil {
+			path = ""
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", nil, nil, err
+	}
+	for i := 0; i < 10; i++ {
+		if path == "" {
+			var suffix [8]byte
+			if _, err := rand.Read(suffix[:]); err != nil {
+				return "", nil, nil, err
+			}
+			path = strings.TrimSuffix(primaryPath, ".sock") + "-" + hex.EncodeToString(suffix[:]) + ".sock"
+		}
+		ln, err := net.Listen("unix", path)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			path = ""
+			continue
+		}
+		if err != nil {
+			return "", nil, nil, err
+		}
+		ln.(*net.UnixListener).SetUnlinkOnClose(false)
+		file, err := os.Lstat(path)
+		if err != nil {
+			ln.Close()
+			return "", nil, nil, err
+		}
+		return path, ln, file, nil
+	}
+	return "", nil, nil, fmt.Errorf("cannot allocate control socket for %s", primaryPath)
 }
 
 func (s *Server) serve(ctx context.Context, ctl control, store commentStore) {

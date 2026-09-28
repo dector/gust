@@ -267,6 +267,25 @@ func TestStaleSocketCleanup(t *testing.T) {
 	}
 }
 
+func TestReplacedSocketIsNotRemovedByOldServer(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := startTestServer(t, ctx, root, &fakeControl{})
+	if err := first.StopAccepting(); err != nil {
+		t.Fatal(err)
+	}
+	second := startTestServer(t, ctx, root, &fakeControl{})
+	defer second.Close()
+	if second.Path() != first.Path() {
+		t.Fatalf("replacement path = %s, want %s", second.Path(), first.Path())
+	}
+	if err := first.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	requestJSON(t, second.Path(), map[string]string{"action": "status"})
+}
+
 func TestShutdownResponse(t *testing.T) {
 	root := t.TempDir()
 	ctl := &fakeControl{shuttingDown: true}
