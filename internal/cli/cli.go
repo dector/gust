@@ -33,6 +33,23 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	var afters repeatableStrings
 	var cfg config.Config
 	cfg.Info = os.Getenv("GUST_INFO") == "1"
+	// Value-based comment anchors are on by default. GUST_COMMENT_ANCHOR_V2=0
+	// or --legacy-comment-anchors switches back to the positional selectors.
+	legacyCommentAnchors := false
+	if value := strings.TrimSpace(os.Getenv("GUST_COMMENT_ANCHOR_V2")); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil && !enabled {
+			legacyCommentAnchors = true
+		}
+	}
+	// Hint-based matching is the default on top of value-based anchors.
+	// GUST_COMMENT_ANCHOR_HINTS=0 or --legacy-comment-text keeps the earlier
+	// broad partial-text matching.
+	legacyCommentText := false
+	if value := strings.TrimSpace(os.Getenv("GUST_COMMENT_ANCHOR_HINTS")); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil && !enabled {
+			legacyCommentText = true
+		}
+	}
 	var portSpec string
 	var tailscaleWithProxy bool
 
@@ -48,6 +65,8 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments, sounds, dev)")
+	fs.BoolVar(&cfg.CommentAnchorsLegacy, "legacy-comment-anchors", legacyCommentAnchors, "disable value-based comment anchors")
+	fs.BoolVar(&cfg.CommentAnchorsTextLegacy, "legacy-comment-text", legacyCommentText, "keep broad partial-text comment matching")
 	fs.BoolVar(&cfg.Verbose, "v", false, "enable verbose Gust logs")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usageText)
@@ -178,6 +197,13 @@ Flags:
                         dev: work on Gust itself; enables Ctrl+click selection of any
                              element, including Gust's own UI, and page reload after
                              proxy reconnect; requires comments and proxy
+  --legacy-comment-anchors
+                        disable value-based comment anchors and keep the older
+                        positional selectors (env GUST_COMMENT_ANCHOR_V2=0)
+  --legacy-comment-text
+                        keep the earlier broad partial-text matching; the
+                        default is tighter id/attribute/same-parent text hints
+                        (env GUST_COMMENT_ANCHOR_HINTS=0)
   -v                    enable verbose Gust logs
 
 Run "gust man" for a brief manual and samples.

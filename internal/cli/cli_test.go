@@ -94,6 +94,62 @@ func TestParseSoundsOptIn(t *testing.T) {
 	}
 }
 
+func TestParseLegacyCommentAnchors(t *testing.T) {
+	// Value-based comment anchors are the default.
+	cfg, err := ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil || cfg.CommentAnchorsLegacy {
+		t.Fatalf("default comment anchors legacy=%v err=%v; want false", cfg.CommentAnchorsLegacy, err)
+	}
+	cfg, err = ParseWithOutput([]string{"-e", "run", "--legacy-comment-anchors"}, nil)
+	if err != nil || !cfg.CommentAnchorsLegacy {
+		t.Fatalf("--legacy-comment-anchors legacy=%v err=%v; want true", cfg.CommentAnchorsLegacy, err)
+	}
+
+	t.Setenv("GUST_COMMENT_ANCHOR_V2", "0")
+	cfg, err = ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil || !cfg.CommentAnchorsLegacy {
+		t.Fatalf("GUST_COMMENT_ANCHOR_V2=0 legacy=%v err=%v; want true", cfg.CommentAnchorsLegacy, err)
+	}
+	cfg, err = ParseWithOutput([]string{"-e", "run", "--legacy-comment-anchors=false"}, nil)
+	if err != nil || cfg.CommentAnchorsLegacy {
+		t.Fatalf("explicit flag overrides env legacy=%v err=%v; want false", cfg.CommentAnchorsLegacy, err)
+	}
+
+	t.Setenv("GUST_COMMENT_ANCHOR_V2", "1")
+	cfg, err = ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil || cfg.CommentAnchorsLegacy {
+		t.Fatalf("GUST_COMMENT_ANCHOR_V2=1 legacy=%v err=%v; want false", cfg.CommentAnchorsLegacy, err)
+	}
+}
+
+func TestParseLegacyCommentText(t *testing.T) {
+	// Hint-based matching is the default on top of value-based anchors.
+	cfg, err := ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil || cfg.CommentAnchorsTextLegacy {
+		t.Fatalf("default comment text legacy=%v err=%v; want false", cfg.CommentAnchorsTextLegacy, err)
+	}
+	cfg, err = ParseWithOutput([]string{"-e", "run", "--legacy-comment-text"}, nil)
+	if err != nil || !cfg.CommentAnchorsTextLegacy {
+		t.Fatalf("--legacy-comment-text legacy=%v err=%v; want true", cfg.CommentAnchorsTextLegacy, err)
+	}
+
+	t.Setenv("GUST_COMMENT_ANCHOR_HINTS", "0")
+	cfg, err = ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil || !cfg.CommentAnchorsTextLegacy {
+		t.Fatalf("GUST_COMMENT_ANCHOR_HINTS=0 legacy=%v err=%v; want true", cfg.CommentAnchorsTextLegacy, err)
+	}
+	cfg, err = ParseWithOutput([]string{"-e", "run", "--legacy-comment-text=false"}, nil)
+	if err != nil || cfg.CommentAnchorsTextLegacy {
+		t.Fatalf("explicit flag overrides env legacy=%v err=%v; want false", cfg.CommentAnchorsTextLegacy, err)
+	}
+
+	t.Setenv("GUST_COMMENT_ANCHOR_HINTS", "1")
+	cfg, err = ParseWithOutput([]string{"-e", "run"}, nil)
+	if err != nil || cfg.CommentAnchorsTextLegacy {
+		t.Fatalf("GUST_COMMENT_ANCHOR_HINTS=1 legacy=%v err=%v; want false", cfg.CommentAnchorsTextLegacy, err)
+	}
+}
+
 func TestParseDevOptIn(t *testing.T) {
 	for _, args := range [][]string{
 		{"-e", "run", "--optin", "dev", "-p", "8000:8001"},

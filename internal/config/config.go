@@ -25,13 +25,20 @@ type Config struct {
 	CommentsEnabled bool
 	SoundsEnabled   bool
 	SelfDev         bool
-	HealthPath      string
-	Tailscale       bool
-	Excludes        []string
-	ExcludeGlobs    []string
-	Verbose         bool
-	Info            bool
-	Root            string
+	// CommentAnchorsLegacy disables value-based comment anchors and keeps the
+	// older positional selectors. Zero value keeps the improved behaviour on.
+	CommentAnchorsLegacy bool
+	// CommentAnchorsTextLegacy keeps the earlier broad partial-text matching
+	// when value-based anchors are on. Zero value uses the tighter hint-based
+	// matching (unique id/attribute, then same-parent text).
+	CommentAnchorsTextLegacy bool
+	HealthPath               string
+	Tailscale                bool
+	Excludes                 []string
+	ExcludeGlobs             []string
+	Verbose                  bool
+	Info                     bool
+	Root                     string
 }
 
 // ExposurePort returns the browser-facing proxy port when available, otherwise the app port.

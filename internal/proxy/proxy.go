@@ -41,7 +41,13 @@ type Server struct {
 	commentsEnabled bool
 	soundsEnabled   bool
 	selfDev         bool
-	bootID          string
+	// commentAnchorsLegacy disables the value-based comment anchors. Off by
+	// default so improved anchoring is the normal behaviour.
+	commentAnchorsLegacy bool
+	// commentAnchorsTextLegacy keeps broad partial-text matching instead of the
+	// tighter hint-based resolver. Off by default.
+	commentAnchorsTextLegacy bool
+	bootID                   string
 }
 
 // BrowserHub tracks browser websocket clients and their latest status.
@@ -212,7 +218,7 @@ func Start(ctx context.Context, cfg config.Config, log *logger.Logger) (*Server,
 		return nil, err
 	}
 
-	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, soundsEnabled: cfg.SoundsEnabled, selfDev: cfg.SelfDev, bootID: rand.Text()}
+	s := &Server{listener: ln, log: log, hub: &BrowserHub{clients: map[*browserClient]struct{}{}}, appPort: cfg.AppPort, proxyPort: cfg.ProxyPort, commentsEnabled: cfg.CommentsEnabled, soundsEnabled: cfg.SoundsEnabled, selfDev: cfg.SelfDev, commentAnchorsLegacy: cfg.CommentAnchorsLegacy, commentAnchorsTextLegacy: cfg.CommentAnchorsTextLegacy, bootID: rand.Text()}
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.handler(target),
@@ -300,7 +306,7 @@ func (s *Server) handler(target *url.URL) http.Handler {
 		interval: config.ProxyRetryInterval,
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled, s.selfDev, s.soundsEnabled)
+		return injectHTMLResponse(resp, s.hub.currentVersion(), s.appPort, s.log, s.commentsEnabled, s.selfDev, s.soundsEnabled, !s.commentAnchorsLegacy, !s.commentAnchorsTextLegacy)
 	}
 	rp.FlushInterval = -1
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -556,6 +562,18 @@ func reloadScript(version, appPort int, options ...bool) string {
 	}
 	selfDev := len(options) > 1 && options[1]
 	soundsOn := len(options) > 2 && options[2]
+	// Value-based comment anchors are enabled by default; callers pass false
+	// only when the legacy positional selectors are requested.
+	commentAnchorV2 := true
+	if len(options) > 3 {
+		commentAnchorV2 = options[3]
+	}
+	// Hint-based matching is enabled by default; callers pass false to keep the
+	// earlier broad partial-text matching.
+	commentAnchorHints := true
+	if len(options) > 4 {
+		commentAnchorHints = options[4]
+	}
 	return fmt.Sprintf(`<script id="__gust_reload">(function(){
 let lastVersion = %d;
 let retry = 250;
@@ -647,6 +665,8 @@ const commentOtherURLIconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))+"') 2 21, pointer";
 const gustAppPort = %d;
 const selfDev = %t;
+const commentAnchorV2 = %t;
+const commentAnchorHints = %t;
 const soundsOn = %t;
 const soundAssets = %s;
 const soundOnSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" fill="none"/><path d="M80,168H32a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8H80l72-56V224Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><line x1="80" y1="88" x2="80" y2="168" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M192,106.85a32,32,0,0,1,0,42.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M221.67,80a72,72,0,0,1,0,96" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
@@ -823,18 +843,275 @@ function renderPath(){
 function scheduleRenderPath(){if(pathFrame)return;pathFrame=requestAnimationFrame(renderPath);}
 function parseLocator(c){ try { return JSON.parse(c.locator); } catch (_) { return null; } }
 function commentSelector(c){const locator=parseLocator(c);return locator&&locator.selector||"(selector unavailable)";}
-function matchingElement(c){
-  const l=parseLocator(c); if(!l||!l.selector||l.confidence!=="high"||l.matches!==1)return null;
+/* Value-based anchors (behind commentAnchorV2). A list that re-renders and
+   reorders must not re-bind a thread to whatever now sits at the old position,
+   so the saved locator carries identity hints and resolution is hint-driven:
+   a unique id or stable attribute, then an exact text hit among the saved
+   parent's same-tag children, then the positional selector as a last resort.
+   Two equally plausible text hits are ambiguous: the anchor is treated as
+   missing so the UI offers Reattach instead of silently guessing. */
+const ANCHOR_TEXT_MAX = 160;
+const ANCHOR_SCOPE_MAX = 200;
+const ANCHOR_AMBIGUOUS = { ambiguous: true };
+function cssAttr(v){ return String(v).replace(/\\/g,"\\\\").replace(/"/g,"\\\""); }
+function anchorText(el){
+  if(!el)return "";
+  let text="";
+  if(el.matches&&el.matches("input,textarea,select")){
+    /* Form values are not anchor material: they change, and persisted locators
+       already redact them. Fall back to stable labelling attributes. */
+    text=el.getAttribute("aria-label")||el.getAttribute("placeholder")||el.getAttribute("name")||"";
+  }else{
+    text=el.getAttribute("aria-label")||el.getAttribute("alt")||el.innerText||el.textContent||"";
+  }
+  return String(text).replace(/\s+/g," ").trim();
+}
+/* One normalized, length-bounded key for both capture and resolution, so a long
+   element cannot compare its full text against a saved truncated prefix. */
+function anchorTextKey(el){ return anchorText(el).replace(/\s+/g," ").toLowerCase().slice(0,ANCHOR_TEXT_MAX); }
+/* The pre-change capture/compare text: innerText first, then aria-label. Kept
+   byte-for-byte so locators saved by older builds, and new locators captured
+   while value anchors are off, read and compare exactly as they always did. */
+function legacyAnchorText(el){
+  if(!el)return "";
+  return (el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ");
+}
+function normalizeAnchorText(v){ return String(v==null?"":v).replace(/\s+/g," ").trim().toLowerCase().slice(0,ANCHOR_TEXT_MAX); }
+/* Exact text scores 1, containment is scaled by how much of the longer text it
+   covers, and anything else is the Dice coefficient over character bigrams.
+   Blank text on either side never scores. Broad mode only. */
+function textScore(want, got){
+  if(!want||!got)return 0;
+  if(want===got)return 1;
+  const shorter=want.length<=got.length?want:got, longer=want.length<=got.length?got:want;
+  if(longer.indexOf(shorter)>=0)return 0.8+0.2*(shorter.length/longer.length);
+  const bigrams=function(s){const set=new Set();for(let i=0;i+1<s.length;i++)set.add(s.slice(i,i+2));return set;};
+  const a=bigrams(want), b=bigrams(got);
+  if(!a.size||!b.size)return 0;
+  let common=0; a.forEach(function(g){if(b.has(g))common++;});
+  return (2*common)/(a.size+b.size);
+}
+/* Strip :nth-of-type(...) only at selector-grammar level. A blind regex also
+   rewrites attribute values such as [aria-label="row:nth-of-type(1)"], which
+   corrupts the broadened scope. Track [] depth and quotes instead. */
+function stripNthOfType(selector){
+  let out="", i=0, bracket=0, quote="";
+  while(i<selector.length){
+    const ch=selector.charAt(i);
+    if(quote){ out+=ch; if(ch===quote&&selector.charAt(i-1)!=="\\")quote=""; i++; continue; }
+    if(ch==='"'||ch==="'"){ quote=ch; out+=ch; i++; continue; }
+    if(ch==='['){ bracket++; out+=ch; i++; continue; }
+    if(ch===']'){ if(bracket>0)bracket--; out+=ch; i++; continue; }
+    if(bracket===0&&selector.indexOf(":nth-of-type(",i)===i){
+      const close=selector.indexOf(")",i);
+      if(close>i){ i=close+1; continue; }
+    }
+    out+=ch; i++;
+  }
+  return out;
+}
+/* A saved scope is untrusted: reject page-wide or crafted selectors before
+   asking the DOM to evaluate them, then cap how many nodes broad mode inspects. */
+function safeAnchorScope(selector){
+  if(!selector)return false;
+  const s=String(selector).trim();
+  if(!s||s.length>300)return false;
+  const low=s.toLowerCase().replace(/\s+/g," ");
+  if(low==="*"||low==="html"||low==="body"||low===":root"||low==="html *"||low==="body *")return false;
+  if(low.indexOf(",")>=0&&low.split(",").length>8)return false;
+  return true;
+}
+/* The broadened selector a broad-mode text anchor compares against: the saved
+   selector with its positional :nth-of-type parts removed. Empty when there is
+   nothing to broaden or the candidate set is too big to reason about. */
+function similarScope(selector){
+  if(!selector)return "";
+  const broad=stripNthOfType(selector);
+  if(broad===selector||!safeAnchorScope(broad))return "";
+  let nodes; try{nodes=document.querySelectorAll(broad);}catch(_){return "";}
+  if(!nodes||nodes.length<2||nodes.length>ANCHOR_SCOPE_MAX)return "";
+  return broad;
+}
+function uniqueTaggedMatch(selector, l){
+  if(!selector)return null;
+  let matches; try{matches=document.querySelectorAll(selector);}catch(_){return null;}
+  if(!matches||matches.length!==1)return null;
+  const el=matches[0];
+  if(!el||el.nodeType!==1)return null;
+  if(l&&l.tag&&el.tagName.toLowerCase()!==l.tag)return null;
+  if(blockedCommentTarget(el,l&&l.gust))return null;
+  return el;
+}
+/* Resolve a saved parent hint to a single node. "body" is the only scope that
+   safeAnchorScope rejects but that is still a precise, stable parent, so it is
+   accepted explicitly; every other scope must resolve to exactly one node. */
+function anchorParentNode(selector){
+  if(!selector)return null;
+  if(selector==="body")return document.body;
+  if(!safeAnchorScope(selector))return null;
+  return uniqueTaggedMatch(selector,null);
+}
+/* Broad-mode text match: the best fuzzy hit among the similar nodes, or null
+   when the best score is weak, a tie, or the node belongs to Gust's own UI. A
+   null result lets the positional selector decide. */
+function textAnchor(l){
+  if(!l.scope||!l.text||!safeAnchorScope(l.scope))return null;
+  let nodes; try{nodes=document.querySelectorAll(l.scope);}catch(_){return null;}
+  if(!nodes||!nodes.length||nodes.length>ANCHOR_SCOPE_MAX)return null;
+  const want=normalizeAnchorText(l.text);
+  if(!want)return null;
+  let best=null, bestScore=0, secondScore=0;
+  for(const node of nodes){
+    if(!node||node.nodeType!==1)continue;
+    if(node.tagName.toLowerCase()!==l.tag)continue;
+    if(blockedCommentTarget(node,l.gust))continue;
+    const score=textScore(want,anchorTextKey(node));
+    if(score>bestScore){secondScore=bestScore;bestScore=score;best=node;}
+    else if(score>secondScore){secondScore=score;}
+  }
+  if(!best||bestScore<0.6)return null;
+  if(bestScore-secondScore<0.05)return null;
+  return best;
+}
+/* A capture-time selector for the locator's parent: a unique id or stable
+   attribute, then a class combination, then a short structural path. The parent
+   usually stays put while only its children reorder. */
+function uniqueSelfSelector(el){
+  if(!el||el.nodeType!==1)return "";
+  const tag=el.tagName.toLowerCase();
+  if(el.id){const s="#"+cssEscape(el.id);try{if(document.querySelectorAll(s).length===1)return s;}catch(_){}}
+  const attrs=["data-id","data-testid","name","aria-label"];
+  for(const a of attrs){const v=el.getAttribute&&el.getAttribute(a);if(v===null||v===undefined||v==="")continue;const s=tag+"["+a+'="'+cssAttr(String(v))+'"'+"]";try{if(document.querySelectorAll(s).length===1)return s;}catch(_){}}
+  const classes=String((el.getAttribute&&el.getAttribute("class"))||"").split(/\s+/).filter(function(c){return /^[A-Za-z_-][\w-]*$/.test(c);}).slice(0,2);
+  if(classes.length){const s=tag+"."+classes.join(".");try{if(document.querySelectorAll(s).length===1)return s;}catch(_){}}
+  return "";
+}
+function anchorUniqueSelector(el){
+  if(!el||el.nodeType!==1)return "";
+  const self=uniqueSelfSelector(el); if(self)return self;
+  let n=el,bits=[];
+  while(n&&n.nodeType===1&&n!==document.body&&n!==document.documentElement&&bits.length<5){
+    let bit=n.tagName.toLowerCase();
+    if(n.parentElement){const same=Array.from(n.parentElement.children).filter(function(x){return x.tagName===n.tagName;});if(same.length>1)bit+=":nth-of-type("+(same.indexOf(n)+1)+")";}
+    bits.unshift(bit);
+    const s=bits.join(" > ");
+    try{if(document.querySelectorAll(s).length===1)return s;}catch(_){}
+    n=n.parentElement;
+    /* An ancestor id or stable attribute can anchor an otherwise ambiguous
+       structural path, which is what lets an unkeyed parent resolve. */
+    if(n&&n.nodeType===1&&n!==document.body&&n!==document.documentElement){
+      const anchorSelf=uniqueSelfSelector(n);
+      if(anchorSelf){const a=anchorSelf+" > "+bits.join(" > ");try{if(document.querySelectorAll(a).length===1)return a;}catch(_){}}
+    }
+  }
+  if(el===document.body)return "body";
+  return "";
+}
+/* The first stable attribute that identifies the element on its own. */
+function uniqueAttrHint(el){
+  if(!el||el.nodeType!==1)return null;
+  const tag=el.tagName.toLowerCase();
+  const attrs=["data-id","data-testid","name","aria-label"];
+  for(const a of attrs){
+    const v=el.getAttribute&&el.getAttribute(a);
+    if(v===null||v===undefined||v==="")continue;
+    const s=tag+"["+a+'="'+cssAttr(String(v))+'"'+"]";
+    try{if(document.querySelectorAll(s).length===1)return {name:a,value:String(v)};}catch(_){}
+  }
+  return null;
+}
+/* Hint-mode text match, scoped to the saved parent's same-tag children. A lone
+   exact hit wins; 2+ hits is ambiguous and must surface as missing. */
+function hintTextAnchor(l){
+  if(!l||!l.text||!l.tag)return null;
+  const parent=anchorParentNode(l.parent);
+  if(!parent)return null;
+  const want=normalizeAnchorText(l.text);
+  if(!want)return null;
+  const tag=l.tag.toLowerCase();
+  let best=null,matches=0;
+  const children=parent.children?Array.from(parent.children):[];
+  for(const node of children){
+    if(!node||node.nodeType!==1)continue;
+    if(node.tagName.toLowerCase()!==tag)continue;
+    if(blockedCommentTarget(node,l.gust))continue;
+    const got=anchorTextKey(node);
+    if(!got)continue;
+    if(got===want||(want.length>=8&&got.indexOf(want)===0)){matches++;if(!best)best=node;}
+  }
+  if(matches===1)return best;
+  if(matches>1)return ANCHOR_AMBIGUOUS;
+  return null;
+}
+/* Per-frame resolution is cached, but only when a MutationObserver can clear
+   the cache; without one every call re-resolves so nothing goes stale. */
+let anchorResolveCache=new Map();
+let anchorCacheObserverReady=false;
+function invalidateAnchorResolveCache(){anchorResolveCache=new Map();}
+function anchorCacheReady(){
+  if(anchorCacheObserverReady)return true;
+  if(typeof MutationObserver==="undefined")return false;
+  anchorCacheObserverReady=true;
+  try{new MutationObserver(invalidateAnchorResolveCache).observe(document.documentElement,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:["id","data-id","data-comment-id","data-testid","name","aria-label"]});}
+  catch(_){anchorCacheObserverReady=false;}
+  return anchorCacheObserverReady;
+}
+/* A locator is value-based when this build captured it (v2) or when it carries
+   any value-anchor field from an earlier revision of this feature. Released
+   pre-change locators have none of these keys and keep the legacy text. */
+function valueBasedLocator(l){
+  if(!l)return false;
+  if(l.v2===true)return true;
+  if(l.v2===false)return false;
+  return ("scope" in l)||("parent" in l)||("id" in l)||("dataId" in l)||("attr" in l);
+}
+/* Resolution order: id, then data-id, then any unique stable attribute, then a
+   same-parent text hint (exact, fail-on-ambiguity), then the saved positional
+   selector. A Ctrl comment on Gust's own UI keeps its identity match, because
+   its rows and logs re-render under it. */
+function resolveCommentElement(c){
+  const l=parseLocator(c); if(!l)return null;
+  if(l.gust&&l.identity){
+    if(!l.selector)return null;
+    let matches; try{matches=document.querySelectorAll(l.selector);}catch(_){return null;}
+    if(matches.length!==1)return null;
+    const el=matches[0]; if(blockedCommentTarget(el,l.gust)||el.tagName.toLowerCase()!==l.tag)return null;
+    return gustIdentityOf(el)===l.identity?el:null;
+  }
+  if(commentAnchorV2){
+    const byId=uniqueTaggedMatch(l.id?"#"+cssEscape(l.id):"", l); if(byId)return byId;
+    const byDataId=uniqueTaggedMatch(l.dataId?'[data-id="'+cssAttr(l.dataId)+'"]':"", l); if(byDataId)return byDataId;
+    const byAttr=uniqueTaggedMatch(l.tag&&l.attr&&l.attr.name?l.tag+"["+l.attr.name+'="'+cssAttr(l.attr.value)+'"'+"]":"", l); if(byAttr)return byAttr;
+    if(commentAnchorHints){
+      const hint=hintTextAnchor(l);
+      if(hint===ANCHOR_AMBIGUOUS)return null;
+      if(hint)return hint;
+      /* A value-based locator keeps a text hint but its saved parent cannot be
+         resolved confidently: a positional selector would silently follow a
+         reorder to a different sibling, so treat the anchor as missing. Gust's
+         own chrome keeps the positional fallback because its DOM is ours. */
+      if(!l.gust&&valueBasedLocator(l)&&l.text&&!anchorParentNode(l.parent))return null;
+    }else{
+      const byText=textAnchor(l); if(byText)return byText;
+    }
+  }
+  if(!l.selector||l.confidence!=="high"||l.matches!==1)return null;
   let matches; try{matches=document.querySelectorAll(l.selector);}catch(_){return null;}
   if(matches.length!==1)return null;
   const el=matches[0]; if(blockedCommentTarget(el,l.gust)||el.tagName.toLowerCase()!==l.tag)return null;
-  /* A Ctrl comment sits on Gust's own UI, which keeps moving: a thread row
-     flips Draft to Submitted, the log scrolls, a pin count grows with every
-     reply. Such a locator carries a stable identity, so match on that and never
-     on the text that was on screen when the comment was made. */
-  if(l.gust&&l.identity)return gustIdentityOf(el)===l.identity?el:null;
-  if(l.text){const actual=(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ");if(!actual.includes(l.text))return null;}
+  if(l.text){
+    if(valueBasedLocator(l)){if(anchorTextKey(el).indexOf(normalizeAnchorText(l.text))<0)return null;}
+    else if(!legacyAnchorText(el).includes(l.text))return null;
+  }
   return el;
+}
+function matchingElement(c){
+  if(!anchorCacheReady())return resolveCommentElement(c);
+  const key=(commentAnchorV2?"v":"l")+(commentAnchorHints?"h":"b")+"|"+(c&&c.locator||"");
+  if(anchorResolveCache.has(key))return anchorResolveCache.get(key)||null;
+  const el=resolveCommentElement(c);
+  anchorResolveCache.set(key,el||null);
+  return el||null;
 }
 function ensurePinOverlay(){
   if(pinOverlay&&pinOverlay.isConnected)return pinOverlay;
@@ -1273,11 +1550,16 @@ function locatorFor(el,point){
   if(!selector){ let n=el, bits=[]; while(n&&n.nodeType===1&&n!==document.body&&bits.length<5){let bit=n.tagName.toLowerCase();if(n.parentElement){const same=Array.from(n.parentElement.children).filter(x=>x.tagName===n.tagName);if(same.length>1)bit+=":nth-of-type("+(same.indexOf(n)+1)+")";}bits.unshift(bit);const s=bits.join(" > ");try{if(document.querySelectorAll(s).length===1){selector=s;break;}}catch(_){} n=n.parentElement;} }
   const hasPrivateChildren=isSelfDevPanel(el)&&!!el.querySelector("details.__gust_log,#__gust_comments [data-comments]");
   const privateNode=!gust&&(isPrivatePanelNode(el)||hasPrivateChildren);
-  const text=(el===document.body||el===document.documentElement||privateNode)?"":(el.innerText||el.getAttribute("aria-label")||"").trim().replace(/\s+/g," ").slice(0,160);
+  const text=(el===document.body||el===document.documentElement||privateNode)?"":(commentAnchorV2?anchorText(el):legacyAnchorText(el)).slice(0,ANCHOR_TEXT_MAX);
   let count=0;try{count=selector?document.querySelectorAll(selector).length:0;}catch(_){}
   const r=el.getBoundingClientRect?el.getBoundingClientRect():null;
   const pagePoint=r?{x:r.left+r.width*(point?.x??1)+(typeof scrollX==="number"?scrollX:0),y:r.top+r.height*(point?.y??0)+(typeof scrollY==="number"?scrollY:0)}:null;
-  return JSON.stringify({selector:selector,tag:tag,text:text,confidence:selector&&count===1?"high":"low",matches:count,point:point,pagePoint:pagePoint,gust:gust,identity:gust?gustIdentityOf(el):""});
+  const anchorId=commentAnchorV2?(el.id||""):"";
+  const anchorDataId=commentAnchorV2&&el.getAttribute?(el.getAttribute("data-id")||""):"";
+  const anchorAttr=commentAnchorV2?uniqueAttrHint(el):null;
+  const anchorParent=commentAnchorV2&&el.parentElement?anchorUniqueSelector(el.parentElement):"";
+  const scope=commentAnchorV2?similarScope(selector):"";
+  return JSON.stringify({selector:selector,tag:tag,text:text,confidence:selector&&count===1?"high":"low",matches:count,point:point,pagePoint:pagePoint,gust:gust,identity:gust?gustIdentityOf(el):"",v2:commentAnchorV2,id:anchorId,dataId:anchorDataId,attr:anchorAttr,parent:anchorParent,scope:scope});
 }
 function safeOuterHTML(el){
   const gust=isGustSelection(el);
@@ -1927,7 +2209,7 @@ function connect(){
   socket.onerror = function(){ try { socket.close(); } catch (_) {} };
 }
 connect();
-})();</script>`, version, appPort, selfDev, soundsOn, soundMap(), commentsOn)
+})();</script>`, version, appPort, selfDev, commentAnchorV2, commentAnchorHints, soundsOn, soundMap(), commentsOn)
 }
 
 func injectHTMLResponse(resp *http.Response, version, appPort int, log *logger.Logger, commentsEnabled ...bool) error {

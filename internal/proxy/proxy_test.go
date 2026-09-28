@@ -1247,6 +1247,40 @@ func TestCtrlCommentCapturesContextAndPinSurvives(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed")
 	}
+	file := t.TempDir() + "/comment-capture.js"
+	body := commentGuardHarnessPrelude + commentCaptureScript(t) + commentCaptureHarnessChecks
+	if err := os.WriteFile(file, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment capture: %v\n%s", err, output)
+	}
+}
+
+// TestCommentAnchorsUseStableValues covers the value-based anchor priority:
+// unique id, then data-id, then a stable attribute, then a same-parent text
+// hint, then the positional selector. It checks a reorder, same-parent scoping,
+// ambiguity failing to missing, broad mode and flag-off fallbacks, older saved
+// locators, and the capture-time bounds.
+func TestCommentAnchorsUseStableValues(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	file := t.TempDir() + "/comment-anchors.js"
+	body := commentGuardHarnessPrelude + commentCaptureScript(t) + commentAnchorHarnessChecks
+	if err := os.WriteFile(file, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment anchors: %v\n%s", err, output)
+	}
+}
+
+// commentCaptureScript extracts the real capture and resolution functions from
+// the injected reload script so the Node harness exercises the shipped code.
+func commentCaptureScript(t *testing.T) string {
+	t.Helper()
 	script := reloadScript(1, 8765, true, true)
 	spans := []struct {
 		from, to string
@@ -1263,13 +1297,7 @@ func TestCtrlCommentCapturesContextAndPinSurvives(t *testing.T) {
 		}
 		captured += script[from:to] + "\n"
 	}
-	file := t.TempDir() + "/comment-capture.js"
-	if err := os.WriteFile(file, []byte(commentGuardHarnessPrelude+captured+commentCaptureHarnessChecks), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
-		t.Fatalf("comment capture: %v\n%s", err, output)
-	}
+	return captured
 }
 
 const commentCaptureHarnessChecks = `
@@ -1379,6 +1407,216 @@ assert(!safeOuterHTML(document.body).includes('__gust_widget'), 'Ctrl on body st
 console.log('comment capture ok');
 `
 
+const commentAnchorHarnessChecks = `
+/* Host-page lists where positions change. Value-based anchors must follow a
+   row's identity (id, data-id, stable attribute, same-parent text) instead of
+   its index. */
+gustSelection = false;
+function rowsIn(parent, labels) {
+  parent.replaceChildren();
+  return labels.map(function(label) {
+    const li = append(parent, el('li'));
+    text(li, label);
+    return li;
+  });
+}
+const list = append(document.body, el('ul', 'list'));
+let rows = rowsIn(list, ['Alpha', 'Bravo', 'Charlie']);
+const bravoLocator = JSON.parse(locatorFor(rows[1], { x: 0.5, y: 0.5 }));
+assert(bravoLocator.selector === 'li:nth-of-type(2)', 'a list row starts with a positional selector, got ' + bravoLocator.selector);
+assert(bravoLocator.scope === 'li', 'a list row records a broadened similar-node scope, got ' + bravoLocator.scope);
+assert(bravoLocator.parent === '#list', 'a list row records its parent hint, got ' + bravoLocator.parent);
+assert(bravoLocator.text === 'Bravo' && bravoLocator.confidence === 'high' && bravoLocator.matches === 1, 'a list row keeps its text and resolves to one node');
+
+/* Reorder the list: the index now points at Alpha, so the parent-scoped text
+   hint must recover Bravo. */
+rows = rowsIn(list, ['Charlie', 'Alpha', 'Bravo']);
+assert(matchingElement({ locator: JSON.stringify(bravoLocator) }) === rows[2], 'the pin follows the row text after a reorder');
+
+/* Older saved locators without the new fields keep their positional behaviour. */
+rows = rowsIn(list, ['Alpha', 'Bravo', 'Charlie']);
+const legacy = JSON.parse(locatorFor(rows[1], { x: 0.5, y: 0.5 }));
+delete legacy.id; delete legacy.dataId; delete legacy.attr; delete legacy.parent; delete legacy.scope; delete legacy.v2;
+assert(matchingElement({ locator: JSON.stringify(legacy) }) === rows[1], 'a legacy locator resolves while the position is unchanged');
+rows = rowsIn(list, ['Charlie', 'Alpha', 'Bravo']);
+assert(matchingElement({ locator: JSON.stringify(legacy) }) === null, 'a legacy locator never points at a different row after a reorder');
+
+/* The subflag off keeps the earlier broad partial-text matching. */
+rows = rowsIn(list, ['Alpha', 'Bravo', 'Charlie']);
+const broad = JSON.parse(locatorFor(rows[1], { x: 0.5, y: 0.5 }));
+delete broad.parent; delete broad.attr;
+commentAnchorHints = false;
+rows = rowsIn(list, ['Charlie', 'Alpha', 'Bravo']);
+assert(matchingElement({ locator: JSON.stringify(broad) }) === rows[2], 'broad mode still follows a reordered row by partial text');
+rows = rowsIn(list, ['Alpha', 'Bravo', 'Bravo']);
+const broadTie = JSON.parse(locatorFor(rows[1], { x: 0.5, y: 0.5 }));
+delete broadTie.parent; delete broadTie.attr;
+assert(textAnchor(broadTie) === null, 'a broad text tie is not a unique match');
+assert(matchingElement({ locator: JSON.stringify(broadTie) }) === rows[1], 'broad mode falls back to the positional selector on a tie');
+commentAnchorHints = true;
+
+/* The top-level flag off ignores the value-based fields entirely. */
+commentAnchorV2 = false;
+rows = rowsIn(list, ['Alpha', 'Bravo', 'Charlie']);
+const flagLocator = JSON.parse(locatorFor(rows[1], { x: 0.5, y: 0.5 }));
+assert(flagLocator.scope === '' && flagLocator.id === '' && flagLocator.dataId === '' && !flagLocator.parent && !flagLocator.attr && flagLocator.v2 === false, 'flag off records no value-based anchor fields and marks legacy text');
+rows = rowsIn(list, ['Charlie', 'Alpha', 'Bravo']);
+assert(matchingElement({ locator: JSON.stringify(flagLocator) }) === null, 'flag off keeps the old positional selector');
+commentAnchorV2 = true;
+
+/* Text is only a hint: an identical row in another list must not steal the
+   anchor. */
+const listA = append(document.body, el('ul', 'list-a'));
+const listB = append(document.body, el('ul', 'list-b'));
+let rowsA = rowsIn(listA, ['Shared', 'Alpha']);
+rowsIn(listB, ['Shared', 'Beta']);
+const sharedA = JSON.parse(locatorFor(rowsA[0], { x: 0.5, y: 0.5 }));
+assert(sharedA.parent === '#list-a', 'the parent hint names the row list, got ' + sharedA.parent);
+rowsA = rowsIn(listA, ['Alpha', 'Shared']);
+assert(hintTextAnchor(sharedA) === rowsA[1], 'the parent-scoped hint resolves only inside its own list');
+assert(matchingElement({ locator: JSON.stringify(sharedA) }) === rowsA[1], 'same-parent text scoping ignores an identical row in another list');
+
+/* Two equally plausible same-parent text hits are ambiguous: missing, never a
+   positional guess, even though the saved selector would resolve. */
+const tieList = append(document.body, el('ul', 'tie-list'));
+const tieA = append(tieList, el('li')); text(tieA, 'Same');
+const tieB = append(tieList, el('li', 'tie-b')); text(tieB, 'Same');
+const tieLocator = { selector: '#tie-b', tag: 'li', text: 'Same', confidence: 'high', matches: 1, parent: '#tie-list', id: '', dataId: '', attr: null, scope: '', gust: false };
+assert(hintTextAnchor(tieLocator) === ANCHOR_AMBIGUOUS, 'two same-text siblings are ambiguous');
+assert(matchingElement({ locator: JSON.stringify(tieLocator) }) === null, 'an ambiguous same-parent text hint is missing, not a positional guess');
+
+/* Identity betters text, in the requested order: id, then data-id, then any
+   unique stable attribute. */
+const prioList = append(document.body, el('ul', 'prio-list'));
+const prioId = append(prioList, el('li', 'prio-id', { 'data-id': 'prio-data' })); text(prioId, 'Priority');
+text(append(prioList, el('li')), 'Priority');
+const prioLoc = JSON.parse(locatorFor(prioId, { x: 0.5, y: 0.5 }));
+assert(prioLoc.id === 'prio-id' && prioLoc.dataId === 'prio-data', 'id and data-id are captured together');
+text(prioId, 'Renamed');
+assert(matchingElement({ locator: JSON.stringify(prioLoc) }) === prioId, 'a unique id wins before a same-parent text tie');
+
+const dataA = append(prioList, el('li', '', { 'data-id': 'only-data' })); text(dataA, 'Data');
+text(append(prioList, el('li')), 'Data');
+const dataLoc = JSON.parse(locatorFor(dataA, { x: 0.5, y: 0.5 }));
+assert(dataLoc.id === '' && dataLoc.dataId === 'only-data', 'a data-id is captured without an id');
+text(dataA, 'Changes');
+assert(matchingElement({ locator: JSON.stringify(dataLoc) }) === dataA, 'a unique data-id wins before a same-parent text tie');
+
+const attrA = append(prioList, el('li', '', { 'data-testid': 'only-test' })); text(attrA, 'Attr');
+text(append(prioList, el('li')), 'Attr');
+const attrLoc = JSON.parse(locatorFor(attrA, { x: 0.5, y: 0.5 }));
+assert(attrLoc.id === '' && attrLoc.dataId === '' && attrLoc.attr && attrLoc.attr.name === 'data-testid', 'a unique test id is captured as an attr hint');
+text(attrA, 'Changed');
+assert(matchingElement({ locator: JSON.stringify(attrLoc) }) === attrA, 'a unique attribute wins before a same-parent text tie');
+
+/* Anchor text is stable labelling, never a form value. */
+const secretInput = append(document.body, el('input', '', { 'type': 'text', 'value': 'hunter2', 'name': 'user' }));
+const secretText = JSON.parse(locatorFor(secretInput, { x: 0.5, y: 0.5 })).text;
+assert(secretText.indexOf('hunter2') < 0, 'anchor text never contains an input value');
+assert(secretText === 'user', 'an input falls back to its stable name, got ' + secretText);
+
+/* Positional path stays available when there is no text hint at all, and a
+   selector-less locator still resolves by id (regression). */
+const bare = JSON.parse(locatorFor(prioId, { x: 0.5, y: 0.5 }));
+delete bare.selector; delete bare.scope; delete bare.parent;
+assert(matchingElement({ locator: JSON.stringify(bare) }) === prioId, 'a unique id resolves even without a positional selector');
+const priorV2 = JSON.parse(locatorFor(prioId, { x: 0.5, y: 0.5 }));
+delete priorV2.parent; delete priorV2.attr;
+assert(matchingElement({ locator: JSON.stringify(priorV2) }) === prioId, 'a prior value-based locator without parent/attr still resolves by id');
+const posList = append(document.body, el('ul', 'pos-list'));
+const posB = append(posList, el('li', 'pos-b'));
+const posLocator = { selector: '#pos-b', tag: 'li', text: '', confidence: 'high', matches: 1, parent: '#pos-list', id: '', dataId: '', attr: null, scope: '', gust: false };
+assert(matchingElement({ locator: JSON.stringify(posLocator) }) === posB, 'with no text hint the positional selector is the last resort');
+
+/* Capture and resolution agree on the 160-char text bound. */
+const longList = append(document.body, el('ul', 'long-list'));
+const longText = 'abcdefghij'.repeat(20);
+const longA = append(longList, el('li')); text(longA, longText);
+text(append(longList, el('li')), 'other');
+const longLoc = JSON.parse(locatorFor(longA, { x: 0.5, y: 0.5 }));
+assert(longLoc.text.length === 160, 'saved anchor text is truncated to 160 chars, got ' + longLoc.text.length);
+assert(anchorTextKey(longA) === longLoc.text, 'capture and resolution use the same truncated key');
+longList.replaceChildren();
+text(append(longList, el('li')), 'prefix');
+const longMoved = append(longList, el('li')); text(longMoved, longText);
+assert(matchingElement({ locator: JSON.stringify(longLoc) }) === longMoved, 'a long row resolves by its truncated text after a reorder');
+
+/* Broad text matching must never lock onto Gust's own UI. */
+const gustHost = append(document.body, el('div', '__gust_widget'));
+const gustRow = append(gustHost, el('li', 'gust-row')); text(gustRow, 'GustOnly');
+const normalRow = append(document.body, el('li', 'normal-row')); text(normalRow, 'Other');
+assert(textAnchor({ scope: 'li', tag: 'li', text: 'GustOnly', gust: false }) === null, 'broad text matching ignores Gust UI nodes');
+
+/* nth-of-type stripping is selector-aware, not a blind regex. */
+assert(stripNthOfType('li[data-x="a:nth-of-type(1)"]:nth-of-type(2)') === 'li[data-x="a:nth-of-type(1)"]', 'stripping keeps :nth-of-type inside attribute values');
+assert(stripNthOfType('ul > li:nth-of-type(2)') === 'ul > li', 'stripping removes a plain positional step');
+assert(similarScope('*:nth-of-type(1)') === '', 'a broadened page-wide scope is dropped');
+assert(textAnchor({ scope: '*', tag: 'li', text: 'GustOnly' }) === null, 'a page-wide crafted scope is not evaluated');
+assert(hintTextAnchor({ parent: '*', tag: 'li', text: 'GustOnly' }) === null, 'a page-wide crafted parent hint is not evaluated');
+assert(safeAnchorScope('body') === false && safeAnchorScope('') === false, 'page-wide scopes are rejected');
+
+/* Legacy text parity: an old locator whose text came from innerText must keep
+   resolving when the element also carries a different aria-label. The shared
+   anchorText would prefer the label and misresolve it. */
+const ariaList = append(document.body, el('ul', 'aria-list'));
+const ariaRow = append(ariaList, el('li', 'aria-row', { 'aria-label': 'Screen reader label' }));
+text(ariaRow, 'Visible text');
+commentAnchorV2 = false;
+const legacyCapture = JSON.parse(locatorFor(ariaRow, { x: 0.5, y: 0.5 }));
+assert(legacyCapture.text === 'Visible text', 'flag off captures innerText before aria-label, got ' + legacyCapture.text);
+assert(legacyCapture.v2 === false, 'flag off marks the locator as legacy text');
+commentAnchorV2 = true;
+const preChange = { selector: '#aria-row', tag: 'li', text: 'Visible text', confidence: 'high', matches: 1, point: { x: 0, y: 0 }, pagePoint: { x: 0, y: 0 }, gust: false, identity: '' };
+assert(matchingElement({ locator: JSON.stringify(preChange) }) === ariaRow, 'a real pre-change locator resolves against its innerText, not its aria-label');
+assert(matchingElement({ locator: JSON.stringify(legacyCapture) }) === ariaRow, 'a flag-off locator still resolves after the flag is turned back on');
+const modernCapture = JSON.parse(locatorFor(ariaRow, { x: 0.5, y: 0.5 }));
+assert(modernCapture.text === 'Screen reader label', 'value anchors prefer the aria-label, got ' + modernCapture.text);
+assert(valueBasedLocator({ scope: '' }) === true, 'a locator with value fields but no v2 marker is value-based');
+assert(valueBasedLocator({ v2: false, scope: 'x' }) === false, 'a flag-off locator stays legacy even with a scope field');
+assert(valueBasedLocator({}) === false, 'a released pre-change locator is legacy');
+
+/* A <body> parent is still a usable hint: reordered direct children are
+   followed by their text instead of the stale position. */
+const bodyKids = ['Body one', 'Body two'].map(function(label) { const n = append(document.body, el('article')); text(n, label); return n; });
+const bodyLoc = JSON.parse(locatorFor(bodyKids[0], { x: 0.5, y: 0.5 }));
+assert(bodyLoc.parent === 'body', 'a direct child of body records the body parent, got ' + bodyLoc.parent);
+assert(bodyLoc.selector === 'article:nth-of-type(1)' && bodyLoc.text === 'Body one', 'a body child keeps its selector and text');
+bodyKids[0].remove(); bodyKids[1].remove();
+append(document.body, bodyKids[1]); append(document.body, bodyKids[0]);
+assert(matchingElement({ locator: JSON.stringify(bodyLoc) }) === bodyKids[0], 'a body-parent hint follows the text after a reorder');
+
+/* An unkeyed parent resolves by its structural path; reordered children follow
+   their text. */
+const unkeyed = append(document.body, el('ul'));
+let unkeyedRows = rowsIn(unkeyed, ['First', 'Second', 'Third']);
+const unkeyedLoc = JSON.parse(locatorFor(unkeyedRows[1], { x: 0.5, y: 0.5 }));
+assert(unkeyedLoc.parent && unkeyedLoc.parent.indexOf('ul') >= 0, 'an unkeyed parent records a structural selector, got ' + unkeyedLoc.parent);
+unkeyedRows = rowsIn(unkeyed, ['Third', 'First', 'Second']);
+assert(matchingElement({ locator: JSON.stringify(unkeyedLoc) }) === unkeyedRows[2], 'an unkeyed parent hint follows its children after a reorder');
+
+/* A value-based locator whose parent cannot be resolved must not fall back to a
+   positional selector: a reorder would silently bind another sibling. */
+const orphanParent = append(document.body, el('ul', 'orphan'));
+const orphanRow = append(orphanParent, el('li', 'orphan')); text(orphanRow, 'Orphan');
+const orphan = { selector: '#orphan', tag: 'li', text: 'Orphan', confidence: 'high', matches: 1, parent: '#missing-parent', v2: true, id: '', dataId: '', attr: null, scope: '', gust: false };
+assert(anchorParentNode('#missing-parent') === null, 'a missing parent does not resolve');
+assert(matchingElement({ locator: JSON.stringify(orphan) }) === null, 'an unresolvable parent blocks the positional fallback');
+
+/* With a MutationObserver available the per-frame resolver caches, and the
+   observer clears the cache so a re-render is still seen. */
+assert(anchorCacheReady() === false, 'without a MutationObserver the resolver does not cache');
+const observes = [];
+MutationObserver = function(cb) { this.observe = function() { observes.push(cb); }; };
+assert(anchorCacheReady() === true, 'a MutationObserver enables the anchor cache');
+invalidateAnchorResolveCache();
+matchingElement({ locator: JSON.stringify(bravoLocator) });
+assert(observes.length === 1, 'one observer is installed for the anchor cache');
+assert(anchorResolveCache.size === 1, 'a resolution is cached');
+observes[0]();
+assert(anchorResolveCache.size === 0, 'a DOM mutation clears the anchor cache');
+console.log('comment anchors ok');
+`
+
 const commentGuardHarnessPrelude = `/* Just enough DOM for the real Element.closest()/matches() calls in the guard. */
 function matchesSimple(el, part) {
   if (part === '*') return true;
@@ -1479,6 +1717,8 @@ const document = {
 };
 const window = {};
 const selfDev = true;
+let commentAnchorV2 = true;
+let commentAnchorHints = true;
 const location = { pathname: '/' };
 let selecting = true;
 let hoverPath = [];
@@ -1632,6 +1872,21 @@ assert(chooseCalls === 12, 'Ctrl selects the comment bubble and the unread badge
 console.log('comment target guard ok');
 `
 
+func TestReloadScriptCommentAnchorFlags(t *testing.T) {
+	on := reloadScript(1, 8765, true, false, false, true, true)
+	if !strings.Contains(on, "const commentAnchorV2 = true;") || !strings.Contains(on, "const commentAnchorHints = true;") {
+		t.Fatal("hint-based value anchors are not enabled by default")
+	}
+	broad := reloadScript(1, 8765, true, false, false, true, false)
+	if !strings.Contains(broad, "const commentAnchorV2 = true;") || !strings.Contains(broad, "const commentAnchorHints = false;") {
+		t.Fatal("the broad-text subflag is not injected")
+	}
+	legacy := reloadScript(1, 8765, true, false, false, false, true)
+	if !strings.Contains(legacy, "const commentAnchorV2 = false;") {
+		t.Fatal("legacy comment anchors flag is not injected")
+	}
+}
+
 func TestProxyInjectedScriptContent(t *testing.T) {
 	script := reloadScript(12, 8765)
 	checks := []string{
@@ -1782,11 +2037,30 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`replace(/\s+/g," ")`,
 		`function locatorFor(`,
 		`function safeOuterHTML(`,
+		`const commentAnchorV2 = true;`,
+		`const commentAnchorHints = true;`,
+		`function similarScope(`,
+		`function textAnchor(`,
+		`function hintTextAnchor(`,
+		`function stripNthOfType(`,
+		`function safeAnchorScope(`,
+		`function uniqueSelfSelector(`,
+		`function anchorParentNode(`,
+		`function legacyAnchorText(`,
+		`function anchorUniqueSelector(`,
+		`function uniqueAttrHint(`,
+		`function uniqueTaggedMatch(`,
+		`function valueBasedLocator(`,
+		`function resolveCommentElement(`,
+		`function anchorCacheReady(`,
+		`ANCHOR_AMBIGUOUS`,
+		`[data-id="`,
 
 		`fetch("/__gust/comments"`,
 		`method:"POST"`,
 		`location.pathname`,
 		`JSON.stringify({selector:selector,tag:tag,text:text,confidence:`,
+		`v2:`,
 		`__gust_pin`,
 		`commentUI.append(status,listHeader,submitResult,pollError,list,autoLabel)`,
 		`.__gust_autosubmit{display:flex`,
@@ -1834,7 +2108,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`function refreshComments()`,
 		`setInterval(refreshComments,3000)`,
 		`l.confidence!=="high"||l.matches!==1`,
-		`replace(/\s+/g," ");if(!actual.includes(l.text))return null;`,
+		`anchorTextKey(el).indexOf(normalizeAnchorText(l.text))<0)return null;`,
+		`else if(!legacyAnchorText(el).includes(l.text))return null;`,
 		`c.state==="created"||c.state==="submitted"||c.state==="seen"||c.state==="review"`,
 		`submitResult.dataset.submitResult`,
 		`missing.textContent="Not found"`,
