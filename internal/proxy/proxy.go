@@ -627,6 +627,7 @@ let thunderTimer = null;
 let soundUnlockArmed = false;
 const windMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let selecting = false;
+let oneShotComment = false;
 let hoverPath = [];
 let selectedIndex = 0;
 let highlighted = null;
@@ -1493,14 +1494,28 @@ function updateCommentUI(){
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){const title=editor.querySelector("[data-editor-title]");if(title)title.textContent=reattachId?"Reattach comment":"Add a comment";const textarea=editor.querySelector("textarea");if(textarea)textarea.hidden=!!reattachId;const save=editor.querySelector("[data-save]");if(save)save.textContent=reattachId?"Save anchor":"Save comment";const hint=editor.querySelector("[data-editor-hint]");if(hint)hint.hidden=!!reattachId;editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen){const target=editor.querySelector("[data-editor-target]");if(target){const selector=locatorFor(selectedElement,selectedPoint);const locator=JSON.parse(selector);renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";}updateEditorPosition();}}
   scheduleRenderPath();
 }
-function closeCommentMode(){reattachId=null;selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
-function beginCommentTool(){if(selecting||editorOpen){closeCommentMode();return;}reattachId=null;selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function closeCommentMode(){reattachId=null;oneShotComment=false;selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function beginCommentTool(oneShot){if(selecting||editorOpen){closeCommentMode();return;}reattachId=null;selecting=true;oneShotComment=!!oneShot;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
 function startReattach(id){
   if(!commentState.some(function(c){return c.id===id&&c.state!=="done";}))return;
-  closeCommentPopover();reattachId=id;selecting=true;editorOpen=false;
+  closeCommentPopover();reattachId=id;oneShotComment=false;selecting=true;editorOpen=false;
   selectedElement=null;selectedPoint=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();
 }
 function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);updateCommentUI();}
+/* Leaving the editor returns to persistent comment mode, except for the
+   one-comment Ctrl+C shortcut, where it exits comment mode entirely. */
+function finishCommentEdit(){if(oneShotComment)closeCommentMode();else resumeSelection();}
+/* Escape backs out of the current comment interaction. An open editor is
+   cleared and left first. For the one-comment Ctrl+C shortcut an empty draft
+   closes the dialog and exits comment mode, while a non-empty draft is kept
+   open instead of being silently discarded. Permanent mode still clears the
+   draft and returns to selection. */
+function cancelCommentMode(){
+  if(editorOpen){const box=document.querySelector("[data-editor] textarea");const draft=box?String(box.value||""):"";if(oneShotComment){if(draft.trim())return true;closeCommentMode();return true;}if(box)box.value="";if(reattachId)closeCommentMode();else resumeSelection();return true;}
+  if(selecting){closeCommentMode();return true;}
+  if(popoverCommentId){closeCommentPopover();return true;}
+  return false;
+}
 function chooseSelection(e){if(!hoverPath.length)return;selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
   gustSelection=!!e.ctrlKey&&isGustNodeOrPanel(selectedElement);
   const r=selectedElement.getBoundingClientRect();
@@ -1606,7 +1621,7 @@ function createCommentUI(){
   const editor=document.createElement("div");editor.id="__gust_comment_editor";editor.dataset.editor="";editor.dataset.gustOverlay="";editor.hidden=true;
   const target=document.createElement("div");target.className="__gust_popover_path __gust_editor_target";target.dataset.editorTarget="";
   const textarea=document.createElement("textarea");textarea.placeholder="Describe this element";textarea.maxLength=8192;
-  const close=document.createElement("button");close.type="button";close.textContent="×";close.setAttribute("aria-label","Close comment editor");close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else resumeSelection();});
+  const close=document.createElement("button");close.type="button";close.textContent="×";close.setAttribute("aria-label","Close comment editor");close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else finishCommentEdit();});
   const save=document.createElement("button");save.type="button";save.dataset.save="";save.textContent="Save comment";
   const result=document.createElement("span");result.dataset.result="";
   textarea.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.ctrlKey&&!e.isComposing){e.preventDefault();save.click();}});
@@ -1627,7 +1642,7 @@ function createCommentUI(){
     save.disabled=true;result.textContent="Saving…";
     fetch("/__gust/comments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:location.pathname, text:text, locator:locatorFor(el,selectedPoint), html:safeOuterHTML(el)})})
       .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
-      .then(function(comment){textarea.value="";result.textContent="Draft saved.";refreshComments();resumeSelection();
+      .then(function(comment){textarea.value="";result.textContent="Draft saved.";refreshComments();finishCommentEdit();
         if(!auto.checked)return;
         submitResult.textContent="Submitting…";
         return fetch("/__gust/comments/submit?id="+encodeURIComponent(comment.id),{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
@@ -1693,7 +1708,30 @@ document.addEventListener("mousemove",function(e){
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
 window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true);
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
-document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(editorOpen){const box=document.querySelector("[data-editor] textarea");if(box)box.value="";if(reattachId)closeCommentMode();else resumeSelection();}else if(selecting)closeCommentMode();else if(popoverCommentId)closeCommentPopover();}},true);
+/* Ctrl+C with no text selection is a shortcut into one-comment mode: pick one
+   element, save, and comment mode closes itself. When text is selected, or the
+   keystroke targets a field the browser owns, copy stays untouched. */
+function isCopyableEditable(el){
+  if(!el||el.nodeType!==1)return false;
+  if(el.isContentEditable)return true;
+  return !!(el.closest&&el.closest("input,textarea,select"));
+}
+function hasTextSelection(){
+  const sel=window.getSelection&&window.getSelection();
+  return !!(sel&&!sel.isCollapsed&&String(sel).length>0);
+}
+function copyShortcut(e){
+  return !!e&&(e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&String(e.key).toLowerCase()==="c";
+}
+function beginOneCommentMode(e){
+  if(!copyShortcut(e))return false;
+  if(selecting||editorOpen)return false;
+  if(isCopyableEditable(e.target)||hasTextSelection())return false;
+  if(e.preventDefault)e.preventDefault();
+  beginCommentTool(true);
+  return true;
+}
+document.addEventListener("keydown",function(e){if(beginOneCommentMode(e))return;if(e.key==="Escape")cancelCommentMode();},true);
 document.addEventListener("click",function(e){
   syncCommentModifier(e);
   if(!selecting||blockedCommentTarget(e.target,e.ctrlKey))return;

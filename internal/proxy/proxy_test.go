@@ -493,6 +493,7 @@ let commentBubble = null;
 let commentUnreadBadge = null;
 let badgeClicks = 0;
 let selecting = false;
+let oneShotComment = false;
 let editorOpen = false;
 let selectedElement = null;
 let selectedPoint = null;
@@ -547,7 +548,232 @@ assert(selecting === false, 'clicking again disables comment creation mode');
 assert(commentBubble.attrs['aria-pressed'] === 'false', 'disabled comment mode clears the pressed state');
 assert(commentBubble.attrs['aria-label'] === 'Add comment', 'disabled comment mode restores its label');
 assert(panelSyncs === 0, 'toggling comment mode never opens the Gust panel');
+// One-shot mode: a Ctrl+C comment closes comment mode after the editor is left.
+oneShotComment = true;
+selecting = false;
+editorOpen = true;
+finishCommentEdit();
+assert(selecting === false, 'one-shot mode closes when the editor is left');
+assert(editorOpen === false, 'one-shot mode closes the editor too');
+assert(oneShotComment === false, 'closing one-shot mode clears the shortcut flag');
+oneShotComment = false;
+resumeSelection();
+assert(selecting === true, 'normal mode returns to persistent selection');
+assert(oneShotComment === false, 'resuming selection does not set the one-shot flag');
 console.log('comment mode bubble ok');
+`
+
+func TestCommentCtrlCOneCommentModeWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	helperStart := strings.Index(script, `function isCopyableEditable(el){`)
+	helperEnd := strings.Index(script, `document.addEventListener("keydown",function(e){if(beginOneCommentMode(e))return;`)
+	if helperStart < 0 || helperEnd < helperStart {
+		t.Fatal("could not extract the Ctrl+C one-comment shortcut")
+	}
+	harness := commentCtrlCHarnessPrelude + script[helperStart:helperEnd] + commentCtrlCHarnessChecks
+	file := t.TempDir() + "/comment-ctrl-c.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment ctrl+c shortcut: %v\n%s", err, output)
+	}
+}
+
+// commentCtrlCHarnessPrelude drives the real isCopyableEditable(),
+// hasTextSelection(), copyShortcut() and beginOneCommentMode() against a tiny
+// fake element and window. It records beginCommentTool calls and whether the
+// native copy was suppressed.
+const commentCtrlCHarnessPrelude = `class El {
+  constructor(opts) {
+    opts = opts || {};
+    this.nodeType = opts.nodeType === undefined ? 1 : opts.nodeType;
+    this.isContentEditable = !!opts.editable;
+    this.closestHit = opts.closest || null;
+  }
+  closest() { return this.closestHit; }
+}
+let selecting = false;
+let editorOpen = false;
+let started = [];
+function beginCommentTool(oneShot) { started.push(oneShot === true); }
+let selection = { isCollapsed: true, text: '' };
+const window = {
+  getSelection() { return { isCollapsed: selection.isCollapsed, toString() { return selection.text; } }; },
+};
+function assert(condition, message) { if (!condition) throw new Error(message); }
+`
+
+const commentCtrlCHarnessChecks = `
+const body = new El();
+function ev(over) {
+  const event = {
+    key: 'c', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+    target: body, prevented: 0, preventDefault() { this.prevented++; },
+  };
+  return Object.assign(event, over || {});
+}
+function reset() { selecting = false; editorOpen = false; started = []; selection = { isCollapsed: true, text: '' }; }
+
+/* No selection: Ctrl+C enters one-comment mode and suppresses the native copy. */
+reset();
+let event = ev();
+assert(beginOneCommentMode(event) === true, 'Ctrl+C with no selection enters one-comment mode');
+assert(started.length === 1 && started[0] === true, 'Ctrl+C requests the one-shot comment tool');
+assert(event.prevented === 1, 'Ctrl+C with no selection suppresses the native copy');
+
+/* Selected text: a normal copy must pass through untouched. */
+reset();
+selection = { isCollapsed: false, text: 'copy me' };
+event = ev();
+assert(beginOneCommentMode(event) === false, 'Ctrl+C with selected text stays a normal copy');
+assert(started.length === 0, 'selected text does not start comment mode');
+assert(event.prevented === 0, 'selected text copy is not prevented');
+
+/* A non-collapsed but empty range is effectively no text: enter the shortcut. */
+reset();
+selection = { isCollapsed: false, text: '' };
+assert(beginOneCommentMode(ev()) === true, 'an empty selection range still enters one-comment mode');
+assert(started.length === 1 && started[0] === true, 'an empty selection requests the one-shot comment tool');
+
+/* The browser owns copy inside fields and contenteditable. */
+reset();
+assert(beginOneCommentMode(ev({ target: new El({ editable: true }) })) === false, 'Ctrl+C in a contenteditable stays with the browser');
+assert(beginOneCommentMode(ev({ target: new El({ closest: new El() }) })) === false, 'Ctrl+C in a form field stays with the browser');
+assert(started.length === 0, 'editable targets do not start comment mode');
+
+/* Only the copy shortcut qualifies. */
+reset();
+assert(beginOneCommentMode(ev({ ctrlKey: false, metaKey: false })) === false, 'a plain C does not start comment mode');
+assert(beginOneCommentMode(ev({ key: 'v' })) === false, 'Ctrl+V is not the comment shortcut');
+assert(beginOneCommentMode(ev({ shiftKey: true })) === false, 'Ctrl+Shift+C is left for the browser');
+assert(beginOneCommentMode(ev({ altKey: true })) === false, 'Ctrl+Alt+C is left for the browser');
+assert(beginOneCommentMode(ev({ ctrlKey: false, metaKey: true })) === true, 'Cmd+C on macOS enters one-comment mode');
+assert(started.length === 1 && started[0] === true, 'Cmd+C requests the one-shot comment tool');
+
+/* An active mode or open editor is left alone, copy included. */
+reset();
+selecting = true;
+event = ev();
+assert(beginOneCommentMode(event) === false, 'an active comment mode is left alone');
+assert(event.prevented === 0, 'active mode does not consume the copy shortcut');
+reset();
+editorOpen = true;
+assert(beginOneCommentMode(ev()) === false, 'an open editor is left alone');
+assert(started.length === 0, 'an open editor does not restart comment mode');
+console.log('ctrl+c one-comment ok');
+`
+
+func TestCommentEscapeCancelsCommentModeWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	modeStart := strings.Index(script, `function closeCommentMode(){`)
+	modeEnd := strings.Index(script, `function chooseSelection(e){`)
+	if modeStart < 0 || modeEnd < modeStart {
+		t.Fatal("could not extract comment mode cancellation helpers")
+	}
+	harness := commentEscapeHarnessPrelude + script[modeStart:modeEnd] + commentEscapeHarnessChecks
+	file := t.TempDir() + "/comment-escape.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment escape behavior: %v\n%s", err, output)
+	}
+}
+
+// commentEscapeHarnessPrelude runs the real closeCommentMode(), resumeSelection(),
+// finishCommentEdit() and cancelCommentMode() against tiny stand-ins, so the
+// Escape behavior for one-shot and permanent comment mode can be checked
+// without a browser.
+const commentEscapeHarnessPrelude = `let selecting = false;
+let oneShotComment = false;
+let editorOpen = false;
+let reattachId = null;
+let popoverCommentId = null;
+let selectedElement = null;
+let selectedPoint = null;
+let gustSelection = false;
+let editorAnchor = null;
+let hoverPath = [];
+const commentState = [{ id: 'thread', state: 'created' }];
+const editorBox = { value: '' };
+const document = { querySelector(selector) { return selector === '[data-editor] textarea' ? editorBox : null; } };
+function setHighlight() {}
+function saveCommentMode() {}
+function updateCommentUI() {}
+let popoverCloses = 0;
+function closeCommentPopover() { popoverCloses++; popoverCommentId = null; }
+function assert(condition, message) { if (!condition) throw new Error(message); }
+`
+
+const commentEscapeHarnessChecks = `
+/* One-shot mode with an empty editor: Escape closes the dialog and exits. */
+editorBox.value = '';
+editorOpen = true; selecting = false; oneShotComment = true; reattachId = null; popoverCommentId = null;
+assert(cancelCommentMode() === true, 'Escape is handled while the one-shot editor is open and empty');
+assert(editorOpen === false, 'Escape closes the empty one-shot editor');
+assert(selecting === false, 'Escape exits one-shot comment mode');
+assert(oneShotComment === false, 'Escape clears the one-shot flag');
+
+/* A whitespace-only draft still counts as empty and closes the dialog. */
+editorBox.value = '   ';
+editorOpen = true; selecting = false; oneShotComment = true; reattachId = null; popoverCommentId = null;
+assert(cancelCommentMode() === true, 'Escape is handled for a whitespace-only one-shot draft');
+assert(editorOpen === false, 'Escape closes the one-shot editor for a whitespace-only draft');
+assert(oneShotComment === false, 'Escape exits one-shot mode for a whitespace-only draft');
+
+/* One-shot mode with a typed draft: Escape keeps the dialog so it is not lost. */
+editorBox.value = 'draft';
+editorOpen = true; selecting = false; oneShotComment = true; reattachId = null; popoverCommentId = null;
+assert(cancelCommentMode() === true, 'Escape is handled while the one-shot editor holds a draft');
+assert(editorBox.value === 'draft', 'Escape preserves a non-empty one-shot draft');
+assert(editorOpen === true, 'Escape keeps the one-shot editor open for a non-empty draft');
+assert(selecting === false, 'a kept one-shot draft does not resume selection');
+assert(oneShotComment === true, 'a kept one-shot draft stays in one-shot mode');
+
+/* One-shot mode while still selecting an element: Escape exits immediately. */
+editorBox.value = 'draft';
+editorOpen = false; selecting = true; oneShotComment = true; popoverCommentId = null;
+assert(cancelCommentMode() === true, 'Escape is handled while one-shot selection is active');
+assert(selecting === false, 'Escape exits one-shot selection mode');
+assert(oneShotComment === false, 'Escape clears the one-shot flag while selecting');
+
+/* Permanent mode with the editor open: Escape cancels the draft but keeps mode. */
+editorBox.value = 'draft';
+editorOpen = true; selecting = false; oneShotComment = false; reattachId = null; popoverCommentId = null;
+assert(cancelCommentMode() === true, 'Escape is handled while the permanent editor is open');
+assert(editorBox.value === '', 'Escape clears the permanent draft');
+assert(editorOpen === false, 'Escape closes the permanent editor');
+assert(selecting === true, 'permanent mode returns to selection after Escape');
+assert(oneShotComment === false, 'permanent Escape does not set the one-shot flag');
+
+/* Reattach mode: Escape abandons the edit entirely. */
+editorBox.value = 'draft';
+editorOpen = true; selecting = true; oneShotComment = false; reattachId = 'thread'; popoverCommentId = null;
+assert(cancelCommentMode() === true, 'Escape is handled while reattaching');
+assert(reattachId === null, 'Escape clears the reattach target');
+assert(selecting === false, 'Escape closes reattach mode');
+assert(editorOpen === false, 'Escape closes the reattach editor');
+
+/* Open thread panel: Escape dismisses it when no editor is open. */
+editorOpen = false; selecting = false; oneShotComment = false; reattachId = null; popoverCommentId = 'thread';
+popoverCloses = 0;
+assert(cancelCommentMode() === true, 'Escape dismisses the open thread panel');
+assert(popoverCloses === 1, 'Escape closes the open popover once');
+assert(popoverCommentId === null, 'Escape clears the popover id');
+
+/* Nothing open: Escape is left for the page. */
+editorOpen = false; selecting = false; oneShotComment = false; reattachId = null; popoverCommentId = null;
+assert(cancelCommentMode() === false, 'Escape is ignored when nothing is open');
+console.log('comment escape ok');
 `
 
 func TestProxyServesSoundsWithHashCache(t *testing.T) {
@@ -2007,7 +2233,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;`,
 		`#__gust_icon.__gust_pinned{background:#49301c;color:#fff7e9}`,
 		`const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=`,
-		`function beginCommentTool(){if(selecting||editorOpen){closeCommentMode();return;}`,
+		`function beginCommentTool(oneShot){if(selecting||editorOpen){closeCommentMode();return;}`,
+		`oneShotComment=!!oneShot;`,
 		`function elementSnippet(`,
 		`function fullAncestry(`,
 		`function renderPath(`,
@@ -2030,7 +2257,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`html.__gust_selecting [data-gust-overlay]`,
 		`function currentTargetEl()`,
 		`function resumeSelection(){`,
-		`refreshComments();resumeSelection();`,
+		`refreshComments();finishCommentEdit();`,
 		`const box=document.querySelector("[data-editor] textarea");if(box)box.focus();`,
 		"renderCommentState();\n  updateCommentUI();",
 		`document.addEventListener("click"`,
@@ -2084,6 +2311,21 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`__gust_comments_header{display:flex`,
 		`auto.checked=true`,
 		`e.key==="Enter"&&e.ctrlKey`,
+		`function isCopyableEditable(el){`,
+		`if(el.isContentEditable)return true;`,
+		`el.closest("input,textarea,select")`,
+		`function hasTextSelection(){`,
+		`!sel.isCollapsed&&String(sel).length>0`,
+		`function copyShortcut(e){`,
+		`(e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey`,
+		`String(e.key).toLowerCase()==="c"`,
+		`function beginOneCommentMode(e){`,
+		`beginCommentTool(true);`,
+		`function finishCommentEdit(){if(oneShotComment)closeCommentMode();else resumeSelection();}`,
+		`function cancelCommentMode(){`,
+		`const draft=box?String(box.value||""):"";if(oneShotComment){if(draft.trim())return true;closeCommentMode();return true;}`,
+		`if(e.key==="Escape")cancelCommentMode();`,
+		`if(beginOneCommentMode(e))return;`,
 		`sessionStorage.getItem("__gust_comment_mode")`,
 		`sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0")`,
 		`selecting=loadCommentMode(); createCommentUI()`,
@@ -2093,7 +2335,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`summary.textContent=finished+" finished"`,
 		`remove.setAttribute("aria-label","Remove draft")`,
 		`method:"DELETE"`,
-		`close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else resumeSelection();})`,
+		`close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else finishCommentEdit();})`,
 		`seen:"In progress"`,
 		`review:"Review"`,
 		`function threadUnread(c){`,
@@ -2176,7 +2418,7 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		`badge.className="__gust_popover_badge __gust_popover_badge_"+c.state`,
 		`pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openCommentPopover(c.id);});`,
 		`if(popoverCommentId===id&&commentPopover&&!commentPopover.hidden){closeCommentPopover();return;}`,
-		`else if(popoverCommentId)closeCommentPopover();`,
+		`if(popoverCommentId){closeCommentPopover();return true;}`,
 		"renderCommentPopover();\n}\nfunction refreshComments(){",
 		"positionCommentPopover();\n}",
 		`if(!popoverCommentId||!commentPopover||commentPopover.hidden)return;`,
