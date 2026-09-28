@@ -259,6 +259,11 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		`#__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
 		`html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting #__gust_comment_bubble,`,
 		`html.__gust_selecting #__gust_widget button,html.__gust_selecting #__gust_comment_bubble,`,
+		`html.__gust_selecting #__gust_comment_bubble *{cursor:pointer!important}`,
+		`html.__gust_selecting.__gust_ctrl #__gust_comment_bubble,html.__gust_selecting.__gust_ctrl #__gust_comment_bubble *{cursor:`,
+		`document.addEventListener("keydown",syncCommentModifier,true);`,
+		`document.addEventListener("keyup",syncCommentModifier,true);`,
+		`window.addEventListener("blur",function(){document.documentElement.classList.remove("__gust_ctrl");});`,
 	} {
 		if !strings.Contains(script, fragment) {
 			t.Errorf("comment mode bubble injection missing %q", fragment)
@@ -477,7 +482,7 @@ const commentModeBubbleHarnessPrelude = `class El {
   appendChild(child) { this.children.push(child); this.child = child; return child; }
 }
 const document = {
-  documentElement: { classList: { toggle() {} } },
+  documentElement: { classList: { toggle() {}, remove() {} } },
   body: new El(),
   createElement() { return new El(); },
   querySelector() { return null; },
@@ -1212,8 +1217,8 @@ func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 	script := reloadScript(1, 8765, true, true)
 	nodesStart := strings.Index(script, `const gustNodes = "`)
 	nodesEnd := strings.Index(script, `function setHighlight(el){`)
-	moveStart := strings.Index(script, "document.addEventListener(\"mousemove\",function(e){\n  if(!selecting)return;")
-	clickStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  if(!selecting||blockedCommentTarget(e.target,")
+	moveStart := strings.Index(script, "document.addEventListener(\"mousemove\",function(e){\n  syncCommentModifier(e);")
+	clickStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  syncCommentModifier(e);\n  if(!selecting||blockedCommentTarget(e.target,")
 	if nodesStart < 0 || nodesEnd < nodesStart || moveStart < 0 || clickStart < 0 {
 		t.Fatal("could not extract the comment target guard")
 	}
@@ -1225,7 +1230,7 @@ func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 		}
 		handlers += script[start:start+end+len("},true);")] + "\n"
 	}
-	harness := commentGuardHarnessPrelude + script[nodesStart:nodesEnd] + handlers + commentGuardHarnessChecks
+	harness := commentGuardHarnessPrelude + script[nodesStart:nodesEnd] + `function syncCommentModifier(e){document.documentElement.classList.toggle("__gust_ctrl",selecting&&e.ctrlKey);}` + handlers + commentGuardHarnessChecks
 	file := t.TempDir() + "/comment-guard.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
@@ -1665,7 +1670,11 @@ class El {
     this.text = '';
     this.parentElement = null;
     this.listeners = {};
-    this.classList = { contains: (name) => this.classes.includes(name) };
+    this.classList = {
+      contains: (name) => this.classes.includes(name),
+      toggle: (name, on) => { this.classes = this.classes.filter((c) => c !== name); if (on) this.classes.push(name); },
+      remove: (name) => { this.classes = this.classes.filter((c) => c !== name); },
+    };
   }
   setAttribute(name, value) { this.attrs[name] = String(value); if (name === 'id') this.id = String(value); }
   getAttribute(name) { return name in this.attrs ? this.attrs[name] : (name === 'id' && this.id ? this.id : null); }
@@ -1863,6 +1872,10 @@ const commentBubble = append(document.body, el('button', '__gust_comment_bubble'
 const unreadBadge = append(document.body, el('button', '__gust_comment_unread_badge'));
 assert(blockedCommentTarget(commentBubble, false), 'the comment bubble is a blocked comment target');
 assert(blockedCommentTarget(unreadBadge, false), 'the unread badge is a blocked comment target');
+send('mousemove', commentBubble, true);
+assert(document.documentElement.classList.contains('__gust_ctrl'), 'Ctrl hover enables the comment cursor on the bubble');
+send('mousemove', commentBubble);
+assert(!document.documentElement.classList.contains('__gust_ctrl'), 'releasing Ctrl restores the hand cursor on the bubble');
 send('click', commentBubble);
 send('click', unreadBadge);
 assert(chooseCalls === 10, 'plain clicks on the comment bubble and the badge open nothing');
