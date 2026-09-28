@@ -1724,15 +1724,15 @@ function mountIcon(){
 #__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}
 #__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
 #__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}
-/* Right-center comment mode bubble. It stays in place and never opens a panel. */
-#__gust_comment_bubble{position:fixed;right:14px;top:50%%;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#252525;border:1px solid #484848;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transform:translateY(-50%%);transition:background .18s ease,border-color .18s ease,color .18s ease}
+/* Bottom-right comment mode bubble. It stays in place and never opens a panel. */
+#__gust_comment_bubble{position:fixed;right:14px;bottom:14px;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#252525;border:1px solid #484848;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}
 #__gust_comment_bubble svg{display:block;width:22px;height:22px}
 #__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}
 #__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}
 #__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}
 /* New-reply count is a separate action, so only this badge gets the red pulse. */
-#__gust_comment_unread_badge{position:fixed;right:23px;top:calc(50%% + 29px);z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;min-width:20px;height:20px;padding:0 5px;color-scheme:dark;color:#fff;background:#dc2626;border:1px solid #fecaca;border-radius:999px;box-shadow:0 0 0 2px #24180f,0 6px 18px #0009;cursor:pointer;font:700 11px/1 system-ui,sans-serif;transition:background .18s ease,border-color .18s ease}
+#__gust_comment_unread_badge{position:fixed;right:23px;bottom:63px;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;min-width:20px;height:20px;padding:0 5px;color-scheme:dark;color:#fff;background:#dc2626;border:1px solid #fecaca;border-radius:999px;box-shadow:0 0 0 2px #24180f,0 6px 18px #0009;cursor:pointer;font:700 11px/1 system-ui,sans-serif;transition:background .18s ease,border-color .18s ease}
 #__gust_comment_unread_badge[hidden]{display:none}
 #__gust_comment_unread_badge:hover{background:#ef4444;border-color:#fee2e2;color:#fff}
 #__gust_comment_unread_badge:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}

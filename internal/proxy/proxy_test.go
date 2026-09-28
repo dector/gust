@@ -249,10 +249,10 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		`commentBubble.setAttribute("aria-pressed","false");`,
 		`commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});`,
 		`[commentBubble]`,
-		`#__gust_comment_bubble{position:fixed;right:14px;top:50%;`,
+		`#__gust_comment_bubble{position:fixed;right:14px;bottom:14px;`,
 		`width:40px;height:40px`,
 		`color:#f9bb71;background:#252525;border:1px solid #484848`,
-		`transform:translateY(-50%);transition:background .18s ease,border-color .18s ease,color .18s ease}`,
+		`cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}`,
 		`#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}`,
 		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`,
 		`@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`,
@@ -300,7 +300,7 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		t.Fatal("could not isolate comment mode bubble styles")
 	}
 	style := script[styleStart : styleStart+styleEnd]
-	if strings.Contains(style, "transition:transform") || strings.Contains(style, ":hover{transform") {
+	if strings.Contains(style, "transition:transform") || strings.Contains(style, ":hover{transform") || strings.Contains(style, "translateY(") {
 		t.Error("comment mode bubble must not animate or rise on hover")
 	}
 	for _, attentionTreatment := range []string{"#dc2626", "#ef4444", "::after", "animation:"} {
@@ -340,7 +340,7 @@ func TestCommentUnreadBadgeInjected(t *testing.T) {
 		// Gust nodes, so it is neither a comment target nor captured context.
 		`const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge`,
 		`+gustNodes+",details.__gust_log,#__gust_comments [data-comments]");`,
-		`#__gust_comment_unread_badge{position:fixed;right:23px;top:calc(50% + 29px);`,
+		`#__gust_comment_unread_badge{position:fixed;right:23px;bottom:63px;`,
 		`#__gust_comment_unread_badge[hidden]{display:none}`,
 		`color:#fff;background:#dc2626;border:1px solid #fecaca`,
 		`#__gust_comment_unread_badge:hover{background:#ef4444;border-color:#fee2e2;color:#fff}`,
@@ -1735,7 +1735,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`function mountCommentBubble(){`,
 		`commentBubble.id="__gust_comment_bubble";`,
 		`commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});`,
-		`#__gust_comment_bubble{position:fixed;right:14px;top:50%;`,
+		`#__gust_comment_bubble{position:fixed;right:14px;bottom:14px;`,
 		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;`,
 		`#__gust_icon.__gust_pinned{background:#49301c;color:#fff7e9}`,
 		`const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=`,
