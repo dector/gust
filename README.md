@@ -4,6 +4,8 @@ Gust is a Linux-first local development runner inspired by Air.
 
 It runs one command, watches the current directory, restarts the command on file changes, and exposes a local Unix socket for agent control. It can also run an HTTP proxy that injects a small browser reload script.
 
+The [Hub dashboard](hub/README.md) lives in `hub/` as a separate Go module. The root `go.work` links it to local Gust source; run Hub commands from `hub/`.
+
 ## Install
 
 Latest trunk snapshot with mise:

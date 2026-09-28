@@ -36,7 +36,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test
+      - name: Test Gust
+        run: go test ./...
+
+      - name: Test Hub
+        working-directory: hub
         run: go test ./...
 
       - name: Build

@@ -1,0 +1,66 @@
+default task="dev"
+
+task dev {
+  description "Run with Gust live reload and automatic ports"
+  cmd #"""
+    env -u APP_PORT go tool gust \
+      -TT \
+      -h /health \
+      -e '/tmp/hub.gust' \
+      --e.before 'ror gen' \
+      --e.before 'go build -o /tmp/hub.gust .' \
+      --exclude .git \
+      --exclude bin \
+      --exclude tmp \
+      --exclude.glob '*_templ.go'
+  """#
+}
+
+task serve {
+  description "Run without hot reload on :8080"
+  cmd "APP_PORT=8080 go run ."
+}
+
+task start {
+  description "Alias for serve"
+  depends {
+    on "serve"
+  }
+}
+
+task gen {
+  description "Generate templ code"
+  cmd "go tool templ generate"
+}
+
+task build {
+  description "Generate templ code and build binary"
+  depends {
+    on "gen"
+  }
+  cmd "mkdir -p bin && go build -o bin/server ."
+}
+
+task deploy {
+  description "Build and restart the Hub user service"
+  depends {
+    on "build"
+  }
+  cmd "systemctl --user restart hub.service"
+}
+
+task launch {
+  description "Build and run Hub directly on loopback port 2222 (foreground, no Gust)"
+  depends {
+    on "build"
+  }
+  cmd "APP_HOST=127.0.0.1 APP_PORT=2222 ./bin/server"
+}
+
+task test {
+  description "Generate templ code and run all tests"
+  depends {
+    on "gen"
+  }
+  cmd "go test ./..."
+}
