@@ -1707,7 +1707,7 @@ function mountIcon(){
 #__gust_selected_path .__gust_path_separator{color:#bababa}
 #__gust_selected_path .__gust_path_current{color:#ffdcac;font-weight:700}
 #__gust_selected_path .__gust_path_description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:3px;color:#eee;font-size:11px;overflow-wrap:anywhere}
-/* Warm demo palette; keep status and comment-state colors distinct. */
+/* Charcoal surfaces with warm accents; keep status and comment-state colors distinct. */
 #__gust_widget{right:16px;top:16px}
 #__gust_icons{display:flex;align-items:center;gap:4px}
 #__gust_sound_icon{position:relative;width:16px;height:16px;color:#f9bb71;opacity:1;cursor:pointer;display:grid;place-items:center}
@@ -1725,9 +1725,9 @@ function mountIcon(){
 #__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}
 #__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}
 /* Right-center comment mode bubble. It stays in place and never opens a panel. */
-#__gust_comment_bubble{position:fixed;right:14px;top:50%%;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transform:translateY(-50%%);transition:background .18s ease,border-color .18s ease,color .18s ease}
+#__gust_comment_bubble{position:fixed;right:14px;top:50%%;z-index:2147483647;display:grid;place-items:center;box-sizing:border-box;width:40px;height:40px;padding:0;color-scheme:dark;color:#f9bb71;background:#252525;border:1px solid #484848;border-radius:999px;backdrop-filter:blur(12px);box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18;cursor:pointer;transform:translateY(-50%%);transition:background .18s ease,border-color .18s ease,color .18s ease}
 #__gust_comment_bubble svg{display:block;width:22px;height:22px}
-#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}
+#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}
 #__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;box-shadow:0 0 0 3px #f9bb7140,0 0 24px #f9bb7180,0 16px 48px #0009}
 #__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}
@@ -1749,12 +1749,12 @@ function mountIcon(){
 #__gust_bubble.__gust_toolbox_open:hover{transform:translate(-50%%,0)}
 #__gust_bubble.__gust_toolbox_open svg{width:64px;height:64px}
 @media (prefers-reduced-motion:reduce){#__gust_bubble{transition:none}#__gust_bubble:hover,#__gust_bubble.__gust_toolbox_open:hover{transform:translate(-50%%,0)}}
-#__gust_panel{top:36px;color-scheme:dark;background:#ffffff0d;color:#fff7e9;border:1px solid #ffffff24;border-radius:1.2rem;backdrop-filter:blur(12px);padding:12px 14px;box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
-#__gust_panel .__gust_label,#__gust_panel .__gust_log summary{color:#e0cfba}
+#__gust_panel{top:36px;color-scheme:dark;background:#252525;color:#f5f2eb;border:1px solid #484848;border-radius:1.2rem;backdrop-filter:blur(12px);padding:12px 14px;box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18}
+#__gust_panel .__gust_label,#__gust_panel .__gust_log summary{color:#d9cbb7}
 #__gust_panel .__gust_group{border-color:#f9bb7155;background:#49301cbb}
 #__gust_panel .__gust_group_title,#__gust_panel .__gust_notice{color:#ffca81}
 #__gust_panel .__gust_log pre{background:#24180f;border-color:#f9bb7133}
-#__gust_comment_toolbar{border-color:#f9bb7133}
+#__gust_comment_toolbar{border-color:#51483f}
 #__gust_wind_button{margin-left:auto}
 #__gust_wind_button svg{width:20px;height:20px}
 #__gust_wind{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;z-index:2147483645;opacity:.65;animation:__gust_wind_fade 11s ease-in-out both}

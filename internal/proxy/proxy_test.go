@@ -251,9 +251,9 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		`[commentBubble]`,
 		`#__gust_comment_bubble{position:fixed;right:14px;top:50%;`,
 		`width:40px;height:40px`,
-		`color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24`,
+		`color:#f9bb71;background:#252525;border:1px solid #484848`,
 		`transform:translateY(-50%);transition:background .18s ease,border-color .18s ease,color .18s ease}`,
-		`#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}`,
+		`#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}`,
 		`#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`,
 		`@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`,
 		`#__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
@@ -309,12 +309,12 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		}
 	}
 	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#f9bb71;border-color:#fff7e9;color:#24180f;`
-	hoverRule := `#__gust_comment_bubble:hover{background:#ffffff1a;border-color:#ffffff3d;color:#ffd9a8}`
+	hoverRule := `#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#ffd9a8}`
 	if !strings.Contains(style, activeRule) {
 		t.Error("comment mode bubble on state must use its warm high-contrast treatment")
 	}
-	if !strings.Contains(style, `color:#f9bb71;background:#ffffff0d;border:1px solid #ffffff24`) {
-		t.Error("comment mode bubble must retain its normal glass treatment")
+	if !strings.Contains(style, `color:#f9bb71;background:#252525;border:1px solid #484848`) {
+		t.Error("comment mode bubble must use the charcoal surface")
 	}
 	if !strings.Contains(style, `@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`) {
 		t.Error("comment mode bubble transitions must respect reduced motion")
@@ -1659,7 +1659,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`#__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}`,
 		`#__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}`,
 		`#__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}`,
-		`#__gust_panel{top:36px;color-scheme:dark;background:#ffffff0d;color:#fff7e9;border:1px solid #ffffff24;border-radius:1.2rem;backdrop-filter:blur(12px);`,
+		`#__gust_panel{top:36px;color-scheme:dark;background:#252525;color:#f5f2eb;border:1px solid #484848;border-radius:1.2rem;backdrop-filter:blur(12px);`,
 		`#__gust_comments textarea,[data-editor] textarea{background:#352416;color:#fff7e9;`,
 		`#__gust_comment_editor{color-scheme:dark;background:#24180f;color:#fff7e9;`,
 		`opacity:.45`,
