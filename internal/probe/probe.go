@@ -20,6 +20,22 @@ import (
 
 const probeTimeout = 500 * time.Millisecond
 
+// Instance describes a responsive Gust control socket.
+type Instance struct {
+	SocketPath   string
+	Root         string
+	State        string
+	AppPort      int
+	ProxyPort    int
+	TailscaleURL string
+}
+
+// Scan discovers responsive Gust instances for the current user.
+// Unreachable sockets and unsuccessful status responses are ignored.
+func Scan(ctx context.Context) ([]Instance, error) {
+	return scan(ctx, socket.Dir())
+}
+
 // Run scans the per-user socket directory and prints responsive instances.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
@@ -34,13 +50,45 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func run(ctx context.Context, dir string, out io.Writer) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
+	instances, err := scan(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if len(instances) == 0 {
 		fmt.Fprintln(out, "No running Gust instances found.")
 		return nil
 	}
+	for i, instance := range instances {
+		if i > 0 {
+			fmt.Fprintln(out)
+		}
+		fmt.Fprintf(out, "%s (%s)\n", instance.Root, instance.State)
+		port := instance.ProxyPort
+		if port == 0 {
+			port = instance.AppPort
+		}
+		if port != 0 {
+			fmt.Fprintf(out, "  local: http://127.0.0.1:%d/\n", port)
+		} else {
+			fmt.Fprintln(out, "  local: unknown (no -p)")
+		}
+		if instance.TailscaleURL != "" {
+			fmt.Fprintf(out, "  tailscale: %s\n", instance.TailscaleURL)
+		}
+	}
+	return nil
+}
+
+func scan(ctx context.Context, dir string) ([]Instance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	paths := make([]string, 0, len(entries))
@@ -52,13 +100,13 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 
 	// Bound both the wait for unresponsive sockets and the number of open connections.
 	sem := make(chan struct{}, 8)
-	results := make(chan protocol.Response, len(paths))
+	results := make(chan Instance, len(paths))
 	var wg sync.WaitGroup
 	for _, path := range paths {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		wg.Add(1)
 		go func() {
@@ -71,43 +119,21 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 			if resp.Root == "" { // Older Gust instances do not report their root.
 				resp.Root = path
 			}
-			results <- resp
+			results <- Instance{SocketPath: path, Root: resp.Root, State: resp.State, AppPort: resp.AppPort, ProxyPort: resp.ProxyPort, TailscaleURL: resp.TailscaleURL}
 		}()
 	}
 	wg.Wait()
 	close(results)
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
-	var instances []protocol.Response
-	for resp := range results {
-		instances = append(instances, resp)
+	var instances []Instance
+	for instance := range results {
+		instances = append(instances, instance)
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Root < instances[j].Root })
-	if len(instances) == 0 {
-		fmt.Fprintln(out, "No running Gust instances found.")
-		return nil
-	}
-	for i, resp := range instances {
-		if i > 0 {
-			fmt.Fprintln(out)
-		}
-		fmt.Fprintf(out, "%s (%s)\n", resp.Root, resp.State)
-		port := resp.ProxyPort
-		if port == 0 {
-			port = resp.AppPort
-		}
-		if port != 0 {
-			fmt.Fprintf(out, "  local: http://127.0.0.1:%d/\n", port)
-		} else {
-			fmt.Fprintln(out, "  local: unknown (no -p)")
-		}
-		if resp.TailscaleURL != "" {
-			fmt.Fprintf(out, "  tailscale: %s\n", resp.TailscaleURL)
-		}
-	}
-	return nil
+	return instances, nil
 }
 
 func status(ctx context.Context, path string) (protocol.Response, error) {

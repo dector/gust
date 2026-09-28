@@ -121,6 +121,21 @@ available), and Tailscale URL when exposure is active. Instances without `-p`
 appear with an unknown local URL. Unreachable/stale sockets are ignored, not
 deleted.
 
+Go programs can discover the same instances with `github.com/dector/gust/pkg/probe`:
+
+```go
+instances, err := probe.Scan(ctx)
+if err != nil {
+    return err
+}
+for _, instance := range instances {
+    fmt.Println(instance.Root, instance.State, instance.SocketPath)
+}
+```
+
+`Scan` returns structured results sorted by workdir. Stale sockets are skipped.
+Each instance includes its app/proxy ports and Tailscale URL when available.
+
 ## Control
 
 Agents and scripts control a running Gust instance with `gust ctl` (or
