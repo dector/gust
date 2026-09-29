@@ -2029,11 +2029,11 @@ function mountIcon(){
 #__gust_comment_popover .__gust_popover_error{margin:8px 0 0;color:#ffb4a9;font-size:11px;overflow-wrap:anywhere}
 #__gust_selected_path{position:fixed;bottom:16px;left:50%%;transform:translateX(-50%%);z-index:2147483646;box-sizing:border-box;width:max-content;max-width:calc(100vw - 24px);pointer-events:none;color:#fff;text-align:center;text-shadow:0 1px 3px #000,0 0 9px #000;font:12px/1.4 system-ui,sans-serif}
 #__gust_selected_path[hidden]{display:none}
-#__gust_selected_path .__gust_path_trail{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:5px;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+#__gust_selected_path .__gust_path_trail{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:5px;box-sizing:border-box;width:fit-content;max-width:100%%;margin:auto;padding:2px 5px;border-radius:6px;background:rgba(0,0,0,.7);font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
 #__gust_selected_path .__gust_path_ancestor,#__gust_selected_path .__gust_path_separator{color:#dfdfdf}
 #__gust_selected_path .__gust_path_separator{color:#bababa}
 #__gust_selected_path .__gust_path_current{color:#ffdcac;font-weight:700}
-#__gust_selected_path .__gust_path_description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:3px;color:#eee;font-size:11px;overflow-wrap:anywhere}
+#__gust_selected_path .__gust_path_description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;box-sizing:border-box;width:fit-content;max-width:100%%;margin:3px auto 0;padding:2px 5px;border-radius:6px;background:rgba(0,0,0,.7);color:#eee;font-size:11px;overflow-wrap:anywhere}
 /* Charcoal surfaces with warm accents; keep status and comment-state colors distinct. */
 #__gust_widget{right:16px;top:16px}
 #__gust_icons{display:flex;align-items:center;gap:4px}
