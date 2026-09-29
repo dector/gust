@@ -275,6 +275,9 @@ func TestReplacedSocketIsNotRemovedByOldServer(t *testing.T) {
 	if err := first.StopAccepting(); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Lstat(first.Path()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stopped socket still exists: %v", err)
+	}
 	second := startTestServer(t, ctx, root, &fakeControl{})
 	defer second.Close()
 	if second.Path() != first.Path() {

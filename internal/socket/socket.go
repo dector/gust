@@ -139,7 +139,7 @@ func (s *Server) Path() string {
 	return s.path
 }
 
-// StopAccepting stops accepting new socket requests.
+// StopAccepting stops accepting new requests and releases this server's socket path.
 func (s *Server) StopAccepting() error {
 	if s == nil {
 		return nil
@@ -148,6 +148,11 @@ func (s *Server) StopAccepting() error {
 	s.acceptOnce.Do(func() {
 		if s.ln != nil {
 			err = s.ln.Close()
+		}
+		// Release the path before another server can claim it. Otherwise a later
+		// Remove may mistake the replacement for this socket if its inode is reused.
+		if removeErr := s.Remove(); err == nil {
+			err = removeErr
 		}
 	})
 	return err
