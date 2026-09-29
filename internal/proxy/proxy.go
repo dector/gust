@@ -1708,9 +1708,8 @@ document.addEventListener("mousemove",function(e){
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
 window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true);
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
-/* Ctrl+C with no text selection is a shortcut into one-comment mode: pick one
-   element, save, and comment mode closes itself. When text is selected, or the
-   keystroke targets a field the browser owns, copy stays untouched. */
+/* Ctrl+C with no text selection enters one-comment mode; pressing it again
+   while choosing an anchor cancels. Copy in editable fields stays untouched. */
 function isCopyableEditable(el){
   if(!el||el.nodeType!==1)return false;
   if(el.isContentEditable)return true;
@@ -1725,8 +1724,13 @@ function copyShortcut(e){
 }
 function beginOneCommentMode(e){
   if(!copyShortcut(e))return false;
-  if(selecting||editorOpen)return false;
-  if(isCopyableEditable(e.target)||hasTextSelection())return false;
+  if(isCopyableEditable(e.target))return false;
+  if(oneShotComment&&selecting&&!editorOpen&&!popoverCommentId){
+    if(e.preventDefault)e.preventDefault();
+    closeCommentMode();
+    return true;
+  }
+  if(selecting||editorOpen||hasTextSelection())return false;
   if(e.preventDefault)e.preventDefault();
   beginCommentTool(true);
   return true;

@@ -600,8 +600,12 @@ const commentCtrlCHarnessPrelude = `class El {
 }
 let selecting = false;
 let editorOpen = false;
+let oneShotComment = false;
+let popoverCommentId = null;
 let started = [];
-function beginCommentTool(oneShot) { started.push(oneShot === true); }
+let closed = 0;
+function beginCommentTool(oneShot) { started.push(oneShot === true); selecting = true; oneShotComment = oneShot; }
+function closeCommentMode() { closed++; selecting = false; oneShotComment = false; }
 let selection = { isCollapsed: true, text: '' };
 const window = {
   getSelection() { return { isCollapsed: selection.isCollapsed, toString() { return selection.text; } }; },
@@ -618,7 +622,7 @@ function ev(over) {
   };
   return Object.assign(event, over || {});
 }
-function reset() { selecting = false; editorOpen = false; started = []; selection = { isCollapsed: true, text: '' }; }
+function reset() { selecting = false; editorOpen = false; oneShotComment = false; popoverCommentId = null; started = []; closed = 0; selection = { isCollapsed: true, text: '' }; }
 
 /* No selection: Ctrl+C enters one-comment mode and suppresses the native copy. */
 reset();
@@ -626,6 +630,13 @@ let event = ev();
 assert(beginOneCommentMode(event) === true, 'Ctrl+C with no selection enters one-comment mode');
 assert(started.length === 1 && started[0] === true, 'Ctrl+C requests the one-shot comment tool');
 assert(event.prevented === 1, 'Ctrl+C with no selection suppresses the native copy');
+
+/* Ctrl+C again cancels the one-shot selection, even if text was selected meanwhile. */
+selection = { isCollapsed: false, text: 'selected meanwhile' };
+event = ev();
+assert(beginOneCommentMode(event) === true, 'second Ctrl+C cancels one-shot selection');
+assert(closed === 1 && selecting === false && oneShotComment === false, 'one-shot mode closes');
+assert(started.length === 1 && event.prevented === 1, 'cancellation consumes copy without restarting');
 
 /* Selected text: a normal copy must pass through untouched. */
 reset();
@@ -656,12 +667,18 @@ assert(beginOneCommentMode(ev({ altKey: true })) === false, 'Ctrl+Alt+C is left 
 assert(beginOneCommentMode(ev({ ctrlKey: false, metaKey: true })) === true, 'Cmd+C on macOS enters one-comment mode');
 assert(started.length === 1 && started[0] === true, 'Cmd+C requests the one-shot comment tool');
 
-/* An active mode or open editor is left alone, copy included. */
+/* Persistent selection, open threads and editable fields keep native copy. */
 reset();
 selecting = true;
 event = ev();
-assert(beginOneCommentMode(event) === false, 'an active comment mode is left alone');
-assert(event.prevented === 0, 'active mode does not consume the copy shortcut');
+assert(beginOneCommentMode(event) === false, 'persistent comment mode is left alone');
+assert(event.prevented === 0, 'persistent mode does not consume copy');
+oneShotComment = true;
+popoverCommentId = 'thread';
+assert(beginOneCommentMode(ev()) === false, 'an open thread is left alone');
+popoverCommentId = null;
+event = ev({ target: new El({ editable: true }) });
+assert(beginOneCommentMode(event) === false && event.prevented === 0, 'copy in an editable field is left alone');
 reset();
 editorOpen = true;
 assert(beginOneCommentMode(ev()) === false, 'an open editor is left alone');
