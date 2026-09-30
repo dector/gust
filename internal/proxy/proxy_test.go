@@ -1484,6 +1484,143 @@ func TestCommentTargetGuardBlocksGustBubbleWhenNodeAvailable(t *testing.T) {
 	}
 }
 
+// TestCommentDisabledTargetPicksOnPointerDown covers disabled page controls.
+// Browsers suppress the click that would anchor a comment on a disabled form
+// control, and disabled:pointer-events-none styles keep the hit test on an
+// ancestor, so selection mode restores pointer events and picks the control on
+// pointerdown. The pointerdown handler must fire only for the primary button,
+// must keep Gust's own guards, must swallow exactly the click that follows its
+// own gesture, and must never clear the disabled attribute itself.
+func TestCommentDisabledTargetPicksOnPointerDown(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	if !strings.Contains(script, "html.__gust_selecting :disabled,html.__gust_selecting [aria-disabled=true]{pointer-events:auto!important}") {
+		t.Fatal("selection mode must restore pointer events on disabled controls")
+	}
+	nodesStart := strings.Index(script, `const gustNodes = "`)
+	nodesEnd := strings.Index(script, `function setHighlight(el){`)
+	declStart := strings.Index(script, "let suppressSelectionClick = false;")
+	clickSuppressStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  if(!suppressSelectionClick)return;")
+	clickStart := strings.Index(script, "document.addEventListener(\"click\",function(e){\n  syncCommentModifier(e);\n  if(!selecting||blockedCommentTarget(e.target,")
+	if nodesStart < 0 || nodesEnd < nodesStart || declStart < 0 || clickSuppressStart < declStart || clickStart < clickSuppressStart {
+		t.Fatal("could not extract the disabled comment selection path")
+	}
+	handler := func(at int) string {
+		end := strings.Index(script[at:], "},true);")
+		if end < 0 {
+			t.Fatal("could not find the end of a disabled comment handler")
+		}
+		return script[at:at+end+len("},true);")] + "\n"
+	}
+	handlers := script[declStart:clickSuppressStart] + handler(clickSuppressStart) + handler(clickStart)
+	harness := commentGuardHarnessPrelude + script[nodesStart:nodesEnd] + `function syncCommentModifier(e){document.documentElement.classList.toggle("__gust_ctrl",selecting&&e.ctrlKey);}` + handlers + commentDisabledPointerHarnessChecks
+	file := t.TempDir() + "/comment-disabled-pointer.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("comment disabled pointer: %v\n%s", err, output)
+	}
+}
+
+const commentDisabledPointerHarnessChecks = `
+/* A disabled control is a valid comment anchor even though the browser never
+   fires the click that would pick it. Selection rides on pointerdown and the
+   gesture click is swallowed, so nothing on the host is activated. The disabled
+   attribute itself is never touched. */
+selecting = true;
+const hostButton = append(document.body, el('button', '', { 'disabled': '' }));
+let hostClicks = 0;
+hostButton.addEventListener('click', function() { hostClicks++; });
+send('pointerdown', hostButton, false, 0);
+assert(chooseCalls === 1, 'pointerdown picks a disabled control');
+assert(hoverPath.length === 1 && hoverPath[0] === hostButton, 'the disabled control is the hover target');
+assert(hostButton.getAttribute('disabled') !== null, 'the picker never clears the disabled attribute');
+const hostClick = send('click', hostButton, false, 0);
+assert(hostClick.defaultPrevented === true, 'the click after a disabled pick is swallowed');
+assert(hostClicks === 0, 'the swallowed click never activates the host control');
+assert(suppressSelectionClick === false, 'click suppression is one-shot');
+
+/* The browser may suppress the gesture click entirely. The next pointerdown
+   must still clear the stale flag, or the editor would silently stop working. */
+selecting = true;
+const silent = append(document.body, el('button', '', { 'disabled': '' }));
+send('pointerdown', silent, false, 0);
+assert(suppressSelectionClick === true, 'a disabled pick arms one-shot suppression');
+selecting = false;
+const editorSave = append(document.body, el('button'));
+let editorSaves = 0;
+editorSave.addEventListener('click', function() { editorSaves++; });
+send('pointerdown', editorSave, false, 0);
+assert(suppressSelectionClick === false, 'a new pointerdown clears a stale suppression');
+send('click', editorSave, false, 0);
+assert(editorSaves === 1, 'the editor button still receives its click after a click-less pick');
+
+/* Keyboard/programmatic saves have no pointerdown to clear the flag. */
+suppressSelectionClick = true;
+const keyboardSave = {target:editorSave, detail:0, preventDefault(){throw new Error('keyboard save suppressed');}, stopPropagation(){}, stopImmediatePropagation(){}};
+(document.listeners.click || []).forEach(function(handler){handler(keyboardSave);});
+assert(suppressSelectionClick === false, 'keyboard clicks clear stale gesture suppression');
+
+/* aria-disabled controls that only look disabled are picked the same way. */
+selecting = true;
+const fakeDisabled = append(document.body, el('button', '', { 'aria-disabled': 'true' }));
+let fakeClicks = 0;
+fakeDisabled.addEventListener('click', function() { fakeClicks++; });
+send('pointerdown', fakeDisabled, false, 0);
+assert(chooseCalls === 3, 'pointerdown picks an aria-disabled control');
+assert(send('click', fakeDisabled, false, 0).defaultPrevented === true, 'an aria-disabled gesture click is swallowed');
+assert(fakeClicks === 0, 'an aria-disabled control is never activated by the picker');
+
+/* An enabled control keeps the existing click path; pointerdown leaves it alone. */
+selecting = true;
+const live = append(document.body, el('button'));
+let liveClicks = 0;
+live.addEventListener('click', function() { liveClicks++; });
+send('pointerdown', live, false, 0);
+assert(chooseCalls === 3, 'pointerdown does not pick an enabled control');
+send('click', live, false, 0);
+assert(chooseCalls === 4, 'click still picks an enabled control');
+assert(liveClicks === 0, 'comment mode still captures the enabled control click');
+
+/* Only the primary button selects. A secondary press must not arm suppression. */
+selecting = true;
+send('pointerdown', hostButton, false, 2);
+assert(chooseCalls === 4, 'a secondary press never picks a disabled control');
+assert(suppressSelectionClick === false, 'a secondary press never arms click suppression');
+
+/* Gust's own disabled controls still obey the Ctrl guard. */
+const widget = append(document.body, el('div', '__gust_widget'));
+const gustDisabled = append(widget, el('button', '', { 'disabled': '' }));
+selecting = true;
+send('pointerdown', gustDisabled, false, 0);
+assert(chooseCalls === 4, 'without Ctrl a disabled Gust control stays blocked');
+assert(suppressSelectionClick === false, 'a blocked disabled Gust control arms nothing');
+send('pointerdown', gustDisabled, true, 0);
+assert(chooseCalls === 5, 'Ctrl picks a disabled Gust control');
+
+/* :disabled also matches controls disabled by an ancestor fieldset. */
+selecting = true;
+const fieldset = append(document.body, el('fieldset', '', { 'disabled': '' }));
+const inFieldset = append(fieldset, el('button'));
+send('pointerdown', inFieldset, false, 0);
+assert(chooseCalls === 6, 'pointerdown picks a control disabled by a fieldset');
+assert(send('click', inFieldset, false, 0).defaultPrevented === true, 'a fieldset-disabled gesture click is swallowed');
+
+/* Nested icons/text inside a disabled control are selectable too. */
+selecting = true;
+const buttonIcon = append(hostButton, el('span'));
+send('pointerdown', buttonIcon, false, 0);
+assert(chooseCalls === 7, 'pointerdown on a disabled control child selects');
+const childPath = meaningfulPath(buttonIcon, false);
+assert(childPath.path[childPath.guessedIndex] === hostButton, 'the disabled button remains the guessed anchor');
+assert(send('click', buttonIcon, false, 0).defaultPrevented === true, 'a disabled child gesture click is swallowed');
+console.log('comment disabled pointer ok');
+`
+
 // TestCtrlCommentCapturesContextAndPinSurvives runs the real capture path -
 // locatorFor(), safeOuterHTML() and matchingElement() - against a DOM shaped
 // like Gust's own panel. A Ctrl comment on a thread row, a pin, the log or the
@@ -1869,12 +2006,13 @@ console.log('comment anchors ok');
 const commentGuardHarnessPrelude = `/* Just enough DOM for the real Element.closest()/matches() calls in the guard. */
 function matchesSimple(el, part) {
   if (part === '*') return true;
-  const parsed = /^([a-z]*)((?:[#.][\w-]+|\[[^\]]+\]|:nth-of-type\(\d+\))*)$/i.exec(part);
+  const parsed = /^([a-z]*)((?:[#.][\w-]+|\[[^\]]+\]|:disabled|:nth-of-type\(\d+\))*)$/i.exec(part);
   if (!parsed) throw new Error('unsupported selector: ' + part);
   if (parsed[1] && el.tagName.toLowerCase() !== parsed[1].toLowerCase()) return false;
-  for (const token of parsed[2].match(/[#.][\w-]+|\[[^\]]+\]|:nth-of-type\(\d+\)/g) || []) {
+  for (const token of parsed[2].match(/[#.][\w-]+|\[[^\]]+\]|:disabled|:nth-of-type\(\d+\)/g) || []) {
     if (token[0] === '#') { if (el.id !== token.slice(1)) return false; }
     else if (token[0] === '.') { if (!el.classList.contains(token.slice(1))) return false; }
+    else if (token === ':disabled') { if (!el.hasAttribute('disabled') && !el.closest('fieldset[disabled]')) return false; }
     else if (token[0] === ':') {
       const at = el.parentElement ? Array.from(el.parentElement.children).filter((x) => x.tagName === el.tagName).indexOf(el) + 1 : 1;
       if (at !== Number(token.match(/^:nth-of-type\((\d+)\)$/)[1])) return false;
@@ -1993,10 +2131,12 @@ function addClass(node, name) { node.classes.push(name); node.setAttribute('clas
 function text(node, value) { node.text = value; return node; }
 /* Browser order: capture handlers on document first, then the target's own
    listeners, unless a capture handler stopped the event. */
-function send(type, target, ctrlKey) {
+function send(type, target, ctrlKey, button) {
   const event = {
     target: target,
     ctrlKey: !!ctrlKey,
+    button: button === undefined ? 0 : button,
+    detail: 1,
     stopped: false,
     preventDefault() { this.defaultPrevented = true; },
     stopPropagation() { this.stopped = true; },
