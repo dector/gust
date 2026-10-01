@@ -466,7 +466,7 @@ func TestCommentModeBubbleBehaviorWhenNodeAvailable(t *testing.T) {
 	if modeStart < 0 || modeEnd < modeStart || mountStart < 0 || mountEnd < mountStart {
 		t.Fatal("could not extract comment mode bubble behavior")
 	}
-	harness := commentModeBubbleHarnessPrelude + script[modeStart:modeEnd] + script[mountStart:mountEnd] + commentModeBubbleHarnessChecks
+	harness := commentModeBubbleHarnessPrelude + "\nfunction flushPendingRefresh() {}\n" + script[modeStart:modeEnd] + script[mountStart:mountEnd] + commentModeBubbleHarnessChecks
 	file := t.TempDir() + "/comment-mode-bubble.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
@@ -1417,6 +1417,73 @@ func TestProxyInjectedScriptSyntaxWhenNodeAvailable(t *testing.T) {
 	}
 }
 
+func TestProxyDefersRefreshWhileCommentDialogOpen(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8080, true, true)
+	start := strings.Index(script, "function requestRefresh(){")
+	end := strings.Index(script, "function updateCommentUI(){")
+	connectStart := strings.Index(script, "function connect(){")
+	connectEnd := strings.Index(script, "\nconnect();")
+	if start < 0 || end < start || connectStart < 0 || connectEnd < connectStart {
+		t.Fatal("could not extract refresh behavior")
+	}
+	harness := `
+let refreshPending=false, editorOpen=false, popoverCommentId=null;
+let restartPending=false, bootID='', selfDev=true, lastVersion=1;
+let failing=false, reloadedAt=0, socket, retry=250, connected=false;
+let reloads=0;
+const location={protocol:'http:',host:'localhost',reload(){reloads++;}};
+class WebSocket {}
+function applyIconState(){}
+function hideError(){}
+function assert(ok, message){if(!ok)throw new Error(message);}
+` + script[start:end] + script[connectStart:connectEnd] + `
+connect();
+function message(data){socket.onmessage({data:JSON.stringify(data)});}
+editorOpen=true;
+message({type:'reload',version:2});
+message({type:'reload',version:3});
+assert(reloads===0 && refreshPending,'editor defers repeated reloads');
+assert(lastVersion===3,'versions still advance while deferred');
+editorOpen=false;
+flushPendingRefresh();
+flushPendingRefresh();
+assert(reloads===1,'closing editor coalesces refreshes into one');
+message({type:'reload',version:3});
+assert(reloads===1,'duplicate version does not refresh');
+popoverCommentId='thread';
+message({type:'boot',bootId:'first'});
+message({type:'boot',bootId:'second'});
+message({type:'ready',version:1});
+assert(reloads===1 && refreshPending,'self-dev ready defers during thread dialog');
+editorOpen=true;
+popoverCommentId=null;
+flushPendingRefresh();
+assert(reloads===1,'another open dialog keeps refresh deferred');
+editorOpen=false;
+flushPendingRefresh();
+assert(reloads===2,'closing final dialog applies restart refresh');
+editorOpen=true;
+message({type:'boot',bootId:'third'});
+message({type:'reload',version:1});
+assert(reloads===2 && refreshPending,'self-dev reload also defers');
+editorOpen=false;
+flushPendingRefresh();
+message({type:'reload',version:4});
+assert(reloads===4,'without a dialog reload remains immediate');
+`
+	file := t.TempDir() + "/deferred-refresh.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("deferred refresh behavior: %v\n%s", err, output)
+	}
+}
+
 func TestProxySelfDevScript(t *testing.T) {
 	defaultScript := reloadScript(1, 8080, true)
 	selfScript := reloadScript(1, 8080, true, true)
@@ -1438,7 +1505,7 @@ func TestProxySelfDevScript(t *testing.T) {
 		`function isGustSelection(el){ return gustSelection && isGustNodeOrPanel(el); }`,
 		`if(!selecting||blockedCommentTarget(e.target,e.ctrlKey))return;`,
 		`if(blockedCommentTarget(e.target,e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
-		`if(selfDev&&restartPending){restartPending=false;location.reload();}`,
+		`if(selfDev&&restartPending){restartPending=false;requestRefresh();}`,
 		`if(bootID&&bootID!==msg.bootId)restartPending=true;`,
 	} {
 		if !strings.Contains(selfScript, expected) {
@@ -2854,7 +2921,8 @@ func TestProxyFloatingCommentPanelBehaviorWhenNodeAvailable(t *testing.T) {
 	}
 }
 
-const popoverHarnessPrelude = `class El {
+const popoverHarnessPrelude = `function flushPendingRefresh() {}
+class El {
   constructor(tag) {
     this.tagName = String(tag).toUpperCase();
     this.children = [];

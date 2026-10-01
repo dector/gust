@@ -594,6 +594,7 @@ let connected = false;
 let connectionAttempted = false;
 let bootID = "";
 let restartPending = false;
+let refreshPending = false;
 let failing = false;
 let gustIcon;
 let gustWidget;
@@ -1277,6 +1278,7 @@ function positionCommentPopover(){
 function closeCommentPopover(){
   popoverCommentId=null;popoverAnchor=null;popoverRenderKey="";popoverDeletePending=false;popoverActionError="";popoverReplyPending=false;popoverResolvePending=false;popoverDeleteToken++;
   if(commentPopover){commentPopover.hidden=true;}
+  flushPendingRefresh();
 }
 function removePopoverDraft(){
   const c=commentState.find(function(x){return x.id===popoverCommentId;});
@@ -1486,7 +1488,18 @@ function updateEditorPosition(){
   editor.style.top=Math.max(margin,Math.min(innerHeight-height-margin,top))+"px";
 }
 function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPath.length?hoverPath[selectedIndex]:null);}
+function requestRefresh(){
+  refreshPending=true;
+  flushPendingRefresh();
+}
+function flushPendingRefresh(){
+  // Only dialogs block navigation; persistent element-selection mode does not.
+  if(!refreshPending||editorOpen||popoverCommentId)return;
+  refreshPending=false;
+  location.reload();
+}
 function updateCommentUI(){
+  flushPendingRefresh();
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
   if(!selecting)document.documentElement.classList.remove("__gust_ctrl");
@@ -2269,15 +2282,15 @@ function connect(){
     if (msg.type === "debug") { setDebug(msg.enabled === true); return; }
     if (msg.type === "notice") { failing = true; applyIconState(); refreshInfo(); return; }
     if (msg.type === "error") { failing = true; applyIconState(); refreshInfo(); showError(msg.message); return; }
-    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; if(selfDev&&restartPending){restartPending=false;location.reload();} return; }
+    if (msg.type === "ready") { failing = false; applyIconState(); hideError(); if (typeof msg.at === "number") reloadedAt = msg.at; if (typeof msg.version === "number" && msg.version > lastVersion) lastVersion = msg.version; if(selfDev&&restartPending){restartPending=false;requestRefresh();} return; }
     if (msg.type === "reload") {
-      if(selfDev&&restartPending){restartPending=false;location.reload();return;}
+      if(selfDev&&restartPending){restartPending=false;requestRefresh();return;}
       failing = false; applyIconState();
       hideError();
       if (typeof msg.at === "number") reloadedAt = msg.at;
       if (typeof msg.version === "number" && msg.version > lastVersion) {
         lastVersion = msg.version;
-        location.reload();
+        requestRefresh();
       }
     }
   };
