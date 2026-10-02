@@ -9,7 +9,16 @@ task dev:self {
 }
 
 task demo:gust {
-    description "Run Gust against the docs/demo instance with the given arguments"
+    description "Run the docs/demo instance with local Gust"
 
-    cmd "cd docs/demo && go tool gust"
+    cmd #"""
+      cd docs/demo
+      go run ../../cmd/gust \
+        -TT \
+        -e 'uv run server.py' \
+        -h /health \
+        --optin comments \
+        --optin sounds \
+        --exclude .venv
+    """#
 }
