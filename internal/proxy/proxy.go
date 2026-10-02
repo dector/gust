@@ -1703,6 +1703,7 @@ function createCommentUI(){
   save.addEventListener("click",function(){
     if(save.disabled)return;
     const wantsSendNow=sendNowRequested;sendNowRequested=false;
+    const shouldAutoSubmit=!batchMode&&auto.checked&&!wantsSendNow;
     const el=selectedElement; const text=textarea.value.trim();
     if(reattachId){
       if(!el){result.textContent="Choose an element.";return;}
@@ -1732,8 +1733,7 @@ function createCommentUI(){
       .then(function(comment){if(!comment||comment.id!==create.id||!["created","submitted","seen","review","done"].includes(comment.state))throw new Error("Invalid save response.");pendingCreate=null;editor.dataset.pendingCreate="";textarea.readOnly=sendAfterCreate;editor.dataset.savedDraftId=comment.id;editor.dataset.savedDraftState=comment.state||"created";editor.dataset.sendPending="";refreshComments();
         if(sendAfterCreate){result.textContent="Sending draft…";return submitCreatedComment(comment.id,result,comment.state).then(function(){textarea.value="";editor.dataset.savedDraftId="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){editor.dataset.sendPending="1";result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";});}
         textarea.value="";result.textContent="Draft saved.";finishCommentEdit();
-        if(batchMode)return;
-        if(!auto.checked)return;
+        if(!shouldAutoSubmit)return;
         submitResult.textContent="Submitting…";
         return submitCreatedComment(comment.id,submitResult,comment.state).catch(function(e){submitResult.textContent="Autosubmit failed: "+e.message+" — use this draft's Send now action to retry.";refreshComments();});
       })

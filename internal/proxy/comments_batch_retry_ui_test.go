@@ -37,7 +37,8 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function setup(createResponse, submitResponse=()=>Promise.resolve()) {
   const document={createElement:()=>new Element(),createTextNode:text=>({textContent:text})};
   const editor=new Element(),textarea=new Element();
-  const selectedElement={},selectedPoint=null,reattachId=null,batchMode=true;
+  const selectedElement={},selectedPoint=null,reattachId=null;
+  let batchMode=true;
   const location={pathname:'/fixture'},auto={checked:true},submitResult=new Element();
   const requests=[],submitted=[];
   let finished=0;
@@ -54,7 +55,7 @@ function setup(createResponse, submitResponse=()=>Promise.resolve()) {
     return createResponse(body,requests.length);
   }
 ` + code + `
-  return {editor,textarea,save,saveDraft,sendNow,close,result,requests,submitted,get finished(){return finished;}};
+  return {editor,textarea,save,saveDraft,sendNow,close,result,requests,submitted,setBatchMode(value){batchMode=value;},get finished(){return finished;}};
 }
 function response(status,body){return Promise.resolve({ok:status>=200&&status<300,status,json:()=>Promise.resolve(body)});}
 function created(body){return {id:body.id,state:'created',inBatch:body.inBatch};}
@@ -110,6 +111,20 @@ function ctrlEnter(ui){ui.textarea.handlers.keydown({key:'Enter',ctrlKey:true,is
   ctrlEnter(malformed);await settle();
   assert.equal(malformed.requests[0].id,malformed.requests[1].id);
   assert.equal(malformed.finished,1);assert.equal(malformed.submitted.length,0);
+  // Toggling mode during an in-flight save must not change its send intent.
+  let finishBatchSave;
+  const toggledOff=setup(body=>new Promise(resolve=>{finishBatchSave=()=>resolve({ok:true,status:201,json:()=>Promise.resolve(created(body))});}));
+  toggledOff.textarea.value='batch draft';toggledOff.saveDraft.click();
+  toggledOff.setBatchMode(false);finishBatchSave();await settle();
+  assert.equal(toggledOff.requests[0].inBatch,true);
+  assert.equal(toggledOff.submitted.length,0);assert.equal(toggledOff.finished,1);
+
+  let finishNormalSave;
+  const toggledOn=setup(body=>new Promise(resolve=>{finishNormalSave=()=>resolve({ok:true,status:201,json:()=>Promise.resolve(created(body))});}));
+  toggledOn.setBatchMode(false);toggledOn.textarea.value='normal immediate comment';toggledOn.save.click();
+  toggledOn.setBatchMode(true);finishNormalSave();await settle();
+  assert.equal(toggledOn.requests[0].inBatch,false);
+  assert.equal(toggledOn.submitted.length,1);assert.equal(toggledOn.finished,1);
   console.log('batch editor retry actions ok');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 `
