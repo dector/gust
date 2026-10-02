@@ -2,7 +2,7 @@
 
 ## Agreed UX
 
-- Ctrl+B, outside editable fields, toggles batch mode. Blue accents replace gold on the comment button, selection outline, cursor, and dialog while active.
+- Ctrl+C, outside editable fields, enters single-comment mode immediately; a second Ctrl+C within 350 ms upgrades the same gesture to batch mode. Ctrl+C in batch mode turns it off, and in single-comment mode a Ctrl+C after the 350 ms window turns it off. Ctrl+B is removed. Selected text and editable fields copy normally. Blue accents replace gold on the comment button, selection outline, cursor, and dialog while batch mode is active.
 - Mode controls collection, not the lifetime of the unsent batch. Turning it off never submits or discards drafts. Turning it back on resumes collection into the same batch.
 - New comments saved during batch mode join the batch. Existing drafts never join automatically.
 - In batch mode the editor has `Exclude from batch`, `Save draft`, and `Send now`. Ctrl+Enter saves. Excluded comments remain standalone draft notes. Send now submits only that comment.
@@ -22,7 +22,7 @@ Keep existing single-comment submission and legacy CLI submission compatible. Th
 1. **Plan** — commit this agreement and implementation sequence.
 2. **Store** — additive SQLite migration, draft membership, draft-only membership changes, atomic selected-batch submission, restart and isolation tests.
 3. **API** — creation membership, membership action, batch-filtered submit, origin/state/error tests.
-4. **Browser collection** — routing, Ctrl+B, blue accents, editor actions, persistent toolbar, draft membership controls, focused JS/browser tests.
+4. **Browser collection** — routing, Ctrl+C double-tap, blue accents, editor actions, persistent toolbar, draft membership controls, focused JS/browser tests.
 5. **Review grouping** — batch groups and progress without losing per-thread actions; regression tests. May share the browser slice if closely coupled.
 6. **Workflow/docs** — coordinated batch processing guidance, per-thread replies/review, updated user documentation and guidance tests.
 7. **Verification/fixes** — full tests, independent review, focused fixes in separate conventional commits.
@@ -32,7 +32,7 @@ Keep existing single-comment submission and legacy CLI submission compatible. Th
 - Existing drafts and excluded notes are never included by batch Send.
 - Toggle off, reload, toggle on, add another comment, then Send: original membership survives.
 - Send now never flushes the pending batch.
-- Ctrl+B leaves editable fields and normal browser editing alone; Ctrl+Enter saves in batch mode.
+- The Ctrl+C double-tap leaves editable fields, selected text, and normal browser editing alone; Ctrl+Enter saves in batch mode.
 - Failed saves/submits preserve recoverable drafts and do not close the editor prematurely.
 - Membership changes reject nondrafts; submission is atomic and guards invalid/stale state.
 - Submission keeps batch mode active or inactive exactly as it was.

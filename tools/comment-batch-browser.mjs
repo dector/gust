@@ -57,6 +57,32 @@ async function eventually(fn, message, timeout = 8000) {
   }
   throw new Error(message + (last ? `: ${last.message}` : ''));
 }
+const SHORTCUT_UPGRADE_MS = 350;
+async function commentModeActive(page) {
+  return (await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed')) === 'true';
+}
+async function batchModeActive(page) {
+  return (await page.locator('html.__gust_batch_mode').count()) === 1;
+}
+// Batch mode is reached only through the Ctrl+C double-tap. When a mode is
+// already active, a single Ctrl+C turns it off; wait past the upgrade window
+// first so a single-shot press means "off" instead of "upgrade".
+async function enableBatch(page) {
+  if (await commentModeActive(page)) {
+    await page.waitForTimeout(SHORTCUT_UPGRADE_MS + 100);
+    await page.keyboard.press('Control+c');
+    await eventually(() => page.locator('#__gust_comment_bubble').getAttribute('aria-pressed').then(v => v === 'false'), 'Ctrl+C did not turn comment mode off before enabling batch');
+  }
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+c');
+  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'double Ctrl+C did not enable batch mode');
+}
+// A single Ctrl+C turns batch mode off.
+async function disableBatch(page) {
+  if (!(await batchModeActive(page))) return;
+  await page.keyboard.press('Control+c');
+  await eventually(() => page.locator('#__gust_comment_bubble').getAttribute('aria-pressed').then(v => v === 'false'), 'Ctrl+C did not turn batch mode off');
+}
 async function api(page, endpoint, method = 'GET', body) {
   return page.evaluate(async ({ endpoint, method, body }) => {
     const response = await fetch(endpoint, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
@@ -118,35 +144,63 @@ try {
   await page.goto(base, { waitUntil: 'networkidle' });
   await eventually(() => page.locator('#__gust_comment_bubble').count().then(n => n === 1), 'comments toolbar did not mount');
 
-  // Ctrl+B activates batch selection immediately, and leaves editable fields alone.
+  // Ctrl+B was removed. It must never activate or change comment mode.
   await page.locator('body').click({ position: { x: 700, y: 30 } });
   await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'Ctrl+B did not enable batch mode');
-  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'Ctrl+B must enter comment selection, not only toggle a flag');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'Ctrl+B must not activate comment mode');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+B must not enable batch mode');
+
+  // Ctrl+C from off enters single-shot mode immediately, not batch.
+  await page.keyboard.press('Control+c');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'Ctrl+C must enter single-shot comment mode');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'a single Ctrl+C must not enable batch mode');
+  // Ctrl+B cannot upgrade the active single-shot mode.
+  await page.keyboard.press('Control+b');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+B must not upgrade single-shot to batch');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'Ctrl+B must leave single-shot active');
+  // Once the 350ms upgrade window has passed, Ctrl+C turns single-shot off.
+  await page.waitForTimeout(SHORTCUT_UPGRADE_MS + 100);
+  await page.keyboard.press('Control+c');
+  await eventually(() => page.locator('#__gust_comment_bubble').getAttribute('aria-pressed').then(v => v === 'false'), 'Ctrl+C after the upgrade window must turn single-shot off');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'turning single-shot off must not enable batch');
+
+  // A second Ctrl+C within the 350ms window upgrades the gesture to batch.
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+c');
+  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'double Ctrl+C did not upgrade to batch mode');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'batch upgrade must keep comment selection active');
   const blue = await eventually(async () => {
     const color = await page.locator('#__gust_comment_bubble').evaluate(el => getComputedStyle(el).color);
     return /rgb\(96, 165, 250\)|rgb\(59, 130, 246\)/.test(color) ? color : false;
   }, 'batch mode blue transition did not settle');
   assert.match(blue, /rgb\(96, 165, 250\)|rgb\(59, 130, 246\)/);
-  await page.keyboard.press('Control+c');
-  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+C must switch batch to single-shot');
-  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'switch must keep selection active');
-  await page.keyboard.press('Control+c');
-  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'second Ctrl+C must deactivate single-shot');
-  await page.keyboard.press('Control+c');
+  // Ctrl+B cannot take batch mode back off.
   await page.keyboard.press('Control+b');
-  assert.equal(await page.locator('html.__gust_batch_mode').count(), 1, 'Ctrl+B must switch single-shot to batch');
-  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'batch switch must keep selection active');
-  await page.locator('#editable').focus();
-  await page.keyboard.press('Control+b');
-  assert.equal(await page.locator('html.__gust_batch_mode').count(), 1, 'Ctrl+B in editable must not toggle batch mode');
-  await page.locator('#editable').pressSequentially('b');
-  assert.equal(await page.locator('#editable').inputValue(), 'b', 'editable key input must be preserved');
-  await page.locator('body').evaluate(el => { el.tabIndex = -1; el.focus(); });
-  await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 0), 'Ctrl+B did not disable batch mode');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 1, 'Ctrl+B must not disable batch mode');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'Ctrl+B must not disable batch selection');
+  // A single Ctrl+C turns batch mode off.
+  await page.keyboard.press('Control+c');
+  await eventually(() => page.locator('#__gust_comment_bubble').getAttribute('aria-pressed').then(v => v === 'false'), 'Ctrl+C in batch mode must turn comment mode off');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+C in batch mode must clear batch mode');
 
-  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'second Ctrl+B must deactivate batch selection');
+  // Editable fields and selected text keep normal copy behavior.
+  await page.locator('#editable').focus();
+  await page.locator('#editable').fill('editable copy text');
+  await page.locator('#editable').evaluate(el => el.setSelectionRange(0, el.value.length));
+  await page.keyboard.press('Control+c');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#editable').inputValue(), 'editable copy text', 'Ctrl+C in an editable must not change its value');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'Ctrl+C in an editable must not activate comment mode');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+C in an editable must not enable batch mode');
+  await page.locator('body').click({ position: { x: 700, y: 30 } });
+  await page.locator('#target').evaluate(el => { const range = document.createRange(); range.selectNodeContents(el); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); });
+  await page.keyboard.press('Control+c');
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'Ctrl+C with selected text must not activate comment mode');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+C with selected text must not enable batch mode');
 
   // Create a pre-existing standalone draft with autosubmit disabled.
   if (await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed') !== 'true') await page.locator('#__gust_comment_bubble').click();
@@ -162,8 +216,7 @@ try {
   const normal = await waitDraft(page, 'preexisting normal draft');
   assert.equal(normal.inBatch, false, 'normal draft unexpectedly joined batch');
 
-  await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'batch mode did not resume');
+  await enableBatch(page);
   const first = await createDraft(page, 'first batch member');
   assert.equal(first.inBatch, true, 'new batch-mode draft must be included');
   const excluded = await createDraft(page, 'excluded note', { exclude: true });
@@ -171,8 +224,7 @@ try {
   const second = await createDraft(page, 'second batch member');
   assert.equal(second.inBatch, true, 'repeated save in batch mode must join same batch');
   await assertDraftSet(page, ['preexisting normal draft', 'first batch member', 'excluded note', 'second batch member']);
-  await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 0), 'toggle off failed');
+  await disableBatch(page);
   assert.equal(await page.locator('#__gust_batch_send').isVisible(), true, 'batch send count must persist with mode off');
   assert.match(await page.locator('#__gust_batch_send').innerText(), /2 comments in draft/);
   const sendBox = await page.locator('#__gust_batch_send').boundingBox();
@@ -196,8 +248,7 @@ try {
 
   // Turning collection mode on resumes membership. Lose one committed create
   // response; retry Save draft with the same immutable payload/client ID.
-  await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'could not resume batch mode');
+  await enableBatch(page);
   const originalCreatePayloads = [];
   let loseCreateResponse = true;
   await page.route('**/__gust/comments', async route => {
@@ -321,8 +372,7 @@ try {
   assert.equal((await comments(page)).find(c => c.id === committed.id).state, 'submitted');
   await page.unroute('**/__gust/comments/submit?id=*');
   await assertDraftSet(page, ['preexisting normal draft', 'first batch member', 'excluded note', 'second batch member', 'lost create response', 'recovered after validation', 'lost Send now create']);
-  await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 0), 'could not turn batch mode off');
+  await disableBatch(page);
 
   // Batch send only submits opted-in members, leaving excluded drafts untouched.
   const submitBatch = page.locator('#__gust_batch_send');
@@ -357,8 +407,7 @@ try {
 
   // Send another collection while batch mode and element selection are active.
   // The floating Send action must not be captured as a page comment target.
-  await page.keyboard.press('Control+b');
-  await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'could not enable mode for active-mode Send');
+  await enableBatch(page);
   const activeModeDraft = await createDraft(page, 'sent while mode active');
   assert.equal(activeModeDraft.inBatch, true);
   assert.equal(await page.locator('html.__gust_selecting').count(), 1, 'Save draft should leave selection active');
