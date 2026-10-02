@@ -80,6 +80,7 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		ID      string `json:"id"`
 		Path    string `json:"path"`
 		Text    string `json:"text"`
 		HTML    string `json:"html"`
@@ -101,8 +102,41 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_context", "html or locator exceeds its allowed size")
 		return
 	}
-	c, err := s.comments.Create(r.Context(), comments.Input{Path: in.Path, Text: in.Text, HTML: scrubCommentHTML(in.HTML), Locator: in.Locator, InBatch: in.InBatch})
+	html := scrubCommentHTML(in.HTML)
+	if in.ID != "" && !validCommentID(in.ID) {
+		writeAPIError(w, 400, "invalid_id", "id must be 32 lowercase hexadecimal characters")
+		return
+	}
+	input := comments.Input{ID: in.ID, Path: in.Path, Text: strings.TrimSpace(in.Text), HTML: html, Locator: in.Locator, InBatch: in.InBatch}
+	if in.ID != "" {
+		c, err := s.comments.Get(r.Context(), in.ID)
+		if err == nil {
+			if sameCommentCreateInput(c, input) {
+				writeJSON(w, http.StatusOK, c)
+			} else {
+				writeAPIError(w, http.StatusConflict, "id_conflict", "id is already used for a different comment")
+			}
+			return
+		}
+		if !errors.Is(err, comments.ErrNotFound) {
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not create comment")
+			return
+		}
+	}
+	c, err := s.comments.Create(r.Context(), input)
 	if err != nil {
+		if in.ID != "" {
+			// A concurrent request may have inserted this ID after the lookup.
+			existing, getErr := s.comments.Get(r.Context(), in.ID)
+			if getErr == nil {
+				if sameCommentCreateInput(existing, input) {
+					writeJSON(w, http.StatusOK, existing)
+				} else {
+					writeAPIError(w, http.StatusConflict, "id_conflict", "id is already used for a different comment")
+				}
+				return
+			}
+		}
 		writeAPIError(w, 500, "internal_error", "could not create comment")
 		return
 	}
@@ -439,6 +473,22 @@ func hasControl(s string) bool {
 		}
 	}
 	return false
+}
+
+func validCommentID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func sameCommentCreateInput(c comments.Comment, in comments.Input) bool {
+	return c.ID == in.ID && c.Path == in.Path && c.Text == strings.TrimSpace(in.Text) && c.HTML == scrubCommentHTML(in.HTML) && c.Locator == in.Locator
 }
 
 func scrubCommentHTML(html string) string {
