@@ -1588,7 +1588,7 @@ function cancelCommentMode(){
   if(popoverCommentId){closeCommentPopover();return true;}
   return false;
 }
-function chooseSelection(e){if(!hoverPath.length)return;const editor=document.querySelector("[data-editor]");if(editor){editor.dataset.savedDraftId="";editor.dataset.savedDraftState="";editor.dataset.sendPending="";}const exclude=editor&&editor.querySelector("[data-exclude-label] input");if(exclude)exclude.checked=false;if(editor){const box=editor.querySelector("textarea");if(box){box.value="";box.disabled=false;}}selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
+function chooseSelection(e){if(!hoverPath.length)return;const editor=document.querySelector("[data-editor]");if(editor){editor.dataset.savedDraftId="";editor.dataset.savedDraftState="";editor.dataset.sendPending="";}const exclude=editor&&editor.querySelector("[data-exclude-label] input");if(exclude)exclude.checked=false;if(editor){const box=editor.querySelector("textarea");if(box){box.value="";box.readOnly=false;}}selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
   gustSelection=!!e.ctrlKey&&isGustNodeOrPanel(selectedElement);
   const r=selectedElement.getBoundingClientRect();
   selectedPoint=r.width>0&&r.height>0?{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}:null;
@@ -1696,10 +1696,10 @@ function createCommentUI(){
   let sendNowRequested=false;
   let pendingCreate=null;
   const save=document.createElement("button");save.type="button";save.dataset.save="";save.textContent="Save comment";
-  const saveDraft=document.createElement("button");saveDraft.type="button";saveDraft.dataset.saveDraft="";saveDraft.textContent="Save draft";saveDraft.hidden=true;saveDraft.addEventListener("click",function(){sendNowRequested=false;save.click();});
-  const sendNow=document.createElement("button");sendNow.type="button";sendNow.dataset.sendNow="";sendNow.textContent="Send now";sendNow.hidden=true;sendNow.addEventListener("click",function(){sendNowRequested=true;save.click();});
+  const saveDraft=document.createElement("button");saveDraft.type="button";saveDraft.dataset.saveDraft="";saveDraft.textContent="Save draft";saveDraft.hidden=true;saveDraft.addEventListener("click",function(){if(save.disabled)return;sendNowRequested=false;save.click();});
+  const sendNow=document.createElement("button");sendNow.type="button";sendNow.dataset.sendNow="";sendNow.textContent="Send now";sendNow.hidden=true;sendNow.addEventListener("click",function(){if(save.disabled)return;sendNowRequested=true;save.click();});
   const result=document.createElement("span");result.dataset.result="";
-  textarea.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.ctrlKey&&!e.isComposing){e.preventDefault();save.click();}});
+  textarea.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.ctrlKey&&!e.isComposing){e.preventDefault();sendNowRequested=false;save.click();}});
   save.addEventListener("click",function(){
     if(save.disabled)return;
     const wantsSendNow=sendNowRequested;sendNowRequested=false;
@@ -1722,14 +1722,14 @@ function createCommentUI(){
     }
     if(!pendingCreate){
       if(!el||!text){result.textContent="Choose an element and enter a comment.";return;}
-      try { pendingCreate={id:newCommentRequestID(),sendNow:wantsSendNow,body:{id:"",path:location.pathname,text:text,locator:locatorFor(el,selectedPoint),html:safeOuterHTML(el),inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow}};pendingCreate.body.id=pendingCreate.id;editor.dataset.pendingCreate="1"; }
+      try { pendingCreate={id:newCommentRequestID(),body:{id:"",path:location.pathname,text:text,locator:locatorFor(el,selectedPoint),html:safeOuterHTML(el),inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow}};pendingCreate.body.id=pendingCreate.id;editor.dataset.pendingCreate="1"; }
       catch(e){result.textContent=e.message;return;}
     }
-    const create=pendingCreate,sendAfterCreate=create.sendNow||wantsSendNow;
-    save.disabled=true;textarea.disabled=true;result.textContent=create.id?"Saving draft safely…":"Saving…";
+    const create=pendingCreate,sendAfterCreate=wantsSendNow;
+    save.disabled=true;textarea.readOnly=true;result.textContent=create.id?"Saving draft safely…":"Saving…";
     fetch("/__gust/comments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(create.body)})
-      .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
-      .then(function(comment){pendingCreate=null;editor.dataset.pendingCreate="";textarea.disabled=false;editor.dataset.savedDraftId=comment.id;editor.dataset.savedDraftState=comment.state||"created";editor.dataset.sendPending="";refreshComments();
+      .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok){const failure=new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));failure.definitive=r.status>=400&&r.status<500;throw failure;}return data;});})
+      .then(function(comment){if(!comment||comment.id!==create.id||!["created","submitted","seen","review","done"].includes(comment.state))throw new Error("Invalid save response.");pendingCreate=null;editor.dataset.pendingCreate="";textarea.readOnly=sendAfterCreate;editor.dataset.savedDraftId=comment.id;editor.dataset.savedDraftState=comment.state||"created";editor.dataset.sendPending="";refreshComments();
         if(sendAfterCreate){result.textContent="Sending draft…";return submitCreatedComment(comment.id,result,comment.state).then(function(){textarea.value="";editor.dataset.savedDraftId="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){editor.dataset.sendPending="1";result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";});}
         textarea.value="";result.textContent="Draft saved.";finishCommentEdit();
         if(batchMode)return;
@@ -1737,7 +1737,7 @@ function createCommentUI(){
         submitResult.textContent="Submitting…";
         return submitCreatedComment(comment.id,submitResult,comment.state).catch(function(e){submitResult.textContent="Autosubmit failed: "+e.message+" — use this draft's Send now action to retry.";refreshComments();});
       })
-      .catch(function(e){result.textContent="Save outcome unclear: "+e.message+" — retry this save safely before editing or closing.";}).finally(function(){save.disabled=false;});
+      .catch(function(e){if(e.definitive){pendingCreate=null;editor.dataset.pendingCreate="";textarea.readOnly=false;result.textContent="Could not save: "+e.message;}else {result.textContent="Save outcome unclear: "+e.message+" — retry this save safely before editing or closing.";}}).finally(function(){save.disabled=false;});
   });
   const title=document.createElement("strong");title.textContent="Add a comment";title.dataset.editorTitle="";
   const hint=document.createElement("small");hint.textContent="Ctrl+Enter to save";hint.dataset.editorHint="";
