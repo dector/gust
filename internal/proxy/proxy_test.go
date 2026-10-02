@@ -512,7 +512,7 @@ func TestCommentUnreadBadgeBehaviorWhenNodeAvailable(t *testing.T) {
 }
 
 const commentUnreadBadgeHarnessPrelude = `class El {
-  constructor() { this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; this.children = []; }
+  constructor() { this.dataset = {}; this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; this.children = []; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   appendChild(child) { this.children.push(child); return child; }
@@ -536,6 +536,8 @@ const localStorage = {
 function openCommentPopover(id) { opened.push(id); popoverCommentId = id; markThreadSeen(commentState.find(function(c) { return c.id === id; })); }
 function locateComment(c) { located.push(c && c.id); }
 function beginCommentTool() { bubbleClicks++; }
+let batchSendButton = null;
+function sendCommentBatch() {}
 function assert(condition, message) { if (!condition) throw new Error(message); }
 `
 
@@ -601,7 +603,7 @@ func TestCommentModeBubbleBehaviorWhenNodeAvailable(t *testing.T) {
 }
 
 const commentModeBubbleHarnessPrelude = `class El {
-  constructor() { this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; this.children = []; }
+  constructor() { this.dataset = {}; this.attrs = {}; this.title = ''; this.hidden = false; this.innerHTML = ''; this.listeners = {}; this.children = []; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   appendChild(child) { this.children.push(child); this.child = child; return child; }
@@ -641,6 +643,8 @@ function savePinned() {}
 function scheduleRenderPath() {}
 function updateEditorPosition() {}
 function openFirstUnreadComment() { badgeClicks++; }
+let batchSendButton = null;
+function sendCommentBatch() {}
 let panelSyncs = 0;
 function syncPanel() { panelSyncs++; }
 function assert(condition, message) { if (!condition) throw new Error(message); }

@@ -1669,8 +1669,8 @@ function mountCommentBubble(){
   if(commentBubble)return;
   commentBubble=document.createElement("button");commentBubble.id="__gust_comment_bubble";commentBubble.type="button";commentBubble.title="Add comment";commentBubble.setAttribute("aria-label","Add comment");commentBubble.setAttribute("aria-pressed","false");commentBubble.innerHTML=commentAddIconSvg;commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});
   commentUnreadBadge=document.createElement("button");commentUnreadBadge.id="__gust_comment_unread_badge";commentUnreadBadge.type="button";commentUnreadBadge.hidden=true;commentUnreadBadge.title="No new comment threads";commentUnreadBadge.setAttribute("aria-label","No new comment threads");commentUnreadBadge.setAttribute("aria-live","polite");commentUnreadBadge.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openFirstUnreadComment();});
-  batchSendButton=document.createElement("button");batchSendButton.type="button";batchSendButton.id="__gust_batch_send";batchSendButton.dataset.gustOverlay="";batchSendButton.textContent="0 comments in draft · Send";batchSendButton.hidden=true;batchSendButton.addEventListener("click",sendCommentBatch);document.body.appendChild(batchSendButton);
   document.body.appendChild(commentBubble);document.body.appendChild(commentUnreadBadge);
+  batchSendButton=document.createElement("button");batchSendButton.type="button";batchSendButton.id="__gust_batch_send";batchSendButton.dataset.gustOverlay="";batchSendButton.textContent="0 comments in draft · Send";batchSendButton.hidden=true;batchSendButton.addEventListener("click",sendCommentBatch);document.body.appendChild(batchSendButton);
 }
 function createCommentUI(){
   if(commentUI)return;
