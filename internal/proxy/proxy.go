@@ -349,6 +349,14 @@ func (s *Server) handler(target *url.URL) http.Handler {
 			return
 		}
 		commentID := strings.TrimPrefix(r.URL.Path, "/__gust/comments/")
+		if strings.HasPrefix(r.URL.Path, "/__gust/comments/") && commentActionID(r.URL.Path, "batch") != "" {
+			if !s.commentsEnabled {
+				http.NotFound(w, r)
+				return
+			}
+			s.serveCommentBatch(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/__gust/comments/") && commentActionID(r.URL.Path, "reply") != "" {
 			if !s.commentsEnabled {
 				http.NotFound(w, r)
@@ -613,6 +621,7 @@ let commentUI = null;
 let commentToolbar = null;
 let commentBubble = null;
 let commentUnreadBadge = null;
+let batchSendButton = null;
 let windButton = null;
 let windEnabled = false;
 let windTimer = null;
@@ -628,6 +637,7 @@ let thunderTimer = null;
 let soundUnlockArmed = false;
 const windMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let selecting = false;
+let batchMode = false;
 let oneShotComment = false;
 let hoverPath = [];
 let selectedIndex = 0;
@@ -665,6 +675,7 @@ const commentTargetIconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 const commentOtherURLIconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><path d="M141.38,64.68l11-11a46.62,46.62,0,0,1,65.94,0h0a46.62,46.62,0,0,1,0,65.94L193.94,144,183.6,154.34a46.63,46.63,0,0,1-66-.05h0A46.48,46.48,0,0,1,104,120.06" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M114.62,191.32l-11,11a46.63,46.63,0,0,1-66-.05h0a46.63,46.63,0,0,1,.06-65.89L72.4,101.66a46.62,46.62,0,0,1,65.94,0h0A46.45,46.45,0,0,1,152,135.94" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>'; 
 // The cursor hotspot is the bubble's lower-left tail, where the click lands.
 const commentCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#f59e0b"))+"') 2 21, pointer";
+const batchCursor="url('data:image/svg+xml,"+encodeURIComponent(commentIconSvg.replace("currentColor","#3b82f6"))+"') 2 21, pointer";
 const gustAppPort = %d;
 const selfDev = %t;
 const commentAnchorV2 = %t;
@@ -1252,12 +1263,16 @@ function commentPopoverEl(){
   reattach.addEventListener("click",function(){startReattach(popoverCommentId);});
   const resolve=document.createElement("button");resolve.type="button";resolve.className="__gust_popover_action __gust_popover_resolve";resolve.textContent="Resolve";
   resolve.addEventListener("click",resolvePopoverThread);
+  const addToBatch=document.createElement("button");addToBatch.type="button";addToBatch.className="__gust_popover_action";addToBatch.textContent="Add to the batch";
+  addToBatch.addEventListener("click",function(){const c=commentState.find(function(x){return x.id===popoverCommentId;});if(!c)return;addToBatch.disabled=true;fetch("/__gust/comments/"+encodeURIComponent(c.id)+"/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({inBatch:true})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error&&d.error.message||("Request failed ("+r.status+")"));return d;});}).then(function(){refreshComments();}).catch(function(e){popoverActionError="Could not add to batch: "+e.message;}).finally(function(){addToBatch.disabled=false;renderCommentPopover();});});
+  const standaloneSend=document.createElement("button");standaloneSend.type="button";standaloneSend.className="__gust_popover_action";standaloneSend.textContent="Send now";
+  standaloneSend.addEventListener("click",function(){const c=commentState.find(function(x){return x.id===popoverCommentId;});if(!c)return;standaloneSend.disabled=true;submitCreatedComment(c.id,null).catch(function(e){popoverActionError="Send failed: "+e.message;}).finally(function(){standaloneSend.disabled=false;renderCommentPopover();});});
   const remove=document.createElement("button");remove.type="button";remove.className="__gust_popover_action __gust_popover_remove";remove.textContent="Remove draft";
   remove.addEventListener("click",removePopoverDraft);
-  actions.append(locate,resolve,remove,reattach);
+  actions.append(locate,resolve,addToBatch,standaloneSend,remove,reattach);
   const error=document.createElement("p");error.className="__gust_popover_error";error.hidden=true;
   commentPopover.append(head,text,meta,replies,replybox,actions,error);
-  popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,reattach:reattach,resolve:resolve,remove:remove,error:error};
+  popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,reattach:reattach,resolve:resolve,remove:remove,standaloneSend:standaloneSend,addToBatch:addToBatch,error:error};
   document.documentElement.appendChild(commentPopover);
   return commentPopover;
 }
@@ -1378,6 +1393,8 @@ function renderCommentPopover(){
   parts.locate.hidden=!found;
   parts.reattach.hidden=found;
   parts.remove.hidden=c.state!=="created";
+  parts.standaloneSend.hidden=c.state!=="created"||!!c.inBatch;
+  parts.addToBatch.hidden=c.state!=="created"||!!c.inBatch||!commentState.some(function(x){return x.state==="created"&&x.inBatch;});
   parts.remove.disabled=popoverDeletePending;
   parts.remove.textContent=popoverDeletePending?"Removing\u2026":"Remove draft";
   parts.resolve.hidden=c.state==="created";
@@ -1402,17 +1419,58 @@ function openCommentPopover(id){
   // Re-render the panel so the unread dot/pin class clears immediately.
   if(commentUI)renderCommentState();else renderCommentPopover();
 }
+function newCommentRequestID(){
+  if(!window.crypto||!window.crypto.getRandomValues)throw new Error("Secure random IDs are unavailable; cannot safely save this comment.");
+  const bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);return Array.from(bytes,function(b){return b.toString(16).padStart(2,"0");}).join("");
+}
+function submitCreatedComment(id,result,knownState){
+  if(knownState&&knownState!=="created")return Promise.resolve();
+  const current=commentState.find(function(c){return c.id===id;});if(current&&current.state!=="created")return Promise.resolve();
+  return fetch("/__gust/comments/submit?id="+encodeURIComponent(id),{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok){const failure=new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));if(r.status!==409)throw failure;return fetch("/__gust/comments",{cache:"no-store"}).then(function(list){if(!list.ok)throw failure;return list.json();}).then(function(comments){const current=Array.isArray(comments)&&comments.find(function(c){return c.id===id;});if(current&&current.state!=="created")return current;throw failure;});}return data;});})
+    .then(function(){if(result)result.textContent="Comment submitted.";refreshComments();});
+}
+function batchMembers(){return commentState.filter(function(c){return c.state==="created"&&c.inBatch;});}
+function sendCommentBatch(){
+  if(submittingComments||!batchMembers().length)return;
+  submittingComments=true;const button=batchSendButton;if(button)button.disabled=true;
+  const result=commentUI&&commentUI.querySelector("[data-submit-result]");if(result)result.textContent="Sending batch…";
+  fetch("/__gust/comments/submit?batch=1",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
+    .then(function(){if(result)result.textContent="Batch submitted.";refreshComments();})
+    .catch(function(e){if(result)result.textContent="Could not confirm batch send: "+e.message+" — refreshing comment status.";refreshComments();})
+    .finally(function(){submittingComments=false;renderCommentState();});
+}
 function renderCommentState(){
   if(!commentUI)return;
   updateUnreadBadge();
   const list=commentUI.querySelector("[data-comments]"); if(!list)return;list.replaceChildren();
   const active=commentState.filter(c=>c.state!=="done");
   const created=active.filter(c=>c.state==="created").length;
-  const submit=commentUI.querySelector("[data-submit]");submit.hidden=!created;submit.disabled=submittingComments;
-  submit.textContent="Submit "+created;
+
+  const batchCount=batchMembers().length,batchSend=batchSendButton;
+  if(batchSend){batchSend.hidden=batchCount===0;batchSend.disabled=submittingComments;batchSend.textContent=batchCount+" comments in draft · Send";}
   commentUI.querySelector("[data-comment-count]").textContent=active.length?String(active.length):"";
   const finished=commentState.length-active.length;
+  const ordered=[],targetById=new Map(),groups=[],batchGroups=new Map();
   active.slice().reverse().forEach(function(c){
+    let group;
+    if(c.batchId){group=batchGroups.get(c.batchId);if(!group){group={batchId:c.batchId,comments:[]};batchGroups.set(c.batchId,group);groups.push(group);}}
+    else {group={batchId:"",comments:[]};groups.push(group);}
+    group.comments.push(c);ordered.push(c);
+  });
+  groups.forEach(function(group){
+    let target;
+    if(group.batchId){
+      const members=commentState.filter(function(x){return x.batchId===group.batchId;});
+      const ready=members.filter(function(x){return x.state==="review"||x.state==="done";}).length;
+      const section=document.createElement("section");section.className="__gust_batch_group";
+      const heading=document.createElement("div");heading.className="__gust_batch_group_title";heading.textContent=ready+" of "+members.length+" ready for review";
+      const threads=document.createElement("div");threads.className="__gust_batch_group_threads";section.append(heading,threads);list.appendChild(section);target=threads;
+    } else {target=document.createElement("div");target.className="__gust_comment_unit";list.appendChild(target);}
+    group.comments.forEach(function(c){targetById.set(c.id,target);});
+  });
+  ordered.forEach(function(c){
     const row=document.createElement("div");row.className="__gust_comment_item";row.dataset.commentId=c.id;row.tabIndex=-1;
     const open=document.createElement("button");open.type="button";open.className="__gust_comment_row __gust_comment_row_"+c.state;
     const body=document.createElement("span");body.className="__gust_comment_text";body.textContent=(c.text||"").replace(/\s+/g," ").trim()||"(empty comment)";open.appendChild(body);
@@ -1446,7 +1504,7 @@ function renderCommentState(){
           .catch(function(e){commentUI.querySelector("[data-poll-error]").textContent="Could not remove draft: "+e.message;remove.disabled=false;});
       });row.appendChild(remove);
     }
-    list.appendChild(row);
+    targetById.get(c.id).appendChild(row);
   });
   if(!active.length){const empty=document.createElement("div");empty.className="__gust_comments_empty";empty.textContent="No open comments yet.";list.appendChild(empty);}
   if(finished){const summary=document.createElement("div");summary.className="__gust_done_summary";summary.textContent=finished+" finished";list.appendChild(summary);}
@@ -1502,9 +1560,10 @@ function updateCommentUI(){
   flushPendingRefresh();
   if(!commentUI)return;
   document.documentElement.classList.toggle("__gust_selecting",selecting);
+  document.documentElement.classList.toggle("__gust_batch_mode",batchMode);
   if(!selecting)document.documentElement.classList.remove("__gust_ctrl");
-  const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click selects any element, Gust's own UI included)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click selects any element, Gust's own UI included)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);[commentBubble].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle)modeTitle.hidden=!active;const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active;
-  const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){const title=editor.querySelector("[data-editor-title]");if(title)title.textContent=reattachId?"Reattach comment":"Add a comment";const textarea=editor.querySelector("textarea");if(textarea)textarea.hidden=!!reattachId;const save=editor.querySelector("[data-save]");if(save)save.textContent=reattachId?"Save anchor":"Save comment";const hint=editor.querySelector("[data-editor-hint]");if(hint)hint.hidden=!!reattachId;editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen){const target=editor.querySelector("[data-editor-target]");if(target){const selector=locatorFor(selectedElement,selectedPoint);const locator=JSON.parse(selector);renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";}updateEditorPosition();}}
+  const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click selects any element, Gust's own UI included)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click selects any element, Gust's own UI included)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);gustWidget.classList.toggle("__gust_batch",batchMode);[commentBubble].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle){modeTitle.hidden=!active;modeTitle.textContent=batchMode?"Batch comment mode":"Comment Mode";}const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active||batchMode;
+  const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){const exclude=editor.querySelector("[data-exclude-label]");if(exclude)exclude.hidden=!active||!batchMode||!!reattachId;const batchSave=editor.querySelector("[data-save-draft]");if(batchSave)batchSave.hidden=!batchMode||!!reattachId;const sendNow=editor.querySelector("[data-send-now]");if(sendNow)sendNow.hidden=!batchMode||!!reattachId;editor.classList.toggle("__gust_batch_editor",batchMode);const title=editor.querySelector("[data-editor-title]");if(title)title.textContent=reattachId?"Reattach comment":"Add a comment";const textarea=editor.querySelector("textarea");if(textarea)textarea.hidden=!!reattachId;const save=editor.querySelector("[data-save]");if(save){save.textContent=reattachId?"Save anchor":"Save comment";save.hidden=batchMode&&!reattachId;}const hint=editor.querySelector("[data-editor-hint]");if(hint)hint.hidden=!!reattachId;editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen){const target=editor.querySelector("[data-editor-target]");if(target){const selector=locatorFor(selectedElement,selectedPoint);const locator=JSON.parse(selector);renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";}updateEditorPosition();}}
   scheduleRenderPath();
 }
 function closeCommentMode(){reattachId=null;oneShotComment=false;selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
@@ -1517,19 +1576,19 @@ function startReattach(id){
 function resumeSelection(){selecting=true;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);updateCommentUI();}
 /* Leaving the editor returns to persistent comment mode, except for the
    one-comment Ctrl+C shortcut, where it exits comment mode entirely. */
-function finishCommentEdit(){if(oneShotComment)closeCommentMode();else resumeSelection();}
+function finishCommentEdit(){if(oneShotComment&&!batchMode)closeCommentMode();else resumeSelection();}
 /* Escape backs out of the current comment interaction. An open editor is
    cleared and left first. For the one-comment Ctrl+C shortcut an empty draft
    closes the dialog and exits comment mode, while a non-empty draft is kept
    open instead of being silently discarded. Permanent mode still clears the
    draft and returns to selection. */
 function cancelCommentMode(){
-  if(editorOpen){const box=document.querySelector("[data-editor] textarea");const draft=box?String(box.value||""):"";if(oneShotComment){if(draft.trim())return true;closeCommentMode();return true;}if(box)box.value="";if(reattachId)closeCommentMode();else resumeSelection();return true;}
+  if(editorOpen){const editor=document.querySelector("[data-editor]"),box=editor&&editor.querySelector("textarea");const draft=box?String(box.value||""):"";if(editor&&(editor.dataset.pendingCreate==="1"||editor.dataset.sendPending==="1")){const result=editor.querySelector("[data-result]");if(result)result.textContent="Your draft is preserved. Retry Save or Send now before leaving this editor.";return true;}if(oneShotComment){if(draft.trim())return true;closeCommentMode();return true;}if(box)box.value="";if(reattachId)closeCommentMode();else resumeSelection();return true;}
   if(selecting){closeCommentMode();return true;}
   if(popoverCommentId){closeCommentPopover();return true;}
   return false;
 }
-function chooseSelection(e){if(!hoverPath.length)return;selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
+function chooseSelection(e){if(!hoverPath.length)return;const editor=document.querySelector("[data-editor]");if(editor){editor.dataset.savedDraftId="";editor.dataset.savedDraftState="";editor.dataset.sendPending="";}const exclude=editor&&editor.querySelector("[data-exclude-label] input");if(exclude)exclude.checked=false;if(editor){const box=editor.querySelector("textarea");if(box){box.value="";box.disabled=false;}}selectedIndex=Math.max(0,Math.min(selectedIndex,hoverPath.length-1));selectedElement=hoverPath[selectedIndex];
   gustSelection=!!e.ctrlKey&&isGustNodeOrPanel(selectedElement);
   const r=selectedElement.getBoundingClientRect();
   selectedPoint=r.width>0&&r.height>0?{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}:null;
@@ -1625,21 +1684,25 @@ function createCommentUI(){
   const listHeader=document.createElement("div");listHeader.className="__gust_comments_header";
   const listTitle=document.createElement("span");listTitle.textContent="Comments";
   const count=document.createElement("span");count.dataset.commentCount="";count.className="__gust_comments_count";
-  const submit=document.createElement("button");submit.type="button";submit.textContent="Submit";submit.dataset.submit="";submit.hidden=true;
-  listHeader.append(listTitle,count,submit);
+  listHeader.append(listTitle,count);
   const submitResult=document.createElement("span");submitResult.dataset.submitResult="";
-  submit.addEventListener("click",function(){if(submittingComments)return;submittingComments=true;submit.disabled=true;submitResult.textContent="Submitting…";fetch("/__gust/comments/submit",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});}).then(function(){submitResult.textContent="Comments submitted.";refreshComments();}).catch(function(e){submitResult.textContent=e.message;}).finally(function(){submittingComments=false;renderCommentState();});});
   const pollError=document.createElement("div");pollError.dataset.pollError="";
   const list=document.createElement("div");list.dataset.comments="";
   const editor=document.createElement("div");editor.id="__gust_comment_editor";editor.dataset.editor="";editor.dataset.gustOverlay="";editor.hidden=true;
   const target=document.createElement("div");target.className="__gust_popover_path __gust_editor_target";target.dataset.editorTarget="";
   const textarea=document.createElement("textarea");textarea.placeholder="Describe this element";textarea.maxLength=8192;
-  const close=document.createElement("button");close.type="button";close.textContent="×";close.setAttribute("aria-label","Close comment editor");close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else finishCommentEdit();});
+  const close=document.createElement("button");close.type="button";close.textContent="×";close.setAttribute("aria-label","Close comment editor");close.addEventListener("click",function(){if(pendingCreate||editor.dataset.sendPending==="1"){result.textContent="Save or Send now must finish before closing; your draft is preserved.";return;}textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else finishCommentEdit();});
+  const excludeBatchLabel=document.createElement("label");excludeBatchLabel.dataset.excludeLabel="";excludeBatchLabel.hidden=true;const excludeBatch=document.createElement("input");excludeBatch.type="checkbox";excludeBatch.checked=false;excludeBatchLabel.append(excludeBatch,document.createTextNode("Exclude from batch"));
+  let sendNowRequested=false;
+  let pendingCreate=null;
   const save=document.createElement("button");save.type="button";save.dataset.save="";save.textContent="Save comment";
+  const saveDraft=document.createElement("button");saveDraft.type="button";saveDraft.dataset.saveDraft="";saveDraft.textContent="Save draft";saveDraft.hidden=true;saveDraft.addEventListener("click",function(){sendNowRequested=false;save.click();});
+  const sendNow=document.createElement("button");sendNow.type="button";sendNow.dataset.sendNow="";sendNow.textContent="Send now";sendNow.hidden=true;sendNow.addEventListener("click",function(){sendNowRequested=true;save.click();});
   const result=document.createElement("span");result.dataset.result="";
   textarea.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.ctrlKey&&!e.isComposing){e.preventDefault();save.click();}});
   save.addEventListener("click",function(){
     if(save.disabled)return;
+    const wantsSendNow=sendNowRequested;sendNowRequested=false;
     const el=selectedElement; const text=textarea.value.trim();
     if(reattachId){
       if(!el){result.textContent="Choose an element.";return;}
@@ -1651,23 +1714,34 @@ function createCommentUI(){
         .finally(function(){save.disabled=false;});
       return;
     }
-    if(!el||!text){result.textContent="Choose an element and enter a comment.";return;}
-    save.disabled=true;result.textContent="Saving…";
-    fetch("/__gust/comments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:location.pathname, text:text, locator:locatorFor(el,selectedPoint), html:safeOuterHTML(el)})})
+    if(editor.dataset.savedDraftId){
+      if(!wantsSendNow){editor.dataset.sendPending="";textarea.value="";result.textContent="Draft saved.";finishCommentEdit();return;}
+      save.disabled=true;result.textContent="Sending draft…";
+      submitCreatedComment(editor.dataset.savedDraftId,result,editor.dataset.savedDraftState).then(function(){textarea.value="";editor.dataset.savedDraftId="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";}).finally(function(){save.disabled=false;});
+      return;
+    }
+    if(!pendingCreate){
+      if(!el||!text){result.textContent="Choose an element and enter a comment.";return;}
+      try { pendingCreate={id:newCommentRequestID(),sendNow:wantsSendNow,body:{id:"",path:location.pathname,text:text,locator:locatorFor(el,selectedPoint),html:safeOuterHTML(el),inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow}};pendingCreate.body.id=pendingCreate.id;editor.dataset.pendingCreate="1"; }
+      catch(e){result.textContent=e.message;return;}
+    }
+    const create=pendingCreate,sendAfterCreate=create.sendNow||wantsSendNow;
+    save.disabled=true;textarea.disabled=true;result.textContent=create.id?"Saving draft safely…":"Saving…";
+    fetch("/__gust/comments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(create.body)})
       .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
-      .then(function(comment){textarea.value="";result.textContent="Draft saved.";refreshComments();finishCommentEdit();
+      .then(function(comment){pendingCreate=null;editor.dataset.pendingCreate="";textarea.disabled=false;editor.dataset.savedDraftId=comment.id;editor.dataset.savedDraftState=comment.state||"created";editor.dataset.sendPending="";refreshComments();
+        if(sendAfterCreate){result.textContent="Sending draft…";return submitCreatedComment(comment.id,result,comment.state).then(function(){textarea.value="";editor.dataset.savedDraftId="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){editor.dataset.sendPending="1";result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";});}
+        textarea.value="";result.textContent="Draft saved.";finishCommentEdit();
+        if(batchMode)return;
         if(!auto.checked)return;
         submitResult.textContent="Submitting…";
-        return fetch("/__gust/comments/submit?id="+encodeURIComponent(comment.id),{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
-          .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok)throw new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));return data;});})
-          .then(function(){submitResult.textContent="Comment submitted.";refreshComments();})
-          .catch(function(e){submitResult.textContent="Autosubmit failed: "+e.message+" — use Submit to retry.";refreshComments();});
+        return submitCreatedComment(comment.id,submitResult,comment.state).catch(function(e){submitResult.textContent="Autosubmit failed: "+e.message+" — use this draft's Send now action to retry.";refreshComments();});
       })
-      .catch(function(e){result.textContent=e.message;}).finally(function(){save.disabled=false;});
+      .catch(function(e){result.textContent="Save outcome unclear: "+e.message+" — retry this save safely before editing or closing.";}).finally(function(){save.disabled=false;});
   });
   const title=document.createElement("strong");title.textContent="Add a comment";title.dataset.editorTitle="";
   const hint=document.createElement("small");hint.textContent="Ctrl+Enter to save";hint.dataset.editorHint="";
-  editor.append(close,title,target,textarea,save,hint,result);
+  editor.append(close,title,target,textarea,excludeBatchLabel,save,saveDraft,sendNow,hint,result);
   const editorStyle=document.createElement("style");editorStyle.textContent=
     '#__gust_comment_editor{position:fixed;display:none;z-index:2147483647;width:min(320px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:16px;background:#1c1c1c;color:#fafafa;border:1px solid #555;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:13px/1.5 system-ui,sans-serif}'+
     '#__gust_comment_editor strong{display:block;margin:0 28px 12px 0;font-size:14px;font-weight:600}'+
@@ -1698,7 +1772,8 @@ function createCommentUI(){
     '#__gust_comment_editor button:focus-visible{outline-color:#f9bb71}'+
     '#__gust_comment_editor small{color:#e0cfba}'+
     '#__gust_comment_editor [data-result]{color:#ffca81}';
-  document.documentElement.append(editorStyle,editor);
+  const batchStyle=document.createElement("style");batchStyle.textContent='html.__gust_batch_mode .__gust_highlight{outline-color:#3b82f6!important}html.__gust_selecting.__gust_batch_mode,html.__gust_selecting.__gust_batch_mode *{cursor:'+batchCursor+'!important}html.__gust_selecting.__gust_batch_mode #__gust_widget,html.__gust_selecting.__gust_batch_mode #__gust_widget *,html.__gust_selecting.__gust_batch_mode [data-gust-overlay],html.__gust_selecting.__gust_batch_mode [data-gust-overlay] *{cursor:auto!important}html.__gust_selecting #__gust_batch_send,html.__gust_selecting.__gust_batch_mode #__gust_batch_send{cursor:pointer!important}html.__gust_batch_mode #__gust_comment_bubble{color:#60a5fa;border-color:#3b82f6;background:#172554}#__gust_batch_send{position:fixed;right:62px;bottom:18px;z-index:2147483646;padding:7px 11px;border:1px solid #4b5563;border-radius:999px;background:#171717;color:#e5e7eb;box-shadow:0 4px 16px #0008;font:12px/1.2 system-ui,sans-serif;cursor:pointer}#__gust_batch_send:hover{background:#262626}#__gust_batch_send:focus-visible{outline:2px solid #3b82f6;outline-offset:2px}html.__gust_batch_mode #__gust_batch_send{color:#bfdbfe;border-color:#3b82f6;background:#1e3a8a}#__gust_widget.__gust_batch #__gust_comment_toolbar button[aria-pressed=true]{color:#bfdbfe;border-color:#3b82f6;background:#1e3a8a}#__gust_comment_editor.__gust_batch_editor{background:#0f1d35;border-color:#3b82f6;color:#eff6ff}#__gust_comment_editor.__gust_batch_editor textarea{background:#172554;border-color:#60a5fa;color:#eff6ff}#__gust_comment_editor.__gust_batch_editor textarea:focus{border-color:#60a5fa;box-shadow:0 0 0 2px #3b82f633}#__gust_comment_editor.__gust_batch_editor button:not([aria-label]){border-color:#60a5fa;background:#1d4ed8;color:#eff6ff}#__gust_comment_editor.__gust_batch_editor button:focus-visible{outline-color:#60a5fa}';
+  document.documentElement.append(editorStyle,batchStyle,editor);
   commentUI.append(status,listHeader,submitResult,pollError,list,autoLabel);
   mountCommentBubble();
   updateCommentUI();
@@ -1738,7 +1813,7 @@ function copyShortcut(e){
 function beginOneCommentMode(e){
   if(!copyShortcut(e))return false;
   if(isCopyableEditable(e.target))return false;
-  if(oneShotComment&&selecting&&!editorOpen&&!popoverCommentId){
+  if(oneShotComment&&!batchMode&&selecting&&!editorOpen&&!popoverCommentId){
     if(e.preventDefault)e.preventDefault();
     closeCommentMode();
     return true;
@@ -1748,7 +1823,10 @@ function beginOneCommentMode(e){
   beginCommentTool(true);
   return true;
 }
-document.addEventListener("keydown",function(e){if(beginOneCommentMode(e))return;if(e.key==="Escape")cancelCommentMode();},true);
+document.addEventListener("keydown",function(e){
+  if((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&String(e.key).toLowerCase()==="b"&&!isCopyableEditable(e.target)){e.preventDefault();toggleBatchMode();return;}
+  if(beginOneCommentMode(e))return;if(e.key==="Escape")cancelCommentMode();
+},true);
 /* A native disabled control never fires the click that would anchor a comment:
    the browser suppresses it, and disabled:pointer-events-none styles keep the
    hit test on an ancestor. Selection mode restores pointer events on disabled
@@ -1794,6 +1872,9 @@ function loadCommentMode(){
 function saveCommentMode(){
   try { sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0"); } catch (_) {}
 }
+function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}catch(_){return false;}}
+function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}catch(_){}}
+function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();updateCommentUI();}
 function loadWind(){
   try { return localStorage.getItem("__gust_wind") === "1"; } catch (_) { return false; }
 }
@@ -1980,6 +2061,7 @@ function setSound(enabled){
 }
 function createToolbar(){
   commentToolbar=document.createElement("div");commentToolbar.id="__gust_comment_toolbar";
+  batchSendButton=document.createElement("button");batchSendButton.type="button";batchSendButton.id="__gust_batch_send";batchSendButton.dataset.gustOverlay="";batchSendButton.textContent="0 comments in draft · Send";batchSendButton.hidden=true;batchSendButton.addEventListener("click",sendCommentBatch);document.body.appendChild(batchSendButton);
   windButton=document.createElement("button");windButton.type="button";
   windButton.title="Wind effect";windButton.setAttribute("aria-label","Wind effect");
   windButton.setAttribute("aria-pressed","false");windButton.id="__gust_wind_button";
@@ -2192,7 +2274,7 @@ function mountIcon(){
   createToolbar();
   iconRow.appendChild(gustIcon);
   if (soundsOn) iconRow.appendChild(soundIcon);
-  if (%t) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }
+  if (%t) { selecting=loadCommentMode(); batchMode=loadBatchMode(); createCommentUI(); startCommentRefresh(); }
   widget.appendChild(iconRow);
   widget.appendChild(gustPanel);
   applySoundIcon();

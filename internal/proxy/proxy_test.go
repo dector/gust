@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func TestWindOverlayInjectedWithoutComments(t *testing.T) {
 	script := reloadScript(1, 8765, false)
 	for _, fragment := range []string{
 		`createToolbar();`,
-		`if (false) { selecting=loadCommentMode(); createCommentUI();`,
+		`if (false) { selecting=loadCommentMode(); batchMode=loadBatchMode(); createCommentUI();`,
 		`gustPanel.appendChild(commentToolbar);`,
 		`windButton.setAttribute("aria-pressed",String(windEnabled))`,
 		`localStorage.setItem("__gust_wind",enabled?"1":"0")`,
@@ -239,6 +240,133 @@ func TestGustBubbleHidden(t *testing.T) {
 	}
 }
 
+func TestBrowserBatchCollectionInjected(t *testing.T) {
+	script := reloadScript(1, 8765, true, true)
+	for _, fragment := range []string{
+		`function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}`,
+		`function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}`,
+		`function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();updateCommentUI();}`,
+		`inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow`,
+		`pendingCreate={id:newCommentRequestID()`,
+		`JSON.stringify(create.body)`,
+		`body.id=pendingCreate.id`,
+		`batchSendButton.dataset.gustOverlay=""`,
+		`fetch("/__gust/comments/submit?batch=1"`,
+		`comments in draft · Send`,
+		`id="__gust_batch_send"`,
+		`html.__gust_selecting #__gust_batch_send,html.__gust_selecting.__gust_batch_mode #__gust_batch_send{cursor:pointer!important}`,
+		`targetById.get(c.id).appendChild(row)`,
+		`editor.querySelector("[data-exclude-label]")`,
+		`editor.dataset.savedDraftId`,
+		`!excludeBatch.checked&&!wantsSendNow`,
+		`Send failed: "+e.message+" — retry Send now or save the draft."`,
+		`__gust_selecting.__gust_batch_mode *{cursor:`,
+		`ready+" of "+members.length+" ready for review"`,
+		`Add to the batch`,
+		`Send now`,
+		`ready for review`,
+		`/__gust/comments/"+encodeURIComponent(c.id)+"/batch`,
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Errorf("batch UX missing %q", fragment)
+		}
+	}
+	if strings.Contains(script, `fetch("/__gust/comments/submit",{method:"POST"`) {
+		t.Error("browser must not expose a submit-all-created action")
+	}
+}
+
+func TestPersistentBatchSendIsSkippedBySelectionHandlerWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	baseStart := strings.Index(script, `const gustNodes = `)
+	baseEnd := strings.Index(script, `function meaningfulPath(`)
+	clickStart := strings.Index(script, `document.addEventListener("click",function(e){
+  syncCommentModifier(e);`)
+	clickEnd := strings.Index(script[clickStart:], `},true);`)
+	if baseStart < 0 || baseEnd < baseStart || clickStart < 0 || clickEnd < 0 {
+		t.Fatal("could not extract overlay selection guard")
+	}
+	harness := `const selfDev=false;let selecting=true,chosen=0,handler;const document={addEventListener(type,fn){if(type==="click")handler=fn;}};function syncCommentModifier(){}function updateHoverPath(){chosen++;return true;}function chooseSelection(){chosen++;}` + script[baseStart:baseEnd] + script[clickStart:clickStart+clickEnd+len(`},true);`)] + `
+const send={dataset:{gustOverlay:""},closest(selector){return selector.indexOf("[data-gust-overlay]")>=0?this:null;}};let prevented=0;handler({target:send,ctrlKey:false,preventDefault(){prevented++;},stopPropagation(){},stopImmediatePropagation(){}});if(chosen!==0||prevented!==0)throw Error("batch Send must not become a comment-selection target");`
+	file := t.TempDir() + "/batch-send-selection.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("batch Send selection guard: %v\\n%s", err, output)
+	}
+}
+
+func TestBatchModeSessionRestorationWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	start := strings.Index(script, `function loadBatchMode(){`)
+	end := strings.Index(script, `function loadWind(){`)
+	if start < 0 || end < start {
+		t.Fatal("could not extract batch-mode persistence")
+	}
+	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false;let updates=0;function updateCommentUI(){updates++;}` + script[start:end] + `
+if(loadBatchMode())throw Error("starts off");toggleBatchMode();if(!batchMode||loadBatchMode()!==true)throw Error("enable must persist");batchMode=loadBatchMode();if(!batchMode)throw Error("session restore");toggleBatchMode();if(batchMode||loadBatchMode())throw Error("disable must persist");`
+	file := t.TempDir() + "/batch-mode.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("batch mode persistence: %v\\n%s", err, output)
+	}
+}
+
+func TestDetachedBatchEditorControlsWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	start := strings.Index(script, `function updateCommentUI(){`)
+	end := strings.Index(script, `function closeCommentMode(){`)
+	if start < 0 || end < start {
+		t.Fatal("could not extract comment UI updater")
+	}
+	harness := `let selecting=true,batchMode=true,editorOpen=false,reattachId=null;let commentBubble=null;const document={documentElement:{classList:{toggle(){},remove(){}}},querySelector(){return editor;}};const selfDev=false;const gustWidget={classList:{toggle(){}}};const commentToolbar={querySelector(){return {hidden:false,textContent:""};}};function flushPendingRefresh(){}function scheduleRenderPath(){}function locatorFor(){return "{}";}function renderCommentTarget(){}function updateEditorPosition(){}const controls={};const editor={hidden:false,style:{},classList:{toggle(){}},querySelector(k){return controls[k]||null;}};for(const k of ["[data-editor-title]","textarea","[data-save]","[data-editor-hint]","[data-exclude-label]","[data-save-draft]","[data-send-now]"])controls[k]={hidden:false,textContent:"",style:{}};const auto={hidden:false};const commentUI={querySelector(k){return k==="[data-autosubmit-label]"?auto:null;}};` + script[start:end] + `
+updateCommentUI();if(controls["[data-exclude-label]"].hidden||controls["[data-save-draft]"].hidden||controls["[data-send-now]"].hidden)throw Error("batch controls hidden in detached editor");if(!controls["[data-save]"].hidden)throw Error("legacy save shown in batch mode");if(!auto.hidden)throw Error("autosubmit exposed in batch mode");reattachId="draft";updateCommentUI();if(!controls["[data-exclude-label]"].hidden||!controls["[data-send-now]"].hidden)throw Error("batch actions shown while reattaching");`
+	file := t.TempDir() + "/detached-editor.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("detached editor controls: %v\\n%s", err, output)
+	}
+}
+
+func TestIdempotentCreateAndLostSubmitRecoveryWhenNodeAvailable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := reloadScript(1, 8765, true, true)
+	start := strings.Index(script, `function newCommentRequestID(){`)
+	end := strings.Index(script, `function batchMembers(){`)
+	if start < 0 || end < start {
+		t.Fatal("could not extract comment ID/submission recovery")
+	}
+	harness := `const window={crypto:{getRandomValues(a){a.fill(7);}}};const commentState=[];let refreshes=0;function refreshComments(){refreshes++;}let calls=0;function fetch(url){calls++;if(url.indexOf("/submit?id=")>=0)return Promise.resolve({ok:false,status:409,json:()=>Promise.resolve({error:{message:"no drafts"}})});return Promise.resolve({ok:true,json:()=>Promise.resolve([{id:"07070707070707070707070707070707",state:"submitted"}])});}` + script[start:end] + `
+const id=newCommentRequestID();if(!/^[0-9a-f]{32}$/.test(id))throw Error("client IDs must be 32 lowercase hex chars");submitCreatedComment(id,null,"created").then(()=>{if(calls!==2||refreshes!==1)throw Error("lost submit response must be reconciled from comment state");}).catch(e=>{console.error(e);process.exitCode=1;});`
+	file := t.TempDir() + "/idempotent-comment.js"
+	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(node, file).CombinedOutput(); err != nil {
+		t.Fatalf("idempotent save recovery: %v\\n%s", err, output)
+	}
+}
+
 func TestCommentModeBubbleInjected(t *testing.T) {
 	script := reloadScript(1, 8765, true, true)
 	for _, fragment := range []string{
@@ -301,11 +429,7 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 	if styleStart < 0 {
 		t.Fatal("could not isolate comment mode bubble styles")
 	}
-	styleEnd := strings.Index(script[styleStart:], `#__gust_comment_unread_badge{`)
-	if styleEnd < 0 {
-		t.Fatal("could not isolate comment mode bubble styles")
-	}
-	style := script[styleStart : styleStart+styleEnd]
+	style := strings.Join(regexp.MustCompile(`#__gust_comment_bubble[^{}]*\{[^}]*\}`).FindAllString(script[styleStart:], -1), "")
 	if strings.Contains(style, "transition:transform") || strings.Contains(style, ":hover{transform") || strings.Contains(style, "translateY(") {
 		t.Error("comment mode bubble must not animate or rise on hover")
 	}
@@ -322,7 +446,7 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 	if !strings.Contains(style, `color:#f9bb71;background:#252525;border:1px solid #484848`) {
 		t.Error("comment mode bubble must use the charcoal surface")
 	}
-	if !strings.Contains(style, `@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`) {
+	if !strings.Contains(script, `@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`) {
 		t.Error("comment mode bubble transitions must respect reduced motion")
 	}
 	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) || !strings.Contains(style, `#__gust_comment_bubble[aria-pressed=true]:hover{background:#583820;border-color:#ffd9a8;color:#ffd9a8}`) {
@@ -494,6 +618,7 @@ let commentBubble = null;
 let commentUnreadBadge = null;
 let badgeClicks = 0;
 let selecting = false;
+let batchMode = false;
 let oneShotComment = false;
 let editorOpen = false;
 let selectedElement = null;
@@ -571,7 +696,8 @@ func TestCommentCtrlCOneCommentModeWhenNodeAvailable(t *testing.T) {
 	}
 	script := reloadScript(1, 8765, true, true)
 	helperStart := strings.Index(script, `function isCopyableEditable(el){`)
-	helperEnd := strings.Index(script, `document.addEventListener("keydown",function(e){if(beginOneCommentMode(e))return;`)
+	helperEnd := strings.Index(script, `document.addEventListener("keydown",function(e){
+  if((e.ctrlKey||e.metaKey)`)
 	if helperStart < 0 || helperEnd < helperStart {
 		t.Fatal("could not extract the Ctrl+C one-comment shortcut")
 	}
@@ -599,6 +725,7 @@ const commentCtrlCHarnessPrelude = `class El {
   closest() { return this.closestHit; }
 }
 let selecting = false;
+let batchMode = false;
 let editorOpen = false;
 let oneShotComment = false;
 let popoverCommentId = null;
@@ -723,7 +850,7 @@ let editorAnchor = null;
 let hoverPath = [];
 const commentState = [{ id: 'thread', state: 'created' }];
 const editorBox = { value: '' };
-const document = { querySelector(selector) { return selector === '[data-editor] textarea' ? editorBox : null; } };
+const document = { querySelector(selector) { return selector === '[data-editor]' ? { dataset: {}, querySelector() { return editorBox; } } : null; } };
 function setHighlight() {}
 function saveCommentMode() {}
 function updateCommentUI() {}
@@ -2482,7 +2609,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`html.__gust_selecting [data-gust-overlay]`,
 		`function currentTargetEl()`,
 		`function resumeSelection(){`,
-		`refreshComments();finishCommentEdit();`,
+		`finishCommentEdit();`,
 		`const box=document.querySelector("[data-editor] textarea");if(box)box.focus();`,
 		"renderCommentState();\n  updateCommentUI();",
 		`document.addEventListener("click"`,
@@ -2530,7 +2657,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`commentUI.append(status,listHeader,submitResult,pollError,list,autoLabel)`,
 		`.__gust_autosubmit{display:flex`,
 		`.__gust_autosubmit input[type=checkbox]{appearance:none`,
-		`listHeader.append(listTitle,count,submit)`,
+		`listHeader.append(listTitle,count)`,
+
 		`empty.textContent="No open comments yet."`,
 		`__gust_comment_text{display:-webkit-box`,
 		`__gust_comments_header{display:flex`,
@@ -2546,21 +2674,21 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`String(e.key).toLowerCase()==="c"`,
 		`function beginOneCommentMode(e){`,
 		`beginCommentTool(true);`,
-		`function finishCommentEdit(){if(oneShotComment)closeCommentMode();else resumeSelection();}`,
+		`function finishCommentEdit(){if(oneShotComment&&!batchMode)closeCommentMode();else resumeSelection();}`,
 		`function cancelCommentMode(){`,
-		`const draft=box?String(box.value||""):"";if(oneShotComment){if(draft.trim())return true;closeCommentMode();return true;}`,
+		`const editor=document.querySelector("[data-editor]"),box=editor&&editor.querySelector("textarea");const draft=box?String(box.value||""):"";`,
 		`if(e.key==="Escape")cancelCommentMode();`,
 		`if(beginOneCommentMode(e))return;`,
 		`sessionStorage.getItem("__gust_comment_mode")`,
 		`sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0")`,
-		`selecting=loadCommentMode(); createCommentUI()`,
+		`selecting=loadCommentMode(); batchMode=loadBatchMode(); createCommentUI()`,
 		`setHighlight(null);saveCommentMode();updateCommentUI();`,
 		`/__gust/comments/submit?id=`,
 		`active.slice().reverse().forEach(function(c)`,
 		`summary.textContent=finished+" finished"`,
 		`remove.setAttribute("aria-label","Remove draft")`,
 		`method:"DELETE"`,
-		`close.addEventListener("click",function(){textarea.value="";result.textContent="";if(reattachId)closeCommentMode();else finishCommentEdit();})`,
+		`close.addEventListener("click",function(){if(pendingCreate||editor.dataset.sendPending==="1")`,
 		`seen:"In progress"`,
 		`review:"Review"`,
 		`function threadUnread(c){`,
@@ -2577,14 +2705,15 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`spinner.setAttribute("aria-hidden","true")`,
 		`animation:__gust_comment_spin .9s linear infinite`,
 		`prefers-reduced-motion:reduce`,
-		`editor.append(close,title,target,textarea,save,hint,result)`,
+		`editor.append(close,title,target,textarea,excludeBatchLabel,save,saveDraft,sendNow,hint,result)`,
+
 		`replace(/\s+/g," ")`,
 		`Comment sync failed: `,
 		`open.title=onPage?`,
-		`submit.textContent="Submit "+created`,
+		`submitCreatedComment(id,result,knownState)`,
 		`data-comment-id`,
 		`pointer-events:auto`,
-		`fetch("/__gust/comments/submit"`,
+		`fetch("/__gust/comments/submit?id="`,
 		`function refreshComments()`,
 		`setInterval(refreshComments,3000)`,
 		`l.confidence!=="high"||l.matches!==1`,
@@ -2682,7 +2811,7 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		`locateComment(commentState.find(function(x){return x.id===id;}))`,
 		// The panel is built once and re-rendered in place so polls are stable.
 		`commentPopover.append(head,text,meta,replies,replybox,actions,error)`,
-		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,reattach:reattach,resolve:resolve,remove:remove,error:error}`,
+		`popoverParts={badge:badge,dismiss:dismiss,text:text,path:path,missing:missing,replies:replies,replybox:replybox,reply:reply,send:send,actions:actions,locate:locate,reattach:reattach,resolve:resolve,remove:remove,standaloneSend:standaloneSend,addToBatch:addToBatch,error:error}`,
 		`if(key===popoverRenderKey){positionCommentPopover();return;}`,
 		`parts.remove.disabled=popoverDeletePending;`,
 		`parts.error.hidden=!popoverActionError;`,
@@ -2860,7 +2989,7 @@ func TestCommentTargetInNewThreadEditor(t *testing.T) {
 	script := reloadScript(12, 8765)
 	for _, fragment := range []string{
 		`target.className="__gust_popover_path __gust_editor_target";target.dataset.editorTarget="";`,
-		`editor.append(close,title,target,textarea,save,hint,result);`,
+		`editor.append(close,title,target,textarea,excludeBatchLabel,save,saveDraft,sendNow,hint,result);`,
 		`renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";`,
 		`#__gust_comment_editor .__gust_editor_target{display:flex;`,
 		`#__gust_comment_editor .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
@@ -3023,8 +3152,8 @@ assert(popoverCommentId === 'a', 'a thread on another URL cannot open a page pop
 commentState.pop();
 assert(commentPopover.children[3].children[0].textContent === 'No replies yet.', 'empty thread shows a placeholder');
 const createdActions = commentPopover.children[5];
-assert(createdActions.children[2].hidden === false, 'drafts expose Remove draft');
-assert(createdActions.children[2].textContent === 'Remove draft', 'draft button keeps its label');
+assert(createdActions.children[4].hidden === false, 'drafts expose Remove draft');
+assert(createdActions.children[4].textContent === 'Remove draft', 'draft button keeps its label');
 assert(createdActions.children[0].hidden === false, 'located comments expose Locate');
 assert(createdActions.children[1].textContent === 'Resolve', 'threads expose Resolve');
 assert(createdActions.children[1].hidden === true, 'drafts hide Resolve because the server rejects it');
@@ -3039,7 +3168,7 @@ assert(commentPopover.hidden === false, 'panel stays open across a state change'
 assert(commentPopover.children[0].children[0].textContent === 'Review', 'panel updates the state badge');
 assert(commentPopover.children[3].children[0].children[0].children[0].textContent === 'Agent', 'agent replies are labelled');
 assert(commentPopover.children[3].children[0].children[1].textContent === 'please check', 'reply text is rendered');
-assert(commentPopover.children[5].children[2].hidden === true, 'non-drafts hide Remove draft');
+assert(commentPopover.children[5].children[4].hidden === true, 'non-drafts hide Remove draft');
 assert(commentPopover.children[5].children[1].hidden === false, 'review threads expose Resolve');
 commentState[0].state = 'done';
 renderCommentPopover();
@@ -3111,7 +3240,7 @@ function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
   openCommentPopover('f');
   const actions = commentPopover.children[5];
   const locate = actions.children[0];
-  const remove = actions.children[2];
+  const remove = actions.children[4];
   assert(remove.hidden === false, 'draft exposes Remove draft');
   assert(locate.hidden === false, 'located draft exposes Locate');
   remove.focus();
@@ -3120,7 +3249,7 @@ function tick() { return new Promise(resolve => setTimeout(resolve, 0)); }
   // Unchanged poll refresh: same nodes, focus retained, no repaint.
   renderCommentPopover();
   assert(commentPopover.children[5] === actions, 'refresh keeps the actions container');
-  assert(commentPopover.children[5].children[2] === remove, 'refresh keeps the Remove draft node');
+  assert(commentPopover.children[5].children[4] === remove, 'refresh keeps the Remove draft node');
   assert(document.activeElement === remove, 'refresh keeps focus on Remove draft');
 
   // Failed DELETE stays visible and re-enables the button.
@@ -3211,7 +3340,7 @@ refreshComments = function () {
   pinOverlay = new El('div');
   pinOverlay.appendChild(pinFor('gone'));
   openCommentPopover('gone');
-  const remove = commentPopover.children[5].children[2];
+  const remove = commentPopover.children[5].children[4];
   remove.listeners.click();
   await tick();
   assert(commentPopover.hidden === true, 'successful delete hides the popover');
@@ -3504,7 +3633,7 @@ func TestBrowserCommentsDisabledByDefaultWhenConfigured(t *testing.T) {
 		}
 	}
 	injected := reloadScript(1, 8080, false)
-	if !strings.Contains(injected, "if (false) { selecting=loadCommentMode(); createCommentUI(); startCommentRefresh(); }") {
+	if !strings.Contains(injected, "if (false) { selecting=loadCommentMode(); batchMode=loadBatchMode(); createCommentUI(); startCommentRefresh(); }") {
 		t.Fatal("disabled reload widget includes comment UI")
 	}
 }
