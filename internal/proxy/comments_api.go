@@ -84,6 +84,7 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		Text    string `json:"text"`
 		HTML    string `json:"html"`
 		Locator string `json:"locator"`
+		InBatch bool   `json:"inBatch"`
 	}
 	if !decodeComment(w, r, &in) {
 		return
@@ -100,7 +101,7 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_context", "html or locator exceeds its allowed size")
 		return
 	}
-	c, err := s.comments.Create(r.Context(), comments.Input{Path: in.Path, Text: in.Text, HTML: scrubCommentHTML(in.HTML), Locator: in.Locator})
+	c, err := s.comments.Create(r.Context(), comments.Input{Path: in.Path, Text: in.Text, HTML: scrubCommentHTML(in.HTML), Locator: in.Locator, InBatch: in.InBatch})
 	if err != nil {
 		writeAPIError(w, 500, "internal_error", "could not create comment")
 		return
@@ -287,12 +288,19 @@ func (s *Server) serveCommentSubmit(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 503, "comments_unavailable", "comments are unavailable")
 		return
 	}
+	query := r.URL.Query()
 	var batch comments.Batch
 	var err error
-	if r.URL.Query().Has("id") {
-		batch, err = s.comments.SubmitOne(r.Context(), r.URL.Query().Get("id"))
-	} else {
+	switch {
+	case query.Has("id") && len(query) == 1 && len(query["id"]) == 1 && query.Get("id") != "":
+		batch, err = s.comments.SubmitOne(r.Context(), query.Get("id"))
+	case query.Has("batch") && len(query) == 1 && len(query["batch"]) == 1 && query.Get("batch") == "1":
+		batch, err = s.comments.SubmitDraftBatch(r.Context())
+	case len(query) == 0:
 		batch, err = s.comments.SubmitCreated(r.Context())
+	default:
+		writeAPIError(w, 400, "invalid_query", "use either ?id=<comment-id>, ?batch=1, or no query parameters")
+		return
 	}
 	if errors.Is(err, comments.ErrNoCreated) {
 		writeAPIError(w, 409, "no_created_comments", "there are no created comments to submit")
@@ -303,6 +311,51 @@ func (s *Server) serveCommentSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, batch)
+}
+
+// serveCommentBatch changes explicit unsent batch membership for one draft.
+func (s *Server) serveCommentBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeAPIError(w, 405, "method_not_allowed", "use POST")
+		return
+	}
+	if !sameOrigin(w, r) {
+		return
+	}
+	if s.comments == nil {
+		writeAPIError(w, 503, "comments_unavailable", "comments are unavailable")
+		return
+	}
+	id := commentActionID(r.URL.Path, "batch")
+	if id == "" {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	var in struct {
+		InBatch *bool `json:"inBatch"`
+	}
+	if !decodeComment(w, r, &in) {
+		return
+	}
+	if in.InBatch == nil {
+		writeAPIError(w, 400, "invalid_request", "inBatch must be a boolean")
+		return
+	}
+	c, err := s.comments.SetInBatch(r.Context(), id, *in.InBatch)
+	if errors.Is(err, comments.ErrNotFound) {
+		writeAPIError(w, 404, "comment_not_found", "comment not found")
+		return
+	}
+	if errors.Is(err, comments.ErrInvalidState) {
+		writeAPIError(w, 409, "invalid_state", "only drafts can join an existing unsent batch")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, 500, "internal_error", "could not update batch membership")
+		return
+	}
+	writeJSON(w, 200, c)
 }
 
 func decodeComment(w http.ResponseWriter, r *http.Request, out any) bool {
