@@ -521,6 +521,24 @@ func TestExplicitDraftBatchMembershipAndSubmission(t *testing.T) {
 	}
 }
 
+func TestSubmitCreatedPreservesLegacyAllDraftsBehavior(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if _, err := s.Create(ctx, Input{ID: "selected", Path: "/", Text: "batch member", InBatch: true}); err != nil {
+		t.Fatal(err)
+	}
+	create(t, s, "ordinary")
+	batch, err := s.SubmitCreated(ctx)
+	if err != nil || len(batch.Comments) != 2 {
+		t.Fatalf("legacy submit = %+v, %v", batch, err)
+	}
+	for _, c := range batch.Comments {
+		if c.InBatch {
+			t.Errorf("legacy submission left stale membership on %s", c.ID)
+		}
+	}
+}
+
 func TestBatchMembershipSurvivesRestartAndSubmitOneClearsIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "membership.db")
 	ctx := context.Background()
