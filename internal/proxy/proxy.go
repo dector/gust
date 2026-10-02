@@ -639,6 +639,7 @@ const windMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let selecting = false;
 let batchMode = false;
 let oneShotComment = false;
+let commentShortcutStartedAt = null;
 let hoverPath = [];
 let selectedIndex = 0;
 let highlighted = null;
@@ -1566,7 +1567,7 @@ function updateCommentUI(){
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){const exclude=editor.querySelector("[data-exclude-label]");if(exclude)exclude.hidden=!active||!batchMode||!!reattachId;const batchSave=editor.querySelector("[data-save-draft]");if(batchSave)batchSave.hidden=!batchMode||!!reattachId;const sendNow=editor.querySelector("[data-send-now]");if(sendNow)sendNow.hidden=!batchMode||!!reattachId;editor.classList.toggle("__gust_batch_editor",batchMode);const title=editor.querySelector("[data-editor-title]");if(title)title.textContent=reattachId?"Reattach comment":"Add a comment";const textarea=editor.querySelector("textarea");if(textarea)textarea.hidden=!!reattachId;const save=editor.querySelector("[data-save]");if(save){save.textContent=reattachId?"Save anchor":"Save comment";save.hidden=batchMode&&!reattachId;}const hint=editor.querySelector("[data-editor-hint]");if(hint)hint.hidden=!!reattachId;editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen){const target=editor.querySelector("[data-editor-target]");if(target){const selector=locatorFor(selectedElement,selectedPoint);const locator=JSON.parse(selector);renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";}updateEditorPosition();}}
   scheduleRenderPath();
 }
-function closeCommentMode(){reattachId=null;oneShotComment=false;selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
+function closeCommentMode(){commentShortcutStartedAt=null;reattachId=null;oneShotComment=false;selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
 function beginCommentTool(oneShot){if(selecting||editorOpen){closeCommentMode();return;}reattachId=null;selecting=true;oneShotComment=!!oneShot;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
 function startReattach(id){
   if(!commentState.some(function(c){return c.id===id&&c.state!=="done";}))return;
@@ -1797,8 +1798,8 @@ document.addEventListener("mousemove",function(e){
 document.addEventListener("mouseout",function(e){if(selecting&&!e.relatedTarget){hoverPath=[];setHighlight(null);updateCommentUI();}},true);
 window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true);
 window.addEventListener("resize",function(){if(editorOpen)updateEditorPosition();scheduleRenderPath();});
-/* Ctrl+C with no text selection enters one-comment mode; pressing it again
-   while choosing an anchor cancels. Copy in editable fields stays untouched. */
+/* Ctrl+C enters single-shot selection; a second press within 350ms upgrades
+   it to batch. A later press exits either mode. Native copy stays untouched. */
 function isCopyableEditable(el){
   if(!el||el.nodeType!==1)return false;
   if(el.isContentEditable)return true;
@@ -1812,21 +1813,21 @@ function copyShortcut(e){
   return !!e&&(e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&String(e.key).toLowerCase()==="c";
 }
 function beginOneCommentMode(e){
-  if(!copyShortcut(e))return false;
-  if(isCopyableEditable(e.target))return false;
-  if(oneShotComment&&!batchMode&&selecting&&!editorOpen&&!popoverCommentId){
-    if(e.preventDefault)e.preventDefault();
-    closeCommentMode();
-    return true;
-  }
+  if(!copyShortcut(e)||isCopyableEditable(e.target))return false;
   if(editorOpen||popoverCommentId||hasTextSelection())return false;
   if(e.preventDefault)e.preventDefault();
-  if(batchMode){batchMode=false;saveBatchMode();}
-  if(selecting){oneShotComment=true;saveCommentMode();updateCommentUI();}else beginCommentTool(true);
+  if(e.repeat)return true;
+  const now=Date.now();
+  if(selecting){
+    if(oneShotComment&&!batchMode&&commentShortcutStartedAt!==null&&now-commentShortcutStartedAt>=0&&now-commentShortcutStartedAt<=350){
+      batchMode=true;oneShotComment=false;commentShortcutStartedAt=null;saveBatchMode();saveCommentMode();updateCommentUI();
+    }else{batchMode=false;saveBatchMode();closeCommentMode();}
+    return true;
+  }
+  batchMode=false;saveBatchMode();beginCommentTool(true);commentShortcutStartedAt=now;
   return true;
 }
 document.addEventListener("keydown",function(e){
-  if((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&String(e.key).toLowerCase()==="b"&&!isCopyableEditable(e.target)){e.preventDefault();toggleBatchMode();return;}
   if(beginOneCommentMode(e))return;if(e.key==="Escape")cancelCommentMode();
 },true);
 /* A native disabled control never fires the click that would anchor a comment:
@@ -1876,7 +1877,6 @@ function saveCommentMode(){
 }
 function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}catch(_){return false;}}
 function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}catch(_){}}
-function toggleBatchMode(){if(editorOpen)return;if(batchMode&&selecting){batchMode=false;saveBatchMode();closeCommentMode();return;}batchMode=true;oneShotComment=false;saveBatchMode();if(!selecting){beginCommentTool(false);return;}saveCommentMode();updateCommentUI();}
 function loadWind(){
   try { return localStorage.getItem("__gust_wind") === "1"; } catch (_) { return false; }
 }

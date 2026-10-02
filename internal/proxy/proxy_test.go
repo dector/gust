@@ -245,7 +245,8 @@ func TestBrowserBatchCollectionInjected(t *testing.T) {
 	for _, fragment := range []string{
 		`function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}`,
 		`function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}`,
-		`function toggleBatchMode(){if(editorOpen)return;if(batchMode&&selecting){batchMode=false;saveBatchMode();closeCommentMode();return;}batchMode=true;oneShotComment=false;saveBatchMode();if(!selecting){beginCommentTool(false);return;}saveCommentMode();updateCommentUI();}`,
+		`now-commentShortcutStartedAt<=350`,
+		`batchMode=true;oneShotComment=false;commentShortcutStartedAt=null;`,
 		`inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow`,
 		`pendingCreate={id:newCommentRequestID()`,
 		`JSON.stringify(create.body)`,
@@ -270,6 +271,9 @@ func TestBrowserBatchCollectionInjected(t *testing.T) {
 		if !strings.Contains(script, fragment) {
 			t.Errorf("batch UX missing %q", fragment)
 		}
+	}
+	if strings.Contains(script, `toggleBatchMode`) || strings.Contains(script, `String(e.key).toLowerCase()==="b"`) {
+		t.Error("Ctrl+B must not be intercepted; Ctrl+C owns comment mode shortcuts")
 	}
 	if strings.Contains(script, `fetch("/__gust/comments/submit",{method:"POST"`) {
 		t.Error("browser must not expose a submit-all-created action")
@@ -312,12 +316,8 @@ func TestBatchModeSessionRestorationWhenNodeAvailable(t *testing.T) {
 	if start < 0 || end < start {
 		t.Fatal("could not extract batch-mode persistence")
 	}
-	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false,selecting=false,editorOpen=false,oneShotComment=false;function closeCommentMode(){selecting=false;oneShotComment=false;}function saveCommentMode(){}let activations=0;let updates=0;function updateCommentUI(){updates++;}function beginCommentTool(oneShot){if(oneShot)throw Error("batch must allow repeated collection");activations++;selecting=true;}` + script[start:end] + `
-if(loadBatchMode())throw Error("starts off");toggleBatchMode();if(!batchMode||loadBatchMode()!==true)throw Error("enable must persist");batchMode=loadBatchMode();if(!batchMode)throw Error("session restore");toggleBatchMode();if(batchMode||loadBatchMode())throw Error("disable must persist");
-if(selecting||activations!==1)throw Error("second Ctrl+B must deactivate selection");
-selecting=true;oneShotComment=true;toggleBatchMode();if(activations!==1||!selecting||oneShotComment||!batchMode)throw Error("Ctrl+B must switch oneshot to batch");
-toggleBatchMode();if(selecting||batchMode)throw Error("batch toggle must deactivate");
-editorOpen=true;toggleBatchMode();if(activations!==1||batchMode)throw Error("shortcut must preserve open editor");`
+	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false;` + script[start:end] + `
+if(loadBatchMode())throw Error("starts off");batchMode=true;saveBatchMode();if(loadBatchMode()!==true)throw Error("enable must persist");batchMode=loadBatchMode();if(!batchMode)throw Error("session restore");batchMode=false;saveBatchMode();if(loadBatchMode())throw Error("disable must persist");`
 	file := t.TempDir() + "/batch-mode.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
@@ -705,7 +705,7 @@ func TestCommentCtrlCOneCommentModeWhenNodeAvailable(t *testing.T) {
 	script := reloadScript(1, 8765, true, true)
 	helperStart := strings.Index(script, `function isCopyableEditable(el){`)
 	helperEnd := strings.Index(script, `document.addEventListener("keydown",function(e){
-  if((e.ctrlKey||e.metaKey)`)
+  if(beginOneCommentMode(e))`)
 	if helperStart < 0 || helperEnd < helperStart {
 		t.Fatal("could not extract the Ctrl+C one-comment shortcut")
 	}
@@ -736,6 +736,9 @@ let selecting = false;
 let batchMode = false;
 let editorOpen = false;
 let oneShotComment = false;
+let commentShortcutStartedAt = null;
+let clock = 1000;
+const Date = {now(){return clock;}};
 let popoverCommentId = null;
 let started = [];
 let closed = 0;
@@ -743,7 +746,7 @@ function saveBatchMode() {}
 function saveCommentMode() {}
 function updateCommentUI() {}
 function beginCommentTool(oneShot) { started.push(oneShot === true); selecting = true; oneShotComment = oneShot; }
-function closeCommentMode() { closed++; selecting = false; oneShotComment = false; }
+function closeCommentMode() { closed++; selecting = false; oneShotComment = false; commentShortcutStartedAt=null; }
 let selection = { isCollapsed: true, text: '' };
 const window = {
   getSelection() { return { isCollapsed: selection.isCollapsed, toString() { return selection.text; } }; },
@@ -760,7 +763,7 @@ function ev(over) {
   };
   return Object.assign(event, over || {});
 }
-function reset() { batchMode = false; selecting = false; editorOpen = false; oneShotComment = false; popoverCommentId = null; started = []; closed = 0; selection = { isCollapsed: true, text: '' }; }
+function reset() { clock=1000;commentShortcutStartedAt=null;batchMode = false; selecting = false; editorOpen = false; oneShotComment = false; popoverCommentId = null; started = []; closed = 0; selection = { isCollapsed: true, text: '' }; }
 
 /* No selection: Ctrl+C enters one-comment mode and suppresses the native copy. */
 reset();
@@ -769,10 +772,10 @@ assert(beginOneCommentMode(event) === true, 'Ctrl+C with no selection enters one
 assert(started.length === 1 && started[0] === true, 'Ctrl+C requests the one-shot comment tool');
 assert(event.prevented === 1, 'Ctrl+C with no selection suppresses the native copy');
 
-/* Ctrl+C again cancels the one-shot selection, even if text was selected meanwhile. */
-selection = { isCollapsed: false, text: 'selected meanwhile' };
+/* A later Ctrl+C cancels single-shot selection. */
+clock += 351;
 event = ev();
-assert(beginOneCommentMode(event) === true, 'second Ctrl+C cancels one-shot selection');
+assert(beginOneCommentMode(event) === true, 'later Ctrl+C cancels one-shot selection');
 assert(closed === 1 && selecting === false && oneShotComment === false, 'one-shot mode closes');
 assert(started.length === 1 && event.prevented === 1, 'cancellation consumes copy without restarting');
 
@@ -805,15 +808,25 @@ assert(beginOneCommentMode(ev({ altKey: true })) === false, 'Ctrl+Alt+C is left 
 assert(beginOneCommentMode(ev({ ctrlKey: false, metaKey: true })) === true, 'Cmd+C on macOS enters one-comment mode');
 assert(started.length === 1 && started[0] === true, 'Cmd+C requests the one-shot comment tool');
 
-/* Persistent selection, open threads and editable fields keep native copy. */
-reset();
-selecting = true;
-event = ev();
-assert(beginOneCommentMode(event) === true, 'persistent comment mode switches to one-shot');
-assert(event.prevented === 1 && oneShotComment, 'mode switch consumes copy');
-reset();batchMode=true;selecting=true;
-assert(beginOneCommentMode(ev()) === true && !batchMode && selecting && oneShotComment, 'Ctrl+C switches batch to one-shot without closing selection');
-assert(beginOneCommentMode(ev()) === true && !selecting, 'Ctrl+C again deactivates one-shot');
+/* A fast second press upgrades to batch; a third immediately exits. */
+reset();beginOneCommentMode(ev());clock+=350;
+assert(beginOneCommentMode(ev()) === true && batchMode && selecting && !oneShotComment, 'second press within 350ms upgrades to batch');
+assert(started.length===1 && closed===0, 'upgrade preserves selection');
+assert(beginOneCommentMode(ev()) === true && !selecting && !batchMode, 'third press exits batch');
+clock+=1;beginOneCommentMode(ev());assert(oneShotComment && !batchMode, 'next activation starts single-shot again');
+
+/* Holding the shortcut does not count as a double press. */
+reset();beginOneCommentMode(ev());clock+=100;
+assert(beginOneCommentMode(ev({repeat:true})) === true && !batchMode && oneShotComment, 'autorepeat must not upgrade');
+
+/* Selected text and editable fields keep native copy, even while active. */
+selection={isCollapsed:false,text:'copy me'};event=ev();
+assert(beginOneCommentMode(event) === false && event.prevented===0 && selecting, 'active selection does not swallow native copy');
+
+/* Persistent selection exits; open threads and editable fields keep native copy. */
+reset();selecting=true;
+assert(beginOneCommentMode(ev()) === true && !selecting, 'Ctrl+C exits persistent selection');
+assert(copyShortcut(ev({key:'b'})) === false, 'Ctrl+B is not a comment shortcut');
 selecting=true;
 oneShotComment = true;
 popoverCommentId = 'thread';
