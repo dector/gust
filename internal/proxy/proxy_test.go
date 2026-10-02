@@ -338,7 +338,7 @@ func TestDetachedBatchEditorControlsWhenNodeAvailable(t *testing.T) {
 	if start < 0 || end < start {
 		t.Fatal("could not extract comment UI updater")
 	}
-	harness := `let selecting=true,batchMode=true,editorOpen=false,reattachId=null;let commentBubble=null;const document={documentElement:{classList:{toggle(){},remove(){}}},querySelector(){return editor;}};const selfDev=false;const gustWidget={classList:{toggle(){}}};const commentToolbar={querySelector(){return {hidden:false,textContent:""};}};function flushPendingRefresh(){}function scheduleRenderPath(){}function locatorFor(){return "{}";}function renderCommentTarget(){}function updateEditorPosition(){}const controls={};const editor={hidden:false,style:{},classList:{toggle(){}},querySelector(k){return controls[k]||null;}};for(const k of ["[data-editor-title]","textarea","[data-save]","[data-editor-hint]","[data-exclude-label]","[data-save-draft]","[data-send-now]"])controls[k]={hidden:false,textContent:"",style:{}};const auto={hidden:false};const commentUI={querySelector(k){return k==="[data-autosubmit-label]"?auto:null;}};` + script[start:end] + `
+	harness := `function updateCommentsPanelPosition(){}let selecting=true,batchMode=true,editorOpen=false,reattachId=null;let commentBubble=null;const document={documentElement:{classList:{toggle(){},remove(){}}},querySelector(){return editor;}};const selfDev=false;const gustWidget={classList:{toggle(){}}};const commentToolbar={querySelector(){return {hidden:false,textContent:""};}};function flushPendingRefresh(){}function scheduleRenderPath(){}function locatorFor(){return "{}";}function renderCommentTarget(){}function updateEditorPosition(){}const controls={};const editor={hidden:false,style:{},classList:{toggle(){}},querySelector(k){return controls[k]||null;}};for(const k of ["[data-editor-title]","textarea","[data-save]","[data-editor-hint]","[data-exclude-label]","[data-save-draft]","[data-send-now]"])controls[k]={hidden:false,textContent:"",style:{}};const auto={hidden:false};const commentUI={querySelector(k){return k==="[data-autosubmit-label]"?auto:null;}};` + script[start:end] + `
 updateCommentUI();if(controls["[data-exclude-label]"].hidden||controls["[data-save-draft]"].hidden||controls["[data-send-now]"].hidden)throw Error("batch controls hidden in detached editor");if(!controls["[data-save]"].hidden)throw Error("legacy save shown in batch mode");if(!auto.hidden)throw Error("autosubmit exposed in batch mode");reattachId="draft";updateCommentUI();if(!controls["[data-exclude-label]"].hidden||!controls["[data-send-now]"].hidden)throw Error("batch actions shown while reattaching");`
 	file := t.TempDir() + "/detached-editor.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
@@ -613,7 +613,7 @@ func TestCommentModeBubbleBehaviorWhenNodeAvailable(t *testing.T) {
 	if modeStart < 0 || modeEnd < modeStart || mountStart < 0 || mountEnd < mountStart {
 		t.Fatal("could not extract comment mode bubble behavior")
 	}
-	harness := commentModeBubbleHarnessPrelude + "\nfunction flushPendingRefresh() {}\n" + script[modeStart:modeEnd] + script[mountStart:mountEnd] + commentModeBubbleHarnessChecks
+	harness := commentModeBubbleHarnessPrelude + "\nfunction flushPendingRefresh() {}\nfunction updateCommentsPanelPosition() {}\n" + script[modeStart:modeEnd] + script[mountStart:mountEnd] + commentModeBubbleHarnessChecks
 	file := t.TempDir() + "/comment-mode-bubble.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
@@ -2927,7 +2927,7 @@ func TestCommentPinShowsMessageCountWhenNodeAvailable(t *testing.T) {
 		t.Fatal("could not extract the pin message count")
 	}
 	pins := "function renderPins(){\n" + script[pinsStart:pinsEnd] + "}\n"
-	harness := pinCountHarnessPrelude + script[messagesStart:messagesEnd] + pins + pinCountHarnessChecks
+	harness := pinCountHarnessPrelude + "\nfunction updateCommentsPanelPosition() {}\n" + script[messagesStart:messagesEnd] + pins + pinCountHarnessChecks
 	file := t.TempDir() + "/pin-count.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)

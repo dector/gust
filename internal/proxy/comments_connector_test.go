@@ -20,7 +20,7 @@ func TestCommentDialogConnectorsWhenNodeAvailable(t *testing.T) {
 		}
 		return script[a:b]
 	}
-	harness := popoverHarnessPrelude + extract("function updateCommentConnector(", "function removePopoverDraft(") + extract("function updateEditorPosition(){", "function currentTargetEl(){") + `
+	harness := popoverHarnessPrelude + "\nfunction updateCommentsPanelPosition() {}\n" + extract("function updateCommentConnector(", "function removePopoverDraft(") + extract("function updateEditorPosition(){", "function currentTargetEl(){") + `
 Object.assign(assert, require('node:assert/strict'));
 const pop = new El('div'); commentPopover=pop; popoverCommentId='one';
 pop.getBoundingClientRect=()=>({left:parseFloat(pop.style.left),right:parseFloat(pop.style.left)+300,top:parseFloat(pop.style.top),bottom:parseFloat(pop.style.top)+160});

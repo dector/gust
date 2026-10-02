@@ -51,6 +51,7 @@ let selecting=false,batchMode=false,editorOpen=false,popoverCommentId=null,comme
 let cancelCalls=0,uiUpdates=0,fetches=0,renders=0;
 function cancelCommentMode(){cancelCalls++;return true;}
 function updateCommentUI(){uiUpdates++;}
+function updateCommentsPanelPosition(){}
 function beginCommentTool(){throw Error('panel must not start selection');}
 function openFirstUnreadComment(){}
 function sendCommentBatch(){}

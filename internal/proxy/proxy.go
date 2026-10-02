@@ -1280,6 +1280,47 @@ function commentPopoverEl(){
   document.documentElement.appendChild(commentPopover);
   return commentPopover;
 }
+// Only the standalone comments list moves, never the status widget or dialogs.
+// Compare both candidates against the default, not the current side, so repeated
+// scroll/resize/observer updates cannot flip the panel back and forth.
+function commentsPanelSide(width,height,viewportWidth,viewportHeight,dialogs){
+  const margin=16,bottom=122;
+  const top=viewportHeight-bottom-height;
+  const right={left:viewportWidth-margin-width,right:viewportWidth-margin,top:top,bottom:viewportHeight-bottom};
+  const left={left:margin,right:margin+width,top:top,bottom:right.bottom};
+  function overlaps(a,b){return a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;}
+  if(!dialogs.some(function(r){return overlaps(right,r);}))return "right";
+  if(left.left<0||left.right>viewportWidth-margin||left.top<margin||left.bottom>viewportHeight)return "right";
+  return dialogs.some(function(r){return overlaps(left,r);})?"right":"left";
+}
+function updateCommentsPanelPosition(){
+  if(!commentUI||commentUI.hidden)return;
+  const editor=document.querySelector("[data-editor]");
+  const dialogs=[];
+  if(editorOpen&&editor&&!editor.hidden)dialogs.push(editor.getBoundingClientRect());
+  if(popoverCommentId&&commentPopover&&!commentPopover.hidden)dialogs.push(commentPopover.getBoundingClientRect());
+  const r=commentUI.getBoundingClientRect();
+  const side=commentsPanelSide(r.width,r.height,innerWidth,innerHeight,dialogs);
+  commentUI.style.left=side==="left"?"16px":"";
+  commentUI.style.right=side==="left"?"auto":"";
+  // Content, error messages, and manually resized textareas can change sizes
+  // without a viewport resize. Observe only these independent comment surfaces.
+  if(typeof ResizeObserver!=="undefined"){
+    if(!updateCommentsPanelPosition.observer){
+      updateCommentsPanelPosition.observer=new ResizeObserver(function(){
+        if(editorOpen)updateEditorPosition();
+        positionCommentPopover();
+        updateCommentsPanelPosition();
+      });
+      updateCommentsPanelPosition.observed=new WeakSet();
+    }
+    [commentUI,editor,commentPopover].forEach(function(el){
+      if(el&&!updateCommentsPanelPosition.observed.has(el)){
+        updateCommentsPanelPosition.observed.add(el);updateCommentsPanelPosition.observer.observe(el);
+      }
+    });
+  }
+}
 // Keep the connector inside its dialog: closing or removing the dialog also
 // hides/removes the pointer, without adding another interactive overlay.
 function updateCommentConnector(dialog,point){
@@ -1305,7 +1346,7 @@ function positionCommentPopover(){
   let anchor=popoverAnchor;
   const pin=pinOverlay&&Array.from(pinOverlay.children).find(function(p){return p.dataset.commentId===popoverCommentId;});
   if(pin&&pin.style.display!=="none"){const r=pin.getBoundingClientRect();if(r.width||r.height)anchor={left:r.left,right:r.right,top:r.top,bottom:r.bottom};}
-  if(!anchor)return;
+  if(!anchor){updateCommentsPanelPosition();return;}
   let left=anchor.right+gap;
   if(left+width>innerWidth-margin)left=anchor.left-width-gap;
   left=Math.max(margin,Math.min(innerWidth-width-margin,left));
@@ -1313,10 +1354,12 @@ function positionCommentPopover(){
   pop.style.left=left+"px";pop.style.top=top+"px";
   popoverAnchor=anchor;
   updateCommentConnector(pop,pin&&pin.style.display!=="none"?{x:(anchor.left+anchor.right)/2,y:(anchor.top+anchor.bottom)/2}:null);
+  updateCommentsPanelPosition();
 }
 function closeCommentPopover(){
   popoverCommentId=null;popoverAnchor=null;popoverRenderKey="";popoverDeletePending=false;popoverActionError="";popoverReplyPending=false;popoverResolvePending=false;popoverDeleteToken++;
   if(commentPopover){commentPopover.hidden=true;}
+  updateCommentsPanelPosition();
   flushPendingRefresh();
 }
 function removePopoverDraft(){
@@ -1551,6 +1594,7 @@ function renderCommentState(){
     dot.appendChild(number);pin.appendChild(dot);
     pin.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openCommentPopover(c.id);});overlay.appendChild(pin);
   });
+  updateCommentsPanelPosition();
   renderCommentPopover();
 }
 function refreshComments(){
@@ -1577,6 +1621,7 @@ function updateEditorPosition(){
   editor.style.left=Math.max(margin,Math.min(innerWidth-width-margin,left))+"px";
   editor.style.top=Math.max(margin,Math.min(innerHeight-height-margin,top))+"px";
   updateCommentConnector(editor,selectedElement&&selectedElement.isConnected?editorAnchor:null);
+  updateCommentsPanelPosition();
 }
 function currentTargetEl(){return editorOpen?selectedElement:(selecting&&hoverPath.length?hoverPath[selectedIndex]:null);}
 function requestRefresh(){
@@ -1597,6 +1642,7 @@ function updateCommentUI(){
   if(!selecting)document.documentElement.classList.remove("__gust_ctrl");
   const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=active?(selfDev?"Exit comment mode (Ctrl+click selects any element, Gust's own UI included)":"Exit comment mode"):(selfDev?"Add comment (Ctrl+click selects any element, Gust's own UI included)":"Add comment");gustWidget.classList.toggle("__gust_commenting",active);gustWidget.classList.toggle("__gust_batch",batchMode);[commentBubble].forEach(function(t){if(!t)return;t.setAttribute("aria-pressed",String(active));t.setAttribute("aria-label",label);t.title=toggleTitle;});const modeTitle=commentToolbar.querySelector("[data-mode-title]");if(modeTitle){modeTitle.hidden=!active;modeTitle.textContent=batchMode?"Batch comment mode":"Comment Mode";}const auto=commentUI.querySelector("[data-autosubmit-label]");if(auto)auto.hidden=!active||batchMode;
   const editor=commentUI.querySelector("[data-editor]")||document.querySelector("[data-editor]");if(editor){const exclude=editor.querySelector("[data-exclude-label]");if(exclude)exclude.hidden=!active||!batchMode||!!reattachId;const batchSave=editor.querySelector("[data-save-draft]");if(batchSave)batchSave.hidden=!batchMode||!!reattachId;const sendNow=editor.querySelector("[data-send-now]");if(sendNow)sendNow.hidden=!batchMode||!!reattachId;editor.classList.toggle("__gust_batch_editor",batchMode);const title=editor.querySelector("[data-editor-title]");if(title)title.textContent=reattachId?"Reattach comment":"Add a comment";const textarea=editor.querySelector("textarea");if(textarea)textarea.hidden=!!reattachId;const save=editor.querySelector("[data-save]");if(save){save.textContent=reattachId?"Save anchor":"Save comment";save.hidden=batchMode&&!reattachId;}const hint=editor.querySelector("[data-editor-hint]");if(hint)hint.hidden=!!reattachId;editor.hidden=!editorOpen;editor.style.display=editorOpen?"block":"none";if(editorOpen){const target=editor.querySelector("[data-editor-target]");if(target){const selector=locatorFor(selectedElement,selectedPoint);const locator=JSON.parse(selector);renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";}updateEditorPosition();}}
+  updateCommentsPanelPosition();
   scheduleRenderPath();
 }
 function closeCommentMode(){commentShortcutStartedAt=null;reattachId=null;oneShotComment=false;selecting=false;editorOpen=false;selectedElement=null;selectedPoint=null;gustSelection=false;editorAnchor=null;hoverPath=[];setHighlight(null);saveCommentMode();updateCommentUI();}
@@ -1703,6 +1749,7 @@ function toggleCommentsPanel(open){
   if(!commentUI)return;
   if(open===undefined)open=commentUI.hidden;
   commentUI.hidden=!open;
+  updateCommentsPanelPosition();
   if(commentPageCount)commentPageCount.setAttribute("aria-expanded",String(open));
   if(open){const close=commentUI.querySelector("[data-close-comments]");if(close)close.focus();}
   else if(commentPageCount&&!commentPageCount.hidden)commentPageCount.focus();
