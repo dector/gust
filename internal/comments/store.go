@@ -69,6 +69,7 @@ type Comment struct {
 	SubmittedAt time.Time `json:"submittedAt,omitempty"`
 	SeenAt      time.Time `json:"seenAt,omitempty"`
 	FinishedAt  time.Time `json:"finishedAt,omitempty"`
+	InBatch     bool      `json:"inBatch"`
 }
 
 // Input holds the data needed to create a comment.
@@ -78,6 +79,7 @@ type Input struct {
 	Text    string
 	HTML    string
 	Locator string
+	InBatch bool
 }
 
 // Batch groups comments submitted together.
@@ -139,7 +141,8 @@ CREATE TABLE IF NOT EXISTS comments (
  updated_at INTEGER NOT NULL,
  submitted_at INTEGER,
  seen_at INTEGER,
- finished_at INTEGER
+ finished_at INTEGER,
+ in_batch INTEGER NOT NULL DEFAULT 0 CHECK (in_batch IN (0,1))
 );
 CREATE TABLE IF NOT EXISTS messages (
  id TEXT PRIMARY KEY,
@@ -152,7 +155,7 @@ CREATE INDEX IF NOT EXISTS comments_state_batch ON comments(state, batch_id);
 CREATE INDEX IF NOT EXISTS messages_comment ON messages(comment_id, created_at, id);
 `
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migrate upgrades a database created before threads. The old schema stored a
 // reason column and allowed state='abandoned'; both are gone. Rebuilding the
@@ -195,6 +198,15 @@ func migrate(db *sql.DB) error {
 			}
 		}
 		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+	hasInBatch, err := columnExists(db, "comments", "in_batch")
+	if err != nil {
+		return err
+	}
+	if !hasInBatch {
+		if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN in_batch INTEGER NOT NULL DEFAULT 0 CHECK (in_batch IN (0,1))`); err != nil {
 			return err
 		}
 	}
@@ -311,7 +323,7 @@ func (s *Store) Create(ctx context.Context, in Input) (Comment, error) {
 	if err := s.checkOpen(); err != nil {
 		return Comment{}, err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO comments(id,path,text,html,locator,state,created_at,updated_at) VALUES(?,?,?,?,?,'created',?,?)`, in.ID, in.Path, in.Text, in.HTML, in.Locator, stamp(now), stamp(now))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO comments(id,path,text,html,locator,state,created_at,updated_at,in_batch) VALUES(?,?,?,?,?,'created',?,?,?)`, in.ID, in.Path, in.Text, in.HTML, in.Locator, stamp(now), stamp(now), in.InBatch)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -436,9 +448,61 @@ func (s *Store) DeleteDraft(ctx context.Context, id string) error {
 	return nil
 }
 
-// SubmitCreated atomically groups all created comments into a newly submitted batch.
+// SubmitCreated preserves the legacy CLI behavior: submit every created draft,
+// regardless of explicit batch membership. Browser batch submission uses
+// SubmitDraftBatch to avoid pulling in unrelated drafts.
 func (s *Store) SubmitCreated(ctx context.Context) (Batch, error) {
-	return s.submit(ctx, "")
+	return s.submit(ctx, "", false)
+}
+
+// SubmitDraftBatch submits exactly the explicitly selected created comments.
+func (s *Store) SubmitDraftBatch(ctx context.Context) (Batch, error) {
+	return s.submit(ctx, "", true)
+}
+
+// SetInBatch changes explicit batch membership for a created comment. A batch
+// can be initiated by creating a comment with InBatch=true; thereafter this
+// method only joins drafts while at least one member already exists.
+func (s *Store) SetInBatch(ctx context.Context, id string, inBatch bool) (Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkOpen(); err != nil {
+		return Comment{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Comment{}, err
+	}
+	defer tx.Rollback()
+	var state State
+	var current bool
+	err = tx.QueryRowContext(ctx, `SELECT state,in_batch FROM comments WHERE id=?`, id).Scan(&state, &current)
+	if err == sql.ErrNoRows {
+		return Comment{}, ErrNotFound
+	}
+	if err != nil {
+		return Comment{}, err
+	}
+	if state != StateCreated {
+		return Comment{}, ErrInvalidState
+	}
+	if inBatch && !current {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM comments WHERE state='created' AND in_batch=1`).Scan(&count); err != nil {
+			return Comment{}, err
+		}
+		if count == 0 {
+			return Comment{}, ErrInvalidState
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE comments SET in_batch=?,updated_at=? WHERE id=? AND state='created'`, inBatch, stamp(time.Now().UTC()), id); err != nil {
+		return Comment{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Comment{}, err
+	}
+	s.signalLocked()
+	return s.getLocked(ctx, id)
 }
 
 // SubmitOne submits only the specified draft, leaving other drafts untouched.
@@ -446,10 +510,10 @@ func (s *Store) SubmitOne(ctx context.Context, id string) (Batch, error) {
 	if id == "" {
 		return Batch{}, ErrNoCreated
 	}
-	return s.submit(ctx, id)
+	return s.submit(ctx, id, false)
 }
 
-func (s *Store) submit(ctx context.Context, id string) (Batch, error) {
+func (s *Store) submit(ctx context.Context, id string, explicitBatch bool) (Batch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkOpen(); err != nil {
@@ -462,7 +526,9 @@ func (s *Store) submit(ctx context.Context, id string) (Batch, error) {
 	defer tx.Rollback()
 	where := "state='created'"
 	args := []any{}
-	if id != "" {
+	if explicitBatch {
+		where += " AND in_batch=1"
+	} else if id != "" {
 		where += " AND id=?"
 		args = append(args, id)
 	}
@@ -478,7 +544,7 @@ func (s *Store) submit(ctx context.Context, id string) (Batch, error) {
 		return Batch{}, err
 	}
 	updateArgs := append([]any{batch.ID, stamp(batch.SubmittedAt), stamp(batch.SubmittedAt)}, args...)
-	if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='submitted',batch_id=?,submitted_at=?,updated_at=? WHERE `+where, updateArgs...); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE comments SET state='submitted',batch_id=?,submitted_at=?,updated_at=?,in_batch=0 WHERE `+where, updateArgs...); err != nil {
 		return Batch{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -813,7 +879,7 @@ func queryClaimed(ctx context.Context, tx *sql.Tx, query string, args ...any) ([
 	return cs, nil
 }
 
-const columns = `id,batch_id,path,text,html,locator,state,created_at,updated_at,submitted_at,seen_at,finished_at`
+const columns = `id,batch_id,path,text,html,locator,state,created_at,updated_at,submitted_at,seen_at,finished_at,in_batch`
 
 // querier is satisfied by both *sql.DB and *sql.Tx.
 type querier interface {
@@ -881,7 +947,7 @@ func scanComments(rows *sql.Rows) ([]Comment, error) {
 		var state string
 		var created, updated int64
 		var submitted, seen, finished sql.NullInt64
-		if err := rows.Scan(&c.ID, &batchID, &c.Path, &c.Text, &c.HTML, &c.Locator, &state, &created, &updated, &submitted, &seen, &finished); err != nil {
+		if err := rows.Scan(&c.ID, &batchID, &c.Path, &c.Text, &c.HTML, &c.Locator, &state, &created, &updated, &submitted, &seen, &finished, &c.InBatch); err != nil {
 			return nil, err
 		}
 		if batchID.Valid {

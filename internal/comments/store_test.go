@@ -497,6 +497,86 @@ INSERT INTO comments(id,path,text,html,locator,state,reason,created_at,updated_a
 	}
 }
 
+func TestExplicitDraftBatchMembershipAndSubmission(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "outside")
+	if got, err := s.SetInBatch(ctx, "outside", true); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("joining empty batch = %+v, %v; want invalid state", got, err)
+	}
+	member, err := s.Create(ctx, Input{ID: "member", Path: "/page", Text: "Fix it", InBatch: true})
+	if err != nil || !member.InBatch {
+		t.Fatalf("create batch member: %+v, %v", member, err)
+	}
+	b, err := s.SubmitDraftBatch(ctx)
+	if err != nil || len(b.Comments) != 1 || b.Comments[0].ID != member.ID || b.Comments[0].InBatch {
+		t.Fatalf("submit explicit batch = %+v, %v", b, err)
+	}
+	outside, err := s.Get(ctx, "outside")
+	if err != nil || outside.State != StateCreated || outside.InBatch {
+		t.Fatalf("unselected draft = %+v, %v", outside, err)
+	}
+	if _, err := s.SubmitDraftBatch(ctx); !errors.Is(err, ErrNoCreated) {
+		t.Fatalf("empty explicit batch: %v", err)
+	}
+}
+
+func TestBatchMembershipSurvivesRestartAndSubmitOneClearsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "membership.db")
+	ctx := context.Background()
+	s, err := OpenAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Create(ctx, Input{ID: "selected", Path: "/", Text: "note", InBatch: true})
+	if err != nil || !c.InBatch {
+		t.Fatalf("create selected draft: %+v, %v", c, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = OpenAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c, err = s.Get(ctx, "selected")
+	if err != nil || !c.InBatch {
+		t.Fatalf("reopened membership: %+v, %v", c, err)
+	}
+	if _, err := s.SubmitOne(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.Get(ctx, c.ID)
+	if err != nil || c.State != StateSubmitted || c.InBatch {
+		t.Fatalf("submitted membership: %+v, %v", c, err)
+	}
+}
+
+func TestSetInBatchRequiresCreatedDraftAndCanRemove(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if _, err := s.Create(ctx, Input{ID: "seed", Path: "/page", Text: "seed", InBatch: true}); err != nil {
+		t.Fatal(err)
+	}
+	create(t, s, "candidate")
+	if _, err := s.SetInBatch(ctx, "candidate", true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SetInBatch(ctx, "candidate", false); err != nil || got.InBatch {
+		t.Fatalf("remove membership: %+v, %v", got, err)
+	}
+	if _, err := s.SubmitOne(ctx, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetInBatch(ctx, "seed", true); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("submitted membership change: %v", err)
+	}
+	if _, err := s.SetInBatch(ctx, "missing", false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing membership change: %v", err)
+	}
+}
+
 func TestDeleteDraft(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -573,6 +653,21 @@ func TestSubmitOneLeavesOtherDrafts(t *testing.T) {
 	other, err := s.SubmitCreated(ctx)
 	if err != nil || len(other.Comments) != 1 || other.Comments[0].ID != "draft" {
 		t.Fatalf("submit drafts: %+v, %v", other, err)
+	}
+}
+
+func TestSubmitOneIDBatchIsNotSelector(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	create(t, s, "batch")
+	create(t, s, "other")
+	b, err := s.SubmitOne(ctx, "batch")
+	if err != nil || len(b.Comments) != 1 || b.Comments[0].ID != "batch" {
+		t.Fatalf("submit ID batch: %+v, %v", b, err)
+	}
+	other, err := s.Get(ctx, "other")
+	if err != nil || other.State != StateCreated {
+		t.Fatalf("other draft changed: %+v, %v", other, err)
 	}
 }
 
