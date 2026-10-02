@@ -1875,7 +1875,7 @@ function saveCommentMode(){
 }
 function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}catch(_){return false;}}
 function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}catch(_){}}
-function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();updateCommentUI();}
+function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();if(batchMode&&!selecting&&!editorOpen){beginCommentTool(false);return;}updateCommentUI();}
 function loadWind(){
   try { return localStorage.getItem("__gust_wind") === "1"; } catch (_) { return false; }
 }

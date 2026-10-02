@@ -118,10 +118,11 @@ try {
   await page.goto(base, { waitUntil: 'networkidle' });
   await eventually(() => page.locator('#__gust_comment_bubble').count().then(n => n === 1), 'comments toolbar did not mount');
 
-  // Ctrl+B toggles collection mode globally, and is left to editable fields.
+  // Ctrl+B activates batch selection immediately, and leaves editable fields alone.
   await page.locator('body').click({ position: { x: 700, y: 30 } });
   await page.keyboard.press('Control+b');
   await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 1), 'Ctrl+B did not enable batch mode');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'Ctrl+B must enter comment selection, not only toggle a flag');
   const blue = await eventually(async () => {
     const color = await page.locator('#__gust_comment_bubble').evaluate(el => getComputedStyle(el).color);
     return /rgb\(96, 165, 250\)|rgb\(59, 130, 246\)/.test(color) ? color : false;
@@ -132,12 +133,12 @@ try {
   assert.equal(await page.locator('html.__gust_batch_mode').count(), 1, 'Ctrl+B in editable must not toggle batch mode');
   await page.locator('#editable').pressSequentially('b');
   assert.equal(await page.locator('#editable').inputValue(), 'b', 'editable key input must be preserved');
-  await page.locator('body').click({ position: { x: 700, y: 30 } });
+  await page.locator('body').evaluate(el => { el.tabIndex = -1; el.focus(); });
   await page.keyboard.press('Control+b');
   await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 0), 'Ctrl+B did not disable batch mode');
 
   // Create a pre-existing standalone draft with autosubmit disabled.
-  await page.locator('#__gust_comment_bubble').click();
+  if (await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed') !== 'true') await page.locator('#__gust_comment_bubble').click();
   // The editor is portaled outside the widget; its toolbar checkbox can be
   // visually hidden when the pointer leaves the floating UI, so set its actual
   // DOM state directly for this setup-only preference.

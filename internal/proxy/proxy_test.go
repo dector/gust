@@ -245,7 +245,7 @@ func TestBrowserBatchCollectionInjected(t *testing.T) {
 	for _, fragment := range []string{
 		`function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}`,
 		`function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}`,
-		`function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();updateCommentUI();}`,
+		`function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();if(batchMode&&!selecting&&!editorOpen){beginCommentTool(false);return;}updateCommentUI();}`,
 		`inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow`,
 		`pendingCreate={id:newCommentRequestID()`,
 		`JSON.stringify(create.body)`,
@@ -312,8 +312,11 @@ func TestBatchModeSessionRestorationWhenNodeAvailable(t *testing.T) {
 	if start < 0 || end < start {
 		t.Fatal("could not extract batch-mode persistence")
 	}
-	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false;let updates=0;function updateCommentUI(){updates++;}` + script[start:end] + `
-if(loadBatchMode())throw Error("starts off");toggleBatchMode();if(!batchMode||loadBatchMode()!==true)throw Error("enable must persist");batchMode=loadBatchMode();if(!batchMode)throw Error("session restore");toggleBatchMode();if(batchMode||loadBatchMode())throw Error("disable must persist");`
+	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false,selecting=false,editorOpen=false;let activations=0;let updates=0;function updateCommentUI(){updates++;}function beginCommentTool(oneShot){if(oneShot)throw Error("batch must allow repeated collection");activations++;selecting=true;}` + script[start:end] + `
+if(loadBatchMode())throw Error("starts off");toggleBatchMode();if(!batchMode||loadBatchMode()!==true)throw Error("enable must persist");batchMode=loadBatchMode();if(!batchMode)throw Error("session restore");toggleBatchMode();if(batchMode||loadBatchMode())throw Error("disable must persist");
+if(!selecting||activations!==1)throw Error("Ctrl+B must activate selection from idle");
+toggleBatchMode();if(activations!==1||!selecting)throw Error("enabling during selection must not toggle selection off");
+toggleBatchMode();selecting=false;editorOpen=true;toggleBatchMode();if(activations!==1)throw Error("enabling while editing must preserve editor");`
 	file := t.TempDir() + "/batch-mode.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
