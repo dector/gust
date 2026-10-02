@@ -107,7 +107,7 @@ func (s *Server) serveComments(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_id", "id must be 32 lowercase hexadecimal characters")
 		return
 	}
-	input := comments.Input{ID: in.ID, Path: in.Path, Text: strings.TrimSpace(in.Text), HTML: html, Locator: in.Locator, InBatch: in.InBatch}
+	input := comments.Input{ID: in.ID, Path: in.Path, Text: in.Text, HTML: html, Locator: in.Locator, InBatch: in.InBatch}
 	if in.ID != "" {
 		c, err := s.comments.Get(r.Context(), in.ID)
 		if err == nil {
@@ -488,7 +488,7 @@ func validCommentID(id string) bool {
 }
 
 func sameCommentCreateInput(c comments.Comment, in comments.Input) bool {
-	return c.ID == in.ID && c.Path == in.Path && c.Text == strings.TrimSpace(in.Text) && c.HTML == scrubCommentHTML(in.HTML) && c.Locator == in.Locator
+	return c.ID == in.ID && c.Path == in.Path && c.Text == in.Text && c.HTML == in.HTML && c.Locator == in.Locator
 }
 
 func scrubCommentHTML(html string) string {

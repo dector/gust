@@ -41,7 +41,7 @@ func TestCreateCommentAPIRetryReturnsOriginal(t *testing.T) {
 
 	// Membership is deliberately different on retry. It must not mutate the
 	// existing comment or its state.
-	retry := postCommentCreate(s, `{"id":"`+retryCommentID+`","path":"/page","text":"note","html":"<p>text</p>","locator":"body > p","inBatch":false}`)
+	retry := postCommentCreate(s, `{"id":"`+retryCommentID+`","path":"/page","text":" note ","html":"<p>text</p>","locator":"body > p","inBatch":false}`)
 	if retry.Code != 200 {
 		t.Fatalf("retry status %d: %s", retry.Code, retry.Body)
 	}
@@ -98,6 +98,28 @@ func TestCreateCommentAPIRejectsConflictingOrInvalidID(t *testing.T) {
 	invalid := postCommentCreate(s, `{"id":"0123456789ABCDEF0123456789abcdef","path":"/page","text":"note","html":"","locator":"body"}`)
 	if invalid.Code != 400 {
 		t.Fatalf("invalid ID status %d: %s", invalid.Code, invalid.Body)
+	}
+}
+
+func TestCreateCommentAPIPreservesTextWhitespace(t *testing.T) {
+	for _, id := range []string{"", retryCommentID} {
+		t.Run("id="+id, func(t *testing.T) {
+			s := &Server{comments: batchAPIStore(t)}
+			body := `{"id":"` + id + `","path":"/page","text":"  note  ","html":"","locator":"body"}`
+			resp := postCommentCreate(s, body)
+			if resp.Code != 201 {
+				t.Fatalf("create status %d: %s", resp.Code, resp.Body)
+			}
+			if c := decodeCreatedComment(t, resp); c.Text != "  note  " {
+				t.Fatalf("create changed text whitespace: %q", c.Text)
+			}
+			if id != "" {
+				conflict := postCommentCreate(s, strings.Replace(body, `"  note  "`, `"note"`, 1))
+				if conflict.Code != 409 {
+					t.Fatalf("different text should conflict: status %d: %s", conflict.Code, conflict.Body)
+				}
+			}
+		})
 	}
 }
 
