@@ -1717,8 +1717,8 @@ function createCommentUI(){
     }
     if(editor.dataset.savedDraftId){
       if(!wantsSendNow){editor.dataset.sendPending="";textarea.value="";result.textContent="Draft saved.";finishCommentEdit();return;}
-      save.disabled=true;result.textContent="Sending draft…";
-      submitCreatedComment(editor.dataset.savedDraftId,result,editor.dataset.savedDraftState).then(function(){textarea.value="";editor.dataset.savedDraftId="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";}).finally(function(){save.disabled=false;});
+      save.disabled=true;editor.dataset.sendPending="1";result.textContent="Sending draft…";
+      submitCreatedComment(editor.dataset.savedDraftId,result,editor.dataset.savedDraftState).then(function(){textarea.value="";editor.dataset.savedDraftId="";editor.dataset.sendPending="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";}).finally(function(){save.disabled=false;});
       return;
     }
     if(!pendingCreate){
@@ -1731,7 +1731,7 @@ function createCommentUI(){
     fetch("/__gust/comments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(create.body)})
       .then(function(r){return r.json().catch(function(){return {};}).then(function(data){if(!r.ok){const failure=new Error(data.error&&data.error.message||("Request failed ("+r.status+")"));failure.definitive=r.status>=400&&r.status<500;throw failure;}return data;});})
       .then(function(comment){if(!comment||comment.id!==create.id||!["created","submitted","seen","review","done"].includes(comment.state))throw new Error("Invalid save response.");pendingCreate=null;editor.dataset.pendingCreate="";textarea.readOnly=sendAfterCreate;editor.dataset.savedDraftId=comment.id;editor.dataset.savedDraftState=comment.state||"created";editor.dataset.sendPending="";refreshComments();
-        if(sendAfterCreate){result.textContent="Sending draft…";return submitCreatedComment(comment.id,result,comment.state).then(function(){textarea.value="";editor.dataset.savedDraftId="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){editor.dataset.sendPending="1";result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";});}
+        if(sendAfterCreate){editor.dataset.sendPending="1";result.textContent="Sending draft…";return submitCreatedComment(comment.id,result,comment.state).then(function(){textarea.value="";editor.dataset.savedDraftId="";editor.dataset.sendPending="";result.textContent="Comment submitted.";finishCommentEdit();}).catch(function(e){editor.dataset.sendPending="1";result.textContent="Send failed: "+e.message+" — retry Send now or save the draft.";});}
         textarea.value="";result.textContent="Draft saved.";finishCommentEdit();
         if(!shouldAutoSubmit)return;
         submitResult.textContent="Submitting…";

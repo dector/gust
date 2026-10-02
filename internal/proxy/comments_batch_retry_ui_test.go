@@ -96,6 +96,17 @@ function ctrlEnter(ui){ui.textarea.handlers.keydown({key:'Enter',ctrlKey:true,is
   assert.equal(failedSend.requests.length,1);assert.equal(failedSend.submitted.length,1);
   assert.equal(failedSend.finished,1);assert.equal(failedSend.editor.dataset.sendPending,'');
 
+  // A submitted draft must keep the editor and its recovery action visible
+  // until the asynchronous send has a known outcome.
+  let finishSend;
+  const sending=setup(body=>response(201,created(body)),()=>new Promise(resolve=>{finishSend=resolve;}));
+  sending.textarea.value='in flight';sending.sendNow.click();await settle();
+  assert.equal(sending.editor.dataset.sendPending,'1');
+  sending.close.click();assert.equal(sending.finished,0);
+  assert.match(sending.result.textContent,/must finish before closing/);
+  finishSend();await settle();
+  assert.equal(sending.editor.dataset.sendPending,'');assert.equal(sending.finished,1);
+
   // A clicked action while a save is pending must not leak Send now intent
   // into a later keyboard save after the definitive rejection.
   let rejectPending;
