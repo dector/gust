@@ -245,7 +245,7 @@ func TestBrowserBatchCollectionInjected(t *testing.T) {
 	for _, fragment := range []string{
 		`function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}`,
 		`function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}`,
-		`function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();if(batchMode&&!selecting&&!editorOpen){beginCommentTool(false);return;}updateCommentUI();}`,
+		`function toggleBatchMode(){if(editorOpen)return;if(batchMode&&selecting){batchMode=false;saveBatchMode();closeCommentMode();return;}batchMode=true;oneShotComment=false;saveBatchMode();if(!selecting){beginCommentTool(false);return;}saveCommentMode();updateCommentUI();}`,
 		`inBatch:batchMode&&!excludeBatch.checked&&!wantsSendNow`,
 		`pendingCreate={id:newCommentRequestID()`,
 		`JSON.stringify(create.body)`,
@@ -312,11 +312,12 @@ func TestBatchModeSessionRestorationWhenNodeAvailable(t *testing.T) {
 	if start < 0 || end < start {
 		t.Fatal("could not extract batch-mode persistence")
 	}
-	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false,selecting=false,editorOpen=false;let activations=0;let updates=0;function updateCommentUI(){updates++;}function beginCommentTool(oneShot){if(oneShot)throw Error("batch must allow repeated collection");activations++;selecting=true;}` + script[start:end] + `
+	harness := `const sessionStorage={values:{},getItem(k){return this.values[k]||null},setItem(k,v){this.values[k]=v}};let batchMode=false,selecting=false,editorOpen=false,oneShotComment=false;function closeCommentMode(){selecting=false;oneShotComment=false;}function saveCommentMode(){}let activations=0;let updates=0;function updateCommentUI(){updates++;}function beginCommentTool(oneShot){if(oneShot)throw Error("batch must allow repeated collection");activations++;selecting=true;}` + script[start:end] + `
 if(loadBatchMode())throw Error("starts off");toggleBatchMode();if(!batchMode||loadBatchMode()!==true)throw Error("enable must persist");batchMode=loadBatchMode();if(!batchMode)throw Error("session restore");toggleBatchMode();if(batchMode||loadBatchMode())throw Error("disable must persist");
-if(!selecting||activations!==1)throw Error("Ctrl+B must activate selection from idle");
-toggleBatchMode();if(activations!==1||!selecting)throw Error("enabling during selection must not toggle selection off");
-toggleBatchMode();selecting=false;editorOpen=true;toggleBatchMode();if(activations!==1)throw Error("enabling while editing must preserve editor");`
+if(selecting||activations!==1)throw Error("second Ctrl+B must deactivate selection");
+selecting=true;oneShotComment=true;toggleBatchMode();if(activations!==1||!selecting||oneShotComment||!batchMode)throw Error("Ctrl+B must switch oneshot to batch");
+toggleBatchMode();if(selecting||batchMode)throw Error("batch toggle must deactivate");
+editorOpen=true;toggleBatchMode();if(activations!==1||batchMode)throw Error("shortcut must preserve open editor");`
 	file := t.TempDir() + "/batch-mode.js"
 	if err := os.WriteFile(file, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
@@ -738,6 +739,9 @@ let oneShotComment = false;
 let popoverCommentId = null;
 let started = [];
 let closed = 0;
+function saveBatchMode() {}
+function saveCommentMode() {}
+function updateCommentUI() {}
 function beginCommentTool(oneShot) { started.push(oneShot === true); selecting = true; oneShotComment = oneShot; }
 function closeCommentMode() { closed++; selecting = false; oneShotComment = false; }
 let selection = { isCollapsed: true, text: '' };
@@ -756,7 +760,7 @@ function ev(over) {
   };
   return Object.assign(event, over || {});
 }
-function reset() { selecting = false; editorOpen = false; oneShotComment = false; popoverCommentId = null; started = []; closed = 0; selection = { isCollapsed: true, text: '' }; }
+function reset() { batchMode = false; selecting = false; editorOpen = false; oneShotComment = false; popoverCommentId = null; started = []; closed = 0; selection = { isCollapsed: true, text: '' }; }
 
 /* No selection: Ctrl+C enters one-comment mode and suppresses the native copy. */
 reset();
@@ -805,8 +809,12 @@ assert(started.length === 1 && started[0] === true, 'Cmd+C requests the one-shot
 reset();
 selecting = true;
 event = ev();
-assert(beginOneCommentMode(event) === false, 'persistent comment mode is left alone');
-assert(event.prevented === 0, 'persistent mode does not consume copy');
+assert(beginOneCommentMode(event) === true, 'persistent comment mode switches to one-shot');
+assert(event.prevented === 1 && oneShotComment, 'mode switch consumes copy');
+reset();batchMode=true;selecting=true;
+assert(beginOneCommentMode(ev()) === true && !batchMode && selecting && oneShotComment, 'Ctrl+C switches batch to one-shot without closing selection');
+assert(beginOneCommentMode(ev()) === true && !selecting, 'Ctrl+C again deactivates one-shot');
+selecting=true;
 oneShotComment = true;
 popoverCommentId = 'thread';
 assert(beginOneCommentMode(ev()) === false, 'an open thread is left alone');

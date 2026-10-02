@@ -1819,9 +1819,10 @@ function beginOneCommentMode(e){
     closeCommentMode();
     return true;
   }
-  if(selecting||editorOpen||hasTextSelection())return false;
+  if(editorOpen||popoverCommentId||hasTextSelection())return false;
   if(e.preventDefault)e.preventDefault();
-  beginCommentTool(true);
+  if(batchMode){batchMode=false;saveBatchMode();}
+  if(selecting){oneShotComment=true;saveCommentMode();updateCommentUI();}else beginCommentTool(true);
   return true;
 }
 document.addEventListener("keydown",function(e){
@@ -1875,7 +1876,7 @@ function saveCommentMode(){
 }
 function loadBatchMode(){try{return sessionStorage.getItem("__gust_batch_mode")==="1";}catch(_){return false;}}
 function saveBatchMode(){try{sessionStorage.setItem("__gust_batch_mode",batchMode?"1":"0");}catch(_){}}
-function toggleBatchMode(){batchMode=!batchMode;saveBatchMode();if(batchMode&&!selecting&&!editorOpen){beginCommentTool(false);return;}updateCommentUI();}
+function toggleBatchMode(){if(editorOpen)return;if(batchMode&&selecting){batchMode=false;saveBatchMode();closeCommentMode();return;}batchMode=true;oneShotComment=false;saveBatchMode();if(!selecting){beginCommentTool(false);return;}saveCommentMode();updateCommentUI();}
 function loadWind(){
   try { return localStorage.getItem("__gust_wind") === "1"; } catch (_) { return false; }
 }

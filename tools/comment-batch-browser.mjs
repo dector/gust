@@ -128,6 +128,15 @@ try {
     return /rgb\(96, 165, 250\)|rgb\(59, 130, 246\)/.test(color) ? color : false;
   }, 'batch mode blue transition did not settle');
   assert.match(blue, /rgb\(96, 165, 250\)|rgb\(59, 130, 246\)/);
+  await page.keyboard.press('Control+c');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'Ctrl+C must switch batch to single-shot');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'switch must keep selection active');
+  await page.keyboard.press('Control+c');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'second Ctrl+C must deactivate single-shot');
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+b');
+  assert.equal(await page.locator('html.__gust_batch_mode').count(), 1, 'Ctrl+B must switch single-shot to batch');
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'true', 'batch switch must keep selection active');
   await page.locator('#editable').focus();
   await page.keyboard.press('Control+b');
   assert.equal(await page.locator('html.__gust_batch_mode').count(), 1, 'Ctrl+B in editable must not toggle batch mode');
@@ -136,6 +145,8 @@ try {
   await page.locator('body').evaluate(el => { el.tabIndex = -1; el.focus(); });
   await page.keyboard.press('Control+b');
   await eventually(() => page.locator('html.__gust_batch_mode').count().then(n => n === 0), 'Ctrl+B did not disable batch mode');
+
+  assert.equal(await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed'), 'false', 'second Ctrl+B must deactivate batch selection');
 
   // Create a pre-existing standalone draft with autosubmit disabled.
   if (await page.locator('#__gust_comment_bubble').getAttribute('aria-pressed') !== 'true') await page.locator('#__gust_comment_bubble').click();
@@ -174,7 +185,8 @@ try {
   assert.equal((await comments(page)).find(c => c.text === 'second batch member').inBatch, true, 'repeated membership did not survive reload');
   assert.equal(await page.locator('html.__gust_batch_mode').count(), 0, 'inactive mode should remain inactive on reload');
 
-  // Add an old normal draft only after there is a non-empty batch.
+  // Open the normal comments panel with batch mode off, then join a draft.
+  await page.locator('#__gust_comment_bubble').click();
   await page.locator('#__gust_icon').hover();
   await page.locator('[data-comment-id="' + normal.id + '"] .__gust_comment_row').click();
   await page.locator('#__gust_comment_popover .__gust_popover_action').filter({ hasText: 'Add to the batch' }).click();
@@ -333,6 +345,7 @@ try {
   await api(page, `/__gust/comments/${members[0].id}/reply`, 'POST', { text: 'agent response' });
   // Human replies and resolution still advance only their own thread.
   await eventually(async () => (await comments(page)).find(c => c.id === members[0].id)?.messages?.length > 0, 'reply was not retained');
+  await page.locator('#__gust_comment_bubble').click();
   await page.locator('#__gust_icon').hover();
   await page.locator(`[data-comment-id="${members[0].id}"] .__gust_comment_row`).click();
   await page.locator('#__gust_comment_popover .__gust_popover_resolve').click();
