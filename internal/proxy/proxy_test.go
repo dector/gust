@@ -474,7 +474,13 @@ func TestCommentUnreadBadgeInjected(t *testing.T) {
 		// Gust nodes, so it is neither a comment target nor captured context.
 		`const gustNodes = "#__gust_widget,#__gust_bubble,#__gust_comment_bubble,#__gust_comment_unread_badge`,
 		`+gustNodes+",details.__gust_log,#__gust_comments [data-comments]");`,
-		`#__gust_comment_unread_badge{position:fixed;right:23px;bottom:63px;`,
+		`#__gust_comment_unread_badge{position:fixed;right:23px;bottom:92px;`,
+		`#__gust_comment_page_count{position:fixed;right:23px;bottom:63px;`,
+		`#__gust_comment_page_count[hidden]{display:none}`,
+		`.__gust_pin_batch .__gust_pin_count{box-shadow:0 0 0 2px #60a5fa,`,
+		`if(c.state==="created"&&c.inBatch){const batch=document.createElement("span");batch.className="__gust_comment_batch_pill";batch.textContent="Batch";batch.title="Included in batch";meta.appendChild(batch);}`,
+		`#__gust_comments .__gust_comment_batch_pill{display:inline-block;padding:1px 6px;border:1px solid #3b82f6;border-radius:999px;background:#172554;color:#bfdbfe;`,
+		`width:20px;height:20px;line-height:0;transform:scale(1.25)}.__gust_pin_count`,
 		`#__gust_comment_unread_badge[hidden]{display:none}`,
 		`color:#fff;background:#dc2626;border:1px solid #fecaca`,
 		`#__gust_comment_unread_badge:hover{background:#ef4444;border-color:#fee2e2;color:#fff}`,
@@ -526,6 +532,7 @@ const commentAddIconSvg = '<svg data-icon="add-comment"></svg>';
 let commentState = [];
 let commentBubble = null;
 let commentUnreadBadge = null;
+let commentPageCount = null;
 let popoverCommentId = null;
 let commentPopover = null;
 let bubbleClicks = 0;
@@ -563,6 +570,9 @@ assert(document.body.children[0] === commentBubble, 'badge test mounts the comme
 assert(document.body.children[1] === commentUnreadBadge, 'badge test mounts the badge separately');
 assert(commentUnreadBadge.hidden === false, 'badge is visible for unread threads');
 assert(commentUnreadBadge.textContent === '2', 'badge counts only current-page unresolved unread threads');
+assert(commentPageCount.textContent === '3', 'page count includes read and unread open threads only');
+assert(commentPageCount.hidden === false, 'page count is visible with open threads');
+assert(commentPageCount.attrs['aria-label'] === '3 open comments on this page', 'page count has an accessible label');
 assert(commentUnreadBadge.attrs['aria-label'] === '2 new comment threads', 'badge exposes an accessible new-thread count');
 let prevented = 0;
 let stopped = 0;
@@ -580,6 +590,13 @@ markThreadSeen(commentState[4]);
 updateUnreadBadge();
 assert(commentUnreadBadge.textContent === '', 'badge clears its text when no unread threads remain');
 assert(commentUnreadBadge.hidden === true, 'badge hides when no unread threads remain');
+assert(commentPageCount.textContent === '3', 'reading replies does not change the page count');
+commentState.push({ id: 'draft', path: '/', state: 'created', inBatch: true });
+updateUnreadBadge();
+assert(commentPageCount.textContent === '4', 'page count includes batch drafts');
+commentState.forEach(function(c) { c.state = 'done'; });
+updateUnreadBadge();
+assert(commentPageCount.hidden === true && commentPageCount.textContent === '', 'page count hides after all threads finish');
 console.log('comment unread badge ok');
 `
 
@@ -622,6 +639,7 @@ const commentAddIconSvg = '<svg data-icon="add-comment"></svg>';
 const selfDev = false;
 let commentBubble = null;
 let commentUnreadBadge = null;
+let commentPageCount = null;
 let badgeClicks = 0;
 let selecting = false;
 let batchMode = false;
@@ -2578,9 +2596,13 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`gust-debug`,
 		`outline-offset: -1px`,
 		`outline-offset:2px`,
-		`commentToolbar) gustPanel.appendChild(commentToolbar)`,
+		`if (commentToolbar) gustPanel.appendChild(commentToolbar)`,
+		`document.body.appendChild(commentUI)`,
+		`commentPageCount.setAttribute("aria-controls","__gust_comments")`,
+		`commentPageCount.setAttribute("aria-expanded","false")`,
 		`#__gust_comment_toolbar{display:flex;`,
-		`#__gust_widget.__gust_open.__gust_commenting #__gust_comments{display:block}`,
+		`#__gust_comments[hidden]{display:none}`,
+		`#__gust_comments{position:fixed;right:16px;bottom:122px;`,
 		`gustWidget.classList.toggle("__gust_commenting",active)`,
 		`M2.992 16.342`,
 		`textContent="Comment Mode"`,
@@ -2639,7 +2661,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`function resumeSelection(){`,
 		`finishCommentEdit();`,
 		`const box=document.querySelector("[data-editor] textarea");if(box)box.focus();`,
-		"renderCommentState();\n  updateCommentUI();",
+		`function toggleCommentsPanel(open){`,
 		`document.addEventListener("click"`,
 		`e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();`,
 		`chooseSelection(e);`,
@@ -2685,7 +2707,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`commentUI.append(status,listHeader,submitResult,pollError,list,autoLabel)`,
 		`.__gust_autosubmit{display:flex`,
 		`.__gust_autosubmit input[type=checkbox]{appearance:none`,
-		`listHeader.append(listTitle,count)`,
+		`listHeader.append(listTitle,count,closePanel)`,
 
 		`empty.textContent="No open comments yet."`,
 		`__gust_comment_text{display:-webkit-box`,
@@ -2705,7 +2727,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`function finishCommentEdit(){if(oneShotComment&&!batchMode)closeCommentMode();else resumeSelection();}`,
 		`function cancelCommentMode(){`,
 		`const editor=document.querySelector("[data-editor]"),box=editor&&editor.querySelector("textarea");const draft=box?String(box.value||""):"";`,
-		`if(e.key==="Escape")cancelCommentMode();`,
+		`if(e.key==="Escape"&&handleCommentEscape()){e.preventDefault();e.stopPropagation();}`,
 		`if(beginOneCommentMode(e))return;`,
 		`sessionStorage.getItem("__gust_comment_mode")`,
 		`sessionStorage.setItem("__gust_comment_mode", (selecting||editorOpen) ? "1" : "0")`,
@@ -2981,6 +3003,18 @@ assert(pin.title === 'review comment — 3 messages — click to inspect', 'the 
 assert(countOf(pinOverlay.children[1]) === '1', 'a single-message thread shows one, never zero');
 assert(pinOverlay.children[1].attrs['aria-label'] === 'created comment, 1 message', 'one message reads as singular');
 assert(pinOverlay.children[1].className === '__gust_pin __gust_pin_created', 'the draft pin keeps its state class');
+commentState[1].inBatch = true;
+renderPins();
+assert(pinOverlay.children[1].className.includes('__gust_pin_batch'), 'batch drafts get a blue-border hook');
+assert(pinOverlay.children[1].title.includes('Included in batch'), 'batch membership is in the tooltip');
+assert(pinOverlay.children[1].attrs['aria-label'].includes('Included in batch'), 'batch membership is accessible');
+assert(countOf(pinOverlay.children[1]) === '1', 'batch membership does not change the message count');
+commentState[1].state = 'submitted';
+renderPins();
+assert(!pinOverlay.children[1].className.includes('__gust_pin_batch'), 'submitted comments no longer get the draft batch ring');
+commentState[1].state = 'created';
+commentState[1].inBatch = false;
+renderPins();
 // Opening and closing the popover cannot move the number.
 pin.listeners['click']({ preventDefault() {}, stopPropagation() {} });
 assert(popoverCommentId === 't1', 'clicking the pin opens its popover');
@@ -3113,9 +3147,10 @@ class El {
   addEventListener(t, f) { this.listeners[t] = f; }
   focus() { document.activeElement = this; }
   contains(el) { if (el === this) return true; return this.children.some(c => c && c.contains && c.contains(el)); }
+  get firstChild() { return this.children[0] || null; }
   getBoundingClientRect() { return { left: 100, right: 120, top: 100, bottom: 120, width: 20, height: 20 }; }
 }
-const document = { createElement: t => new El(t), documentElement: new El('html'), activeElement: null };
+const document = { createElement: t => new El(t), createElementNS: (ns, t) => new El(t), documentElement: new El('html'), activeElement: null };
 const commentTargetIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="none"/><line x1="128" y1="128" x2="224" y2="32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M195.88,60.12a95.88,95.88,0,1,0,18.77,26.49" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/><path d="M161.94,94.06a48,48,0,1,0,14,31.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/></svg>';
 function commentSelector(c) { try { return JSON.parse(c.locator).selector || '(selector unavailable)'; } catch (_) { return '(selector unavailable)'; } }
 const location = { pathname: '/' };
@@ -3164,7 +3199,7 @@ pinOverlay.appendChild(pinFor('a'));
 openCommentPopover('a');
 assert(commentPopover && commentPopover.hidden === false, 'pin click opens the floating panel');
 assert(popoverCommentId === 'a', 'panel remembers its comment id');
-assert(commentPopover.children.length === 7, 'panel has header, text, meta, replies, reply box, actions, and error');
+assert(commentPopover.children.length === 8, 'panel has header, text, meta, replies, reply box, actions, error, and connector');
 assert(commentPopover.children[0].children[0].textContent === 'Draft', 'created state renders the Draft badge');
 assert(commentPopover.children[1].textContent === 'first\nsecond', 'multi-line text is preserved');
 const targetPath = popoverParts.path;
