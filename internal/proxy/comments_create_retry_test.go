@@ -101,6 +101,40 @@ func TestCreateCommentAPIRejectsConflictingOrInvalidID(t *testing.T) {
 	}
 }
 
+func TestCreateCommentAPIConcurrentRetriesCreateOnce(t *testing.T) {
+	store := batchAPIStore(t)
+	s := &Server{comments: store}
+	const requests = 16
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, requests)
+	body := `{"id":"` + retryCommentID + `","path":"/page","text":"note","html":"","locator":"body","inBatch":true}`
+	for i := 0; i < requests; i++ {
+		go func() {
+			<-start
+			responses <- postCommentCreate(s, body)
+		}()
+	}
+	close(start)
+	created := 0
+	for i := 0; i < requests; i++ {
+		resp := <-responses
+		switch resp.Code {
+		case 201:
+			created++
+		case 200:
+		default:
+			t.Errorf("concurrent retry status %d: %s", resp.Code, resp.Body)
+		}
+		if c := decodeCreatedComment(t, resp); c.ID != retryCommentID || !c.InBatch {
+			t.Errorf("concurrent retry returned unexpected comment: %+v", c)
+		}
+	}
+	all, err := store.List(context.Background(), "")
+	if created != 1 || err != nil || len(all) != 1 {
+		t.Fatalf("concurrent creates: new=%d, stored=%d, error=%v", created, len(all), err)
+	}
+}
+
 func TestCreateCommentAPIPreservesTextWhitespace(t *testing.T) {
 	for _, id := range []string{"", retryCommentID} {
 		t.Run("id="+id, func(t *testing.T) {
