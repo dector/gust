@@ -135,7 +135,7 @@ func TestToolboxInjected(t *testing.T) {
 			`#__gust_toolbox{position:fixed;left:50%;bottom:0;transform:translate(-50%,11px);`,
 			`#__gust_toolbox:not(.__gust_toolbox_open):hover{transform:translate(-50%,0)}`,
 			`#__gust_toolbox.__gust_toolbox_open{transform:translate(-50%,calc(-1 * min(340px,42vh)))}`,
-			`#__gust_toolbox_handle{display:grid;place-items:center;width:100%;height:100%;color:#7f776d;`,
+			`#__gust_toolbox_handle{display:grid;place-items:center;width:100%;height:100%;color:#b9bec6;`,
 			`#__gust_toolbox_panel{position:fixed;left:0;right:0;bottom:0;`,
 			`transform:translateY(100%);pointer-events:none;`,
 			`#__gust_toolbox_panel.__gust_toolbox_open{transform:translateY(0);pointer-events:auto}`,
@@ -195,10 +195,10 @@ func TestGustBubbleHidden(t *testing.T) {
 		for _, style := range []string{
 			`#__gust_bubble{position:fixed;left:50%;bottom:14px;`,
 			`width:40px;height:40px`,
-			`background:#ffffff0d;border:1px solid #ffffff24;border-radius:999px;backdrop-filter:blur(12px)`,
+			`background:#222427;border:1px solid #484c52;border-radius:999px;box-shadow:0 6px 18px #0006`,
 			`cursor:pointer;`,
 			`#__gust_bubble:hover{transform:translate(-50%,-6px);`,
-			`#__gust_bubble.__gust_toolbox_open{width:min(400px,calc(100vw - 32px));height:90px;padding:12px 14px;border-radius:1.2rem;color:#ffd9a8}`,
+			`#__gust_bubble.__gust_toolbox_open{width:min(400px,calc(100vw - 32px));height:90px;padding:12px 14px;border-radius:2px;color:#e8eaed}`,
 			`#__gust_bubble.__gust_toolbox_open svg{width:64px;height:64px}`,
 		} {
 			if !strings.Contains(script, style) {
@@ -383,13 +383,13 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 		`[commentBubble]`,
 		`#__gust_comment_bubble{position:fixed;right:14px;bottom:14px;`,
 		`width:40px;height:40px`,
-		`color:#a3a3a3;background:#252525;border:1px solid #484848`,
+		`color:#b9bec6;background:#222427;border:1px solid #484c52`,
 		`cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease}`,
-		`#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#fafafa}`,
-		`#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;color:#f9bb71;`,
-		`#__gust_comment_bubble[aria-pressed=true]:hover{background:#583820;border-color:#ffd9a8;color:#ffd9a8}`,
+		`#__gust_comment_bubble:hover{background:#292c30;border-color:#aeb5bf;color:#e8eaed}`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#34383e;border-color:#aeb5bf;color:#e8eaed}`,
+		`#__gust_comment_bubble[aria-pressed=true]:hover{background:#40454c;border-color:#e8eaed;color:#e8eaed}`,
 		`@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`,
-		`#__gust_comment_bubble:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
+		`#__gust_comment_bubble:focus-visible{outline:2px solid #aeb5bf;outline-offset:2px}`,
 		`html.__gust_selecting #__gust_widget,html.__gust_selecting #__gust_widget *,html.__gust_selecting #__gust_comment_bubble,`,
 		`html.__gust_selecting #__gust_widget button,html.__gust_selecting #__gust_comment_bubble,`,
 		`html.__gust_selecting #__gust_comment_bubble *{cursor:pointer!important}`,
@@ -442,19 +442,19 @@ func TestCommentModeBubbleInjected(t *testing.T) {
 			t.Errorf("comment mode bubble must not use unread count treatment %q", attentionTreatment)
 		}
 	}
-	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;color:#f9bb71;box-shadow:0 8px 24px #0008,inset 0 1px #ffffff24}`
-	hoverRule := `#__gust_comment_bubble:hover{background:#303030;border-color:#626262;color:#fafafa}`
+	activeRule := `#__gust_comment_bubble[aria-pressed=true]{background:#34383e;border-color:#aeb5bf;color:#e8eaed}`
+	hoverRule := `#__gust_comment_bubble:hover{background:#292c30;border-color:#aeb5bf;color:#e8eaed}`
 	if !strings.Contains(style, activeRule) {
-		t.Error("comment mode bubble on state must use its restrained warm treatment")
+		t.Error("comment mode bubble on state must use its restrained graphite treatment")
 	}
-	if !strings.Contains(style, `color:#a3a3a3;background:#252525;border:1px solid #484848`) {
+	if !strings.Contains(style, `color:#b9bec6;background:#222427;border:1px solid #484c52`) {
 		t.Error("comment mode bubble must use the charcoal surface")
 	}
 	if !strings.Contains(script, `@media (prefers-reduced-motion:reduce){#__gust_comment_bubble{transition:none}}`) {
 		t.Error("comment mode bubble transitions must respect reduced motion")
 	}
-	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) || !strings.Contains(style, `#__gust_comment_bubble[aria-pressed=true]:hover{background:#583820;border-color:#ffd9a8;color:#ffd9a8}`) {
-		t.Error("comment mode bubble on state must keep its warm treatment when hovered")
+	if strings.Index(style, hoverRule) > strings.Index(style, activeRule) || !strings.Contains(style, `#__gust_comment_bubble[aria-pressed=true]:hover{background:#40454c;border-color:#e8eaed;color:#e8eaed}`) {
+		t.Error("comment mode bubble on state must keep its graphite treatment when hovered")
 	}
 }
 
@@ -487,7 +487,7 @@ func TestCommentUnreadBadgeInjected(t *testing.T) {
 		`#__gust_comment_unread_badge::after{content:"";position:absolute;inset:-3px;border:2px solid #ef4444;border-radius:999px;pointer-events:none;animation:__gust_comment_unread_pulse 1.6s ease-out infinite}`,
 		`@keyframes __gust_comment_unread_pulse{0%{opacity:1;transform:scale(.9)}75%,100%{opacity:0;transform:scale(1.45)}}`,
 		`@media (prefers-reduced-motion:reduce){#__gust_comment_unread_badge{transition:none}#__gust_comment_unread_badge::after{animation:none;opacity:.65;transform:scale(1)}}`,
-		`#__gust_comment_unread_badge:focus-visible{outline:2px solid #f9bb71;outline-offset:2px}`,
+		`#__gust_comment_unread_badge:focus-visible{outline:2px solid #aeb5bf;outline-offset:2px}`,
 	} {
 		if !strings.Contains(script, fragment) {
 			t.Errorf("comment unread badge injection missing %q", fragment)
@@ -2537,24 +2537,23 @@ func TestCommentDialogsSharePanelPalette(t *testing.T) {
 			}
 		}
 	}
-	for _, selector := range []string{"#__gust_panel", "#__gust_comments", "#__gust_comment_editor", "#__gust_comment_popover"} {
-		for _, property := range []string{"background:#252525", "color:#f5f2eb", "border:1px solid #484848", "box-shadow:0 16px 48px #0009,inset 0 1px #ffffff18"} {
+	for _, selector := range []string{"#__gust_comment_editor", "#__gust_comment_popover"} {
+		for _, property := range []string{"background:#222427", "color:#e8eaed", "border:1px solid #484c52", "border-radius:2px", "box-shadow:0 6px 18px #0006"} {
 			if !strings.Contains(palette[selector], property) {
 				t.Errorf("%s missing shared palette property %s", selector, property)
 			}
 		}
 	}
-	for _, selector := range []string{"#__gust_comment_editor textarea", "#__gust_comments textarea,[data-editor] textarea", "#__gust_comment_popover .__gust_popover_reply", "#__gust_comment_popover .__gust_popover_reply_item", "#__gust_comments .__gust_comment_item"} {
-		if !strings.Contains(palette[selector], "background:#303030") || !strings.Contains(palette[selector], "#484848") {
+	for _, selector := range []string{"#__gust_comment_editor textarea", "#__gust_comment_popover .__gust_popover_reply", "#__gust_comment_popover .__gust_popover_reply_item"} {
+		if !strings.Contains(palette[selector], "background:#292c30") || !strings.Contains(palette[selector], "border-radius:1px") {
 			t.Errorf("%s missing neutral field palette: %s", selector, palette[selector])
 		}
 	}
 	for _, fragment := range []string{
-		`#__gust_comment_editor small{margin-left:10px;color:#d9cbb7`,
-		`#__gust_comment_popover .__gust_popover_reply_time{margin-left:auto;color:#d9cbb7}`,
-		`#__gust_comment_editor textarea:focus{border-color:#f9bb71;box-shadow:0 0 0 2px #f9bb7133}`,
-		`#__gust_comment_editor.__gust_batch_editor{background:#0f1d35;border-color:#3b82f6;color:#eff6ff}`,
-		`#__gust_comment_editor.__gust_batch_editor textarea{background:#172554;border-color:#60a5fa;color:#eff6ff}`,
+		`#__gust_comment_popover .__gust_popover_reply_time{margin-left:auto;color:#b9bec6}`,
+		`#__gust_comment_editor textarea:focus{outline:2px solid #aeb5bf;outline-offset:1px}`,
+		`#__gust_comment_editor.__gust_batch_editor{border-color:#6088b3}`,
+		`#__gust_comment_popover .__gust_popover_reply:focus{outline:2px solid #aeb5bf;outline-offset:1px}`,
 	} {
 		if !strings.Contains(script, fragment) {
 			t.Errorf("missing preserved dialog style %s", fragment)
@@ -2576,23 +2575,23 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`z-index:2147483646`,
 		`z-index:2147483647`,
 		`__gust_icon`,
-		`position:fixed;right:8px;top:8px`,
+		`position:fixed;right:16px;top:16px`,
 		`__gust_icon_online`,
 		`__gust_icon_offline`,
 		`__gust_icon_failing`,
 		`let connectionAttempted = false;`,
 		`gustIcon.classList.toggle("__gust_icon_offline", !connected && connectionAttempted)`,
 		`connected = false; connectionAttempted = true; applyIconState()`,
-		`#__gust_icon{position:relative;width:28px;height:28px;color:#f9bb71;opacity:1;border-radius:10px;transition:background .15s ease,color .15s ease,opacity .15s ease}`,
+		`#__gust_icon{position:relative;flex:none;cursor:pointer;width:28px;height:28px;color:#b9bec6;opacity:1;border-radius:2px;transition:background .15s ease,color .15s ease,opacity .15s ease}`,
 		`viewBox="0 0 256 256"`,
-		`#__gust_icon::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border:2px solid #f9bb71;border-radius:50%;background:#24180f;`,
-		`#__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#24180f}`,
-		`#__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#24180f}`,
-		`#__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#24180f}`,
-		`#__gust_panel{top:36px;color-scheme:dark;background:#252525;color:#f5f2eb;border:1px solid #484848;border-radius:1.2rem;backdrop-filter:blur(12px);`,
-		`#__gust_comments textarea,[data-editor] textarea{background:#303030;color:#f5f2eb;`,
-		`padding:16px;color-scheme:dark;background:#252525;color:#f5f2eb;`,
-		`opacity:.45`,
+		`#__gust_icon::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border:2px solid #b9bec6;border-radius:50%;background:#222427;`,
+		`#__gust_icon.__gust_icon_online::after{background:#22c55e;border-color:#222427}`,
+		`#__gust_icon.__gust_icon_offline::after{background:#dc2626;border-color:#222427}`,
+		`#__gust_icon.__gust_icon_failing::after{background:#f59e0b;border-color:#222427}`,
+		`#__gust_panel{display:none;box-sizing:border-box;color-scheme:dark;background:#222427;color:#e8eaed;`,
+		`#__gust_comments textarea{box-sizing:border-box;width:100%;min-height:70px;background:#292c30;color:#e8eaed;`,
+		`padding:0 12px 10px;color-scheme:dark;background:#222427;color:#e8eaed;`,
+		`color:#b9bec6;opacity:1;border-radius:2px;`,
 		`#22c55e`,
 		`#dc2626`,
 		`#f59e0b`,
@@ -2620,7 +2619,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`__gust_widget`,
 		`#__gust_widget.__gust_open #__gust_panel`,
 		`__gust_dot`,
-		`font:14px/1.6`,
+		`font:12px/1.5`,
 		`Proxying`,
 		`Reloaded`,
 		`Status`,
@@ -2653,7 +2652,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`if(left+width>innerWidth-margin)left=editorAnchor.x-width-gap`,
 		`if(top+height>innerHeight-margin)top=editorAnchor.y-height-gap`,
 		`position:fixed;display:none;z-index:2147483647`,
-		`font:13px/1.5 ui-monospace`,
+		`font:12px/1.6 ui-monospace`,
 		`max-height:calc(100vh - 24px)`,
 		`if(blockedCommentTarget(e.target,e.ctrlKey)){hoverPath=[];setHighlight(null);updateCommentUI();return;}`,
 		`window.addEventListener("scroll",function(){if(editorOpen)updateEditorPosition();},true)`,
@@ -2670,8 +2669,8 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`commentBubble.id="__gust_comment_bubble";`,
 		`commentBubble.addEventListener("click",function(e){e.stopPropagation();beginCommentTool();});`,
 		`#__gust_comment_bubble{position:fixed;right:14px;bottom:14px;`,
-		`#__gust_comment_bubble[aria-pressed=true]{background:#49301c;border-color:#f9bb71;`,
-		`#__gust_icon.__gust_pinned{background:#49301c;color:#fff7e9}`,
+		`#__gust_comment_bubble[aria-pressed=true]{background:#34383e;border-color:#aeb5bf;`,
+		`#__gust_icon.__gust_pinned{background:#34383e;color:#e8eaed}`,
 		`const active=selecting||editorOpen,label=active?"Exit comment mode":"Add comment",toggleTitle=`,
 		`function beginCommentTool(oneShot){if(selecting||editorOpen){closeCommentMode();return;}`,
 		`oneShotComment=!!oneShot;`,
@@ -2684,7 +2683,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`#__gust_selected_path .__gust_path_trail{display:flex;flex-wrap:wrap`,
 		`max-width:calc(100vw - 24px)`,
 		`crumbs.replaceChildren(trail)`,
-		`text-shadow:0 1px 3px #000`,
+		`padding:4px 7px;border:1px solid #484c52;border-radius:2px;background:#222427;`,
 		`crumbs.id="__gust_selected_path"`,
 		`document.documentElement.appendChild(crumbs)`,
 		`document.getElementById("__gust_selected_path")`,
@@ -2822,7 +2821,6 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		"Choose this element",
 		"Cancel",
 		"Change selection",
-		"Selected element",
 		"commentToggleButton",
 		"__gust_comment_toggle",
 		"const add=document.createElement(\"button\")",
@@ -2907,7 +2905,7 @@ func TestProxyPinOpensFloatingCommentPanel(t *testing.T) {
 		// Styling for the floating panel.
 		`#__gust_comment_popover{position:fixed;z-index:2147483647;`,
 		`#__gust_comment_popover[hidden]{display:none}`,
-		`#__gust_comment_popover .__gust_popover_badge_created{color:#fbbf24}`,
+		`#__gust_comment_popover .__gust_popover_badge_created{color:#cdd1d7}`,
 		`#__gust_comment_popover .__gust_popover_badge_review{color:#f9a8d4}`,
 		`#__gust_comment_popover .__gust_popover_replybox{`,
 		`#__gust_comment_popover .__gust_popover_error{`,
@@ -3093,7 +3091,7 @@ func TestCommentTargetInNewThreadEditor(t *testing.T) {
 		`renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";`,
 		`#__gust_comment_editor .__gust_editor_target{display:flex;`,
 		`#__gust_comment_editor .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
-		`#__gust_comment_editor .__gust_popover_path_text{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`,
+		`#__gust_comment_editor .__gust_popover_path_text{display:block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`,
 	} {
 		if !strings.Contains(script, fragment) {
 			t.Errorf("new thread editor target missing %q", fragment)
@@ -3112,7 +3110,7 @@ func TestCommentTargetIconInFloatingThreadPanel(t *testing.T) {
 		`container.replaceChildren(icon,text);`,
 		`renderCommentTarget(parts.path,commentSelector(c));`,
 		`#__gust_comment_popover .__gust_popover_path{display:flex;align-items:center;gap:5px;flex:1 1 auto;min-width:0;overflow:hidden;direction:ltr;text-align:left}`,
-		`#__gust_comment_popover .__gust_popover_path_icon{display:inline-flex;flex:none;width:14px;height:14px;color:#d9cbb7}`,
+		`#__gust_comment_popover .__gust_popover_path_icon{display:inline-flex;flex:none;width:14px;height:14px;color:#b9bec6}`,
 		`#__gust_comment_popover .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
 		`#__gust_comment_popover .__gust_popover_path_text{display:block;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}`,
 	} {
