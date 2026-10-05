@@ -2792,7 +2792,7 @@ func TestProxyInjectedScriptContent(t *testing.T) {
 		`spinner.setAttribute("aria-hidden","true")`,
 		`animation:__gust_comment_spin .9s linear infinite`,
 		`prefers-reduced-motion:reduce`,
-		`editor.append(close,title,target,textarea,excludeBatchLabel,save,saveDraft,sendNow,hint,result)`,
+		`editor.append(close,title,target,textarea,excludeBatchLabel,draftLabel,save,saveDraft,sendNow,hint,result)`,
 
 		`replace(/\s+/g," ")`,
 		`Comment sync failed: `,
@@ -3087,7 +3087,7 @@ func TestCommentTargetInNewThreadEditor(t *testing.T) {
 	script := reloadScript(12, 8765)
 	for _, fragment := range []string{
 		`target.className="__gust_popover_path __gust_editor_target";target.dataset.editorTarget="";`,
-		`editor.append(close,title,target,textarea,excludeBatchLabel,save,saveDraft,sendNow,hint,result);`,
+		`editor.append(close,title,target,textarea,excludeBatchLabel,draftLabel,save,saveDraft,sendNow,hint,result);`,
 		`renderCommentTarget(target,locator.selector);target.title=locator.selector||"(selector unavailable)";`,
 		`#__gust_comment_editor .__gust_editor_target{display:flex;`,
 		`#__gust_comment_editor .__gust_popover_path_icon svg{display:block;width:100%;height:100%}`,
