@@ -193,7 +193,32 @@ func TestParseProxyPorts(t *testing.T) {
 	}
 }
 
+func TestParseTailscalePortEnv(t *testing.T) {
+	for _, port := range []string{"8080", "12345"} {
+		t.Run(port, func(t *testing.T) {
+			t.Setenv("PORT", port)
+			cfg, err := ParseWithOutput([]string{"-e", "run", "-TT"}, nil)
+			if err != nil || !cfg.Tailscale || !cfg.HasAppPort || !cfg.ProxyEnabled || fmt.Sprint(cfg.AppPort) != port || cfg.ProxyPort == 0 || cfg.ProxyPort == cfg.AppPort {
+				t.Fatalf("-TT with PORT=%s config = %+v, err %v", port, cfg, err)
+			}
+		})
+	}
+	for _, port := range []string{"invalid", "0", "65536", "?", "8080:5000"} {
+		t.Run(port, func(t *testing.T) {
+			t.Setenv("PORT", port)
+			if _, err := ParseWithOutput([]string{"-e", "run", "-TT"}, nil); err == nil || !strings.Contains(err.Error(), "invalid PORT") {
+				t.Fatalf("invalid PORT=%s error = %v", port, err)
+			}
+			cfg, err := ParseWithOutput([]string{"-e", "run", "-TT", "-p", "8080:5000"}, nil)
+			if err != nil || cfg.AppPort != 8080 || cfg.ProxyPort != 5000 {
+				t.Fatalf("explicit -p should override PORT: config = %+v, err %v", cfg, err)
+			}
+		})
+	}
+}
+
 func TestParseTailscale(t *testing.T) {
+	t.Setenv("PORT", "")
 	cfg, err := ParseWithOutput([]string{"-e", "run", "-TT"}, nil)
 	if err != nil || !cfg.Tailscale || !cfg.HasAppPort || !cfg.ProxyEnabled || cfg.AppPort == 0 || cfg.ProxyPort == 0 {
 		t.Fatalf("-TT config = %+v, err %v", cfg, err)

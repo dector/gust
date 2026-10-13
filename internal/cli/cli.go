@@ -61,7 +61,7 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	fs.StringVar(&portSpec, "p", "", "app port, or app:proxy ports (? selects a free port)")
 	fs.StringVar(&cfg.HealthPath, "h", "", "health endpoint path")
 	fs.BoolVar(&cfg.Tailscale, "T", false, "expose app port via Tailscale Serve")
-	fs.BoolVar(&tailscaleWithProxy, "TT", false, "expose proxy port via Tailscale Serve (implies -p ?:?)")
+	fs.BoolVar(&tailscaleWithProxy, "TT", false, "expose proxy port via Tailscale Serve (defaults to -p PORT:?, or ?:?)")
 	fs.Var(&excludes, "exclude", "path exclude, repeatable")
 	fs.Var(&excludeGlobs, "exclude.glob", "glob exclude, repeatable")
 	fs.Var(&optins, "optin", "opt-in feature, repeatable (comments, sounds, dev)")
@@ -105,7 +105,14 @@ func ParseWithOutput(args []string, out io.Writer) (config.Config, error) {
 	if tailscaleWithProxy {
 		cfg.Tailscale = true
 		if portSpec == "" {
-			portSpec = "?:?"
+			appPort := os.Getenv("PORT")
+			if appPort == "" {
+				appPort = "?"
+			} else if _, err := parsePort(appPort); err != nil {
+				fs.Usage()
+				return config.Config{}, fmt.Errorf("invalid PORT: %w", err)
+			}
+			portSpec = appPort + ":?"
 		}
 	}
 
@@ -188,7 +195,8 @@ Flags:
   -p <port>             set app port, or app:proxy ports; ? selects a free port
   -h <path>             check health endpoint at path; requires app port
   -T                    expose proxy port, or app port without proxy, via Tailscale Serve
-  -TT                   enable Tailscale Serve and proxy; defaults to -p ?:?, explicit -p wins
+  -TT                   enable Tailscale Serve and proxy; app uses PORT or a free port,
+                        proxy uses a free port; explicit -p wins
   --exclude <path>      exclude path prefix from file watching; repeatable
   --exclude.glob <glob> exclude matching paths from file watching; repeatable
   --optin <feature>     enable optional feature; repeatable: comments, sounds, dev

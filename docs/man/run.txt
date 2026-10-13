@@ -12,7 +12,8 @@ Flags:
   -p <port>             set app port, or app:proxy ports; ? selects a free port
   -h <path>             check health endpoint at path; requires app port
   -T                    expose proxy port, or app port without proxy, via Tailscale Serve
-  -TT                   enable Tailscale Serve and proxy; defaults to -p '?:?', explicit -p wins
+  -TT                   enable Tailscale Serve and proxy; app uses PORT or a free port,
+                        proxy uses a free port; explicit -p wins
   --exclude <path>      exclude path prefix from file watching; repeatable
   --exclude.glob <glob> exclude matching paths from file watching; repeatable
   --optin <feature>     enable optional feature; repeatable: comments, sounds, dev
@@ -46,8 +47,10 @@ The first candidate is path-derived, so ports stay stable when available;
 occupied ports cause Gust to try the next candidate.
 An empty proxy slot disables the proxy; an empty app slot cannot be proxied.
 Gust passes the app port as PORT (overriding an inherited PORT); the app must
-listen on it. Without -p, Gust leaves PORT unchanged and the app decides its
-own port.
+listen on it. Without -p or -TT, Gust leaves PORT unchanged and the app decides
+its own port. With -TT and no -p, a non-empty inherited PORT sets the app port
+and must be valid; otherwise a stable free app port is selected. The proxy gets
+its own stable free port. Explicit -p overrides PORT.
 Port selection and app binding are not atomic; another process can take the port.
 
 Tailscale: -T starts Serve after proxy setup, before app readiness checks.
